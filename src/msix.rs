@@ -132,7 +132,7 @@ pub fn write_manifest(staging: &Path, inputs: &MsixInputs<'_>) -> Result<(), Shu
 "#,
         name = inputs.identity_name,
         publisher = xml_escape(inputs.publisher),
-        msix_version = &msix_version,
+        msix_version = msix_version,
         display = xml_escape(inputs.display_name),
         publisher_display = xml_escape(inputs.publisher),
         description = xml_escape(&description),
