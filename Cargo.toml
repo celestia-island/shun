@@ -1,0 +1,79 @@
+[package]
+name = "shun"
+description = "Flow-driven payload delivery runtime — installers, flashers, and portable modes"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["langyo <langyo.china@gmail.com>"]
+license-file = "LICENSE"
+repository = "https://github.com/celestia-island/shun"
+readme = "README.md"
+keywords = ["installer", "packager", "portable", "deploy", "flasher"]
+categories = ["development-tools"]
+publish = true
+exclude = ["docs/", "scripts/", ".github/", "assets/", "justfile", "rust-toolchain.toml"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+tar.workspace = true
+zstd.workspace = true
+sha2.workspace = true
+walkdir.workspace = true
+ureq = { version = "^2", optional = true }
+clap = { version = "^4", features = ["derive"], optional = true }
+image = { version = "^0.25", default-features = false, features = ["ico", "png", "webp"], optional = true }
+
+[features]
+default = ["online", "cli"]
+online = ["dep:ureq"]
+# The `shun` CLI binary: artifact builder, packer, icon tooling, signing.
+cli = ["dep:clap", "dep:image", "online"]
+
+[target.'cfg(windows)'.dependencies]
+winreg = "^0.56"
+mslnk = "^0.1.8"
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+
+[[bin]]
+name = "shun"
+path = "src/bin/shun.rs"
+required-features = ["cli"]
+
+[dev-dependencies]
+tempfile = "^3"
+
+[lints]
+workspace = true
+
+[workspace]
+resolver = "2"
+members = ["shell"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["langyo <langyo.china@gmail.com>"]
+
+[workspace.dependencies]
+serde = { version = "^1", features = ["derive"] }
+serde_json = "^1"
+thiserror = "^2"
+tar = "^0.4"
+toml = "^0.9"
+zstd = "^0.13"
+sha2 = "^0.10"
+walkdir = "^2"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

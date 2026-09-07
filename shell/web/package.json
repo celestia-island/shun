@@ -1,0 +1,23 @@
+{
+  "name": "@shun/demo-shell-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Frontend of the shun demo shell — Vue + hikari over the shun install flow",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@celestia-island/hikari": "^0.40.18",
+    "lucide-vue-next": "^*",
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^*",
+    "@vitejs/plugin-vue-jsx": "^*",
+    "sass": "^*",
+    "typescript": "^*",
+    "vite": "^*"
+  }
+}
