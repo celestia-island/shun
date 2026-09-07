@@ -120,6 +120,10 @@ pub trait PayloadSource {
 
 /// Read-side of a shun payload archive: manifest plus streamed extraction
 /// with SHA-256 verification and progress events.
+///
+/// Cloning is cheap-ish (the file set is fully materialized in memory) and
+/// extraction is repeatable.
+#[derive(Clone)]
 pub struct ArchivePayload {
     entries: Vec<PayloadEntry>,
     files: HashMap<PathBuf, Vec<u8>>,

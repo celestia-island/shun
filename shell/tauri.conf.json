@@ -1,0 +1,41 @@
+{
+  "productName": "Shun Demo Shell",
+  "version": "0.1.0",
+  "identifier": "world.celestia.shun.demo",
+  "build": {
+    "beforeBuildCommand": "pnpm --dir web build",
+    "frontendDist": "./web/dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "installer",
+        "title": "Shun Demo Shell",
+        "width": 800,
+        "height": 600,
+        "resizable": false,
+        "fullscreen": false,
+        "center": true,
+        "visible": true,
+        "decorations": false,
+        "transparent": false,
+        "shadow": true,
+        "minimizable": true,
+        "maximizable": false,
+        "closable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "windows": {
+      "webviewInstallMode": {
+        "type": "skip"
+      }
+    }
+  }
+}

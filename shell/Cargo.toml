@@ -1,0 +1,29 @@
+[package]
+name = "shun_demo_shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file = "../LICENSE"
+publish = false # demo shell for the shun runtime, never published
+description = "Shun demo shell — hikari UI over the shun install flow"
+
+[[bin]]
+name = "shun-demo-shell"
+path = "src/main.rs"
+
+[build-dependencies]
+shun = { path = ".." }
+tauri-build = "^2"
+
+[dependencies]
+serde.workspace = true
+shun = { path = ".." }
+
+# Direct (non-workspace) deps — a demo shell should build lean.
+tauri = { version = "^2" }
+tauri-plugin-dialog = { version = "^2" }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
