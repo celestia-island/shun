@@ -1,4 +1,4 @@
-<p align="center"><!-- <img src="https://raw.githubusercontent.com/celestia-island/docs.celestia.world/master/res/logo/shun.webp" alt="Shun" width="240" /> --></p>
+<p align="center"><img src="./docs/logo.webp" alt="Shun" width="240" /></p>
 
 <h1 align="center">Shun</h1>
 
@@ -13,17 +13,27 @@
 
 </div>
 
+<div align="center">
+
+**English** ·
+[简体中文](./docs/zh-Hans/README.md)
+
+</div>
+
 ---
 
-Shun packages the **delivery** half of shipping desktop software. One config
-document drives both the build CLI and the runtime shell:
+Shun packages the **delivery** half of shipping desktop software. The
+delivery flow is declared in the application's own `Cargo.toml`
+(`[package.metadata.shun]` — the cargo-deb / cargo-wix pattern) and one
+config document drives both the build CLI and the runtime shell:
 
 - a **payload** — the app directory packed once, embedded into a single-file
   installer or carried as a sidecar;
 - a **flow** — choose a mode, choose a target, stream real progress events;
 - pluggable **targets**:
-  - `install` — NSIS-like registration (ARP entry, uninstaller, shortcuts,
-    deep links) *and* a portable mode that writes no registry at all;
+  - `install` — NSIS-like registration (per-user ARP entry, self-copying
+    uninstaller, start-menu shortcut, deep links) *and* a portable mode that
+    writes no registry at all;
   - `flash` — write an image onto a block device with post-write
     verification.
 
@@ -32,6 +42,43 @@ standard artifact that requires the system runtime, and a fully
 self-contained artifact that carries a **fixed-version WebView2 runtime
 privately** — one copy shared by the installer shell and the installed app
 across install and portable modes, no admin, no system writes.
+
+## Example
+
+The demo examples deliver a stand-in application end to end and double as
+an integration check on a real machine:
+
+```bash
+cargo run --example demo_flash                        # enumerate flash-candidate devices
+cargo run --example demo_install                      # generate ShunDemo.shun + local install
+cargo run --example demo_install -- --portable        # portable install (no registry)
+cargo run --example demo_install -- --uninstall       # remove the install (all traces)
+```
+
+`demo_install` generates the installer package `ShunDemo.shun` (zstd tar +
+SHA-256 manifest) in the working directory, extracts it with streamed
+progress, and — in local mode — performs the NSIS-like registration
+described above. The Tauri demo shell (`shell/`, built on
+[@celestia-island/hikari](https://github.com/celestia-island/hikari))
+renders the same flow with a full UI, embedding the payload at build time.
+
+The delivery manifest itself lives in the demo crate:
+
+```toml
+[package.metadata.shun]
+product = "ShunDemo"
+publisher = "celestia-island"
+payload = "../examples/demo_payload"
+main-exe = "bin/shun-demo.cmd"
+
+[package.metadata.shun.install]
+local = true
+portable = true
+```
+
+See [docs/en/guides/configuration.md](./docs/en/guides/configuration.md)
+([简体中文](./docs/zh-Hans/guides/configuration.md)) for the full reference,
+including the WebView2 strategy matrix.
 
 ## Status
 
@@ -45,34 +92,13 @@ complete. APIs are unstable until `0.1`.
 
 | Path | Role |
 | --- | --- |
-| `src/config.rs` | Config schema — one document for the build CLI and the shell |
+| `src/config.rs` | Config schema + `[package.metadata.shun]` loader |
 | `src/flow.rs` | Flow model — progress events the shell renders |
-| `src/payload.rs` | Payload manifest + streamed extraction |
+| `src/payload.rs` | Payload pack / manifest / streamed extraction |
 | `src/targets/install.rs` | Install target: registration backends, portable mode |
 | `src/targets/flash.rs` | Flash target: block-device write + verify |
-
-The Tauri runtime shell (hikari-based UI) and the build CLI land on top of
-this contract in later iterations.
-
-## Examples
-
-The demo examples deliver a stand-in application (`examples/demo_payload`)
-end to end and double as an integration check on a real machine:
-
-```bash
-cargo run --example demo_flash                        # enumerate flash-candidate devices
-cargo run --example demo_install                      # generate ShunDemo.shun + local install
-cargo run --example demo_install -- --portable        # portable install (no registry)
-cargo run --example demo_install -- --uninstall       # remove the install (all traces)
-```
-
-`demo_install` generates the installer package `ShunDemo.shun` (zstd tar +
-SHA-256 manifest) in the working directory, extracts it with streamed
-progress, and — in local mode — performs the NSIS-like registration: a
-per-user ARP entry (Settings → Apps), a start-menu shortcut, and a
-self-copying `uninstall.exe`. Portable mode writes a `.shun-portable`
-marker instead of touching the registry; every trace of either mode is
-removed by the uninstall pass.
+| `shell/` | Tauri demo shell (hikari UI) over the install flow |
+| `docs/` | Guides and design notes, per locale |
 
 ## Development
 

@@ -17,6 +17,7 @@ exclude = ["docs/", "scripts/", ".github/", "assets/", "justfile", "rust-toolcha
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 tar.workspace = true
 zstd.workspace = true
 sha2.workspace = true
@@ -48,6 +49,7 @@ serde = { version = "^1", features = ["derive"] }
 serde_json = "^1"
 thiserror = "^2"
 tar = "^0.4"
+toml = "^0.9"
 zstd = "^0.13"
 sha2 = "^0.10"
 walkdir = "^2"

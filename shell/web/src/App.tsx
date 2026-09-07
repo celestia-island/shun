@@ -1,41 +1,30 @@
 import { defineComponent, onMounted, ref } from "vue";
-import { HardDrive, Monitor } from "lucide-vue-next";
+import { Box, Monitor, Usb } from "lucide-vue-next";
 import { HButton, HProgressBar, HSelectionGrid } from "@celestia-island/hikari";
 
 import AppTitleBar from "./components/AppTitleBar";
 import { invoke, listen, openDirectory } from "./tauri";
 
 /**
- * Shun demo shell UI — two delivery modes over the shun install flow, with
- * hikari components (AppTitleBar chrome, HSelectionGrid mode picker,
- * HProgressBar fed by the flow's real progress events).
+ * Shun demo shell UI — everything shown is driven by the shun configuration
+ * declared in the shell crate's Cargo.toml (`[package.metadata.shun]`) and
+// served by the `get_config` command: product identity, delivery modes,
+ * and the flash-target placeholder. Rendered with hikari components.
  */
 
 type Mode = "local" | "portable";
 
-const MODE_ITEMS = [
-  {
-    id: "local",
-    title: "安装到本机",
-    description: "NSIS 式注册：ARP 卸载条目、开始菜单快捷方式与卸载器。",
-    badge: "推荐",
-    icon: Monitor,
-  },
-  {
-    id: "portable",
-    title: "便携模式",
-    description: "绿色免注册：只写 .shun-portable 标记，数据全部就地存放。",
-    icon: HardDrive,
-  },
-];
+interface ProductIdentity {
+  name: string;
+  version: string;
+  publisher?: string;
+  logo?: string;
+}
 
-const HINTS: Record<Mode, string> = {
-  local: "登记到系统「应用」列表，可从设置或本界面卸载。",
-  portable: "写入 .shun-portable 标记；卸载即删除整个目录。",
-};
-
-interface DirDefaults {
-  dir: string;
+interface ShellView {
+  product: ProductIdentity;
+  modes: Mode[];
+  flash: boolean;
 }
 
 interface ProgressEvent {
@@ -43,9 +32,30 @@ interface ProgressEvent {
   percent?: number | null;
 }
 
+const MODE_COPY: Record<Mode, { title: string; description: string; icon: typeof Monitor }> = {
+  local: {
+    title: "安装到本机",
+    description: "NSIS 式注册：ARP 卸载条目、开始菜单快捷方式与卸载器。",
+    icon: Monitor,
+  },
+  portable: {
+    title: "便携模式",
+    description: "绿色免注册：只写 .shun-portable 标记，数据全部就地存放。",
+    icon: Usb,
+  },
+};
+
+const HINTS: Record<Mode, string> = {
+  local: "登记到系统「应用」列表，可从设置或本界面卸载。",
+  portable: "写入 .shun-portable 标记；卸载即删除整个目录。",
+};
+
 export default defineComponent({
   name: "ShunDemoApp",
   setup() {
+    const product = ref<ProductIdentity>({ name: "ShunDemo", version: "" });
+    const modes = ref<Mode[]>(["local", "portable"]);
+    const flashDeclared = ref(false);
     const mode = ref<Mode>("local");
     const dir = ref("");
     const hint = ref("");
@@ -64,19 +74,24 @@ export default defineComponent({
     }
 
     onMounted(() => {
-      refreshDefaults().catch((err) => {
-        hint.value = String(err);
-      });
+      invoke<ShellView>("get_config")
+        .then((view) => {
+          product.value = view.product;
+          modes.value = view.modes;
+          flashDeclared.value = view.flash;
+          return refreshDefaults();
+        })
+        .catch((err) => {
+          hint.value = String(err);
+        });
       listen<ProgressEvent>("install-progress", (payload) => {
         if (payload.step) step.value = payload.step;
       });
     });
 
     async function selectMode(id: string | number | boolean | undefined) {
-      if (running.value) return;
+      if (running.value || done.value) return;
       mode.value = (id as Mode) ?? "local";
-      done.value = false;
-      note.value = "";
       await refreshDefaults().catch((err) => {
         hint.value = String(err);
       });
@@ -131,78 +146,93 @@ export default defineComponent({
       }
     }
 
-    return () => (
-      <>
-        <AppTitleBar icon="/logo.webp" title="Shun Demo Shell" showMaximize={false} />
-        <main class="installer">
-          <section class="installer__hero">
-            <h1>选择 ShunDemo 的交付方式</h1>
-            <p>由 shun 安装流驱动的双模式交付演示。</p>
-          </section>
+    return () => {
+      const items = modes.value.map((id) => ({
+        id,
+        ...MODE_COPY[id],
+      }));
+      if (flashDeclared.value) {
+        items.push({
+          id: "flash",
+          title: "镜像烧写",
+          description: "块设备写入与校验 —— 随 evernight 烧写器接入。",
+          icon: Box,
+        });
+      }
 
-          <HSelectionGrid
-            items={MODE_ITEMS}
-            selectedId={mode.value}
-            columns={2}
-            onSelect={(item: { id?: string | number | boolean }) => {
-              if (item.id === "local" || item.id === "portable") {
-                void selectMode(item.id);
-              }
-            }}
-          />
-
-          <section class="installer__target">
-            <label class="installer__label" for="dir-input">
-              安装位置
-            </label>
-            <div class="installer__row">
-              <input
-                id="dir-input"
-                type="text"
-                spellcheck={false}
-                v-model={dir.value}
-                disabled={running.value}
-              />
-              <HButton variant="ghost" disabled={running.value} onClick={browse}>
-                浏览…
-              </HButton>
-            </div>
-            <p class="installer__hint">{hint.value}</p>
-          </section>
-
-          {(running.value || (done.value && step.value)) && (
-            <section class="installer__progress">
-              <HProgressBar
-                status={done.value ? "done" : "loading"}
-                size="md"
-              />
-              {step.value && <p class="installer__step">{step.value}</p>}
-            </section>
-          )}
-
-          <footer class="installer__footer">
-            {note.value && (
-              <p class={`installer__note installer__note--${noteKind.value || "muted"}`}>
-                {note.value}
+      return (
+        <>
+          <AppTitleBar icon="/logo.webp" title="Shun Demo Shell" showMaximize={false} />
+          <main class="installer">
+            <section class="installer__hero">
+              <h1>选择 {product.value.name} 的交付方式</h1>
+              <p>
+                {product.value.version} · 由 shun 安装流驱动的交付演示
+                {product.value.publisher ? ` · ${product.value.publisher}` : ""}
               </p>
+            </section>
+
+            <HSelectionGrid
+              items={items}
+              selectedId={mode.value}
+              columns={items.length > 2 ? 3 : 2}
+              onSelect={(item: { id?: string | number | boolean }) => {
+                if (item.id === "local" || item.id === "portable") {
+                  void selectMode(item.id);
+                }
+              }}
+            />
+
+            <section class="installer__target">
+              <label class="installer__label" for="dir-input">
+                安装位置
+              </label>
+              <div class="installer__row">
+                <input
+                  id="dir-input"
+                  type="text"
+                  spellcheck={false}
+                  v-model={dir.value}
+                  disabled={running.value}
+                />
+                <HButton variant="ghost" disabled={running.value} onClick={browse}>
+                  浏览…
+                </HButton>
+              </div>
+              <p class="installer__hint">{hint.value}</p>
+            </section>
+
+            {(running.value || (done.value && step.value)) && (
+              <section class="installer__progress">
+                <HProgressBar status={done.value ? "done" : "loading"} size="md" />
+                {step.value && <p class="installer__step">{step.value}</p>}
+              </section>
             )}
-            {done.value ? (
-              <HButton variant="danger" disabled={running.value} onClick={remove}>
-                卸载
-              </HButton>
-            ) : (
-              <HButton
-                variant="primary"
-                size="lg"
-                disabled={running.value}
-                onClick={start}
-              >
-                开始安装
-              </HButton>
-            )}
-          </footer>
-        </main>
-      </>
-    );
+
+            <footer class="installer__footer">
+              {note.value && (
+                <p class={`installer__note installer__note--${noteKind.value || "muted"}`}>
+                  {note.value}
+                </p>
+              )}
+              {done.value ? (
+                <HButton variant="danger" disabled={running.value} onClick={remove}>
+                  卸载
+                </HButton>
+              ) : (
+                <HButton
+                  variant="primary"
+                  size="lg"
+                  disabled={running.value}
+                  onClick={start}
+                >
+                  开始安装
+                </HButton>
+              )}
+            </footer>
+          </main>
+        </>
+      );
+    };
   },
 });

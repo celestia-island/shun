@@ -1,4 +1,4 @@
-// hikari stylesheet entry for the installer shell — mirrors webui's
+// hikari stylesheet entry for the shun demo shell — mirrors the
 // hikari.scss: the shared theme foundation plus hikari's admin tokens,
 // WITHOUT the legacy `styles` aggregate (its monorepo-relative imports
 // escape the npm package). Registry installs use the granular subpaths.
@@ -11,10 +11,3 @@
 @use "@celestia-island/hikari/styles/theme/themes.scss" as hikari-themes;
 @use "@celestia-island/hikari/styles/theme/base.scss" as hikari-base;
 @use "@celestia-island/hikari/styles/admin-tokens.scss" as hikari-tokens;
-
-// Live alias kept for app-local scss written against wowsp's older token
-// set: hikari's theme system emits --color-background, wowsp components
-// read --color-bg. A var() reference tracks every theme/mode switch.
-:root {
-  --color-bg: var(--color-background);
-}

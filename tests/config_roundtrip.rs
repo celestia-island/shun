@@ -5,9 +5,12 @@ use shun::config::{
 fn sample() -> ShunConfig {
     ShunConfig {
         product: ProductIdentity {
-            name: "WoWSP".into(),
+            name: "ShunDemo".into(),
+            version: "0.1.0".into(),
+            publisher: Some("celestia-island".into()),
             logo: Some("logo.webp".into()),
         },
+        payload: Some("examples/demo_payload".into()),
         webview2: Some(Webview2Strategy::FixedVersion {
             path: "WebView2Runtime".into(),
         }),

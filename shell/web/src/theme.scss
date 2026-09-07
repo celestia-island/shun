@@ -1,7 +1,7 @@
-/* WoWSP installer shell theme tokens. Adapted from webui's theme.scss
-   (shittim-chest discipline): structural tokens + color RGB-channel
+/* Shun demo shell theme tokens. Following the shittim-chest discipline
+   ): structural tokens + color RGB-channel
    triplets seeded here, consumed by hikari components and app-local scss
-   alike. The installer ships dark-only, so index.html sets
+   alike. The shell ships dark-only, so index.html sets
    <html data-mode="dark"> and this file also pins hikari's theme-package
    tokens (--hi-color-*, normally prefers-color-scheme driven) to the dark
    set — otherwise base typography and HkSelectionGrid render their light
@@ -38,7 +38,7 @@
   --duration-fade: 160ms;
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Default color tokens (light) — kept for parity with webui; the
+  /* Default color tokens (light) — kept for schema parity; the
      installer always runs with [data-mode="dark"] below.
      Values are space-separated RGB channels for `rgb(var(--color-x) / a%)`. */
   --color-primary: 0 120 200;

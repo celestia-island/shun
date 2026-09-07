@@ -5,7 +5,7 @@ import { tauriWindow, type TauriWindow } from "../tauri";
 import "./AppTitleBar.scss";
 
 /**
- * WoWSP shell around hikari's HTitleBar. The upstream component is
+ * Shun shell around hikari's HTitleBar. The upstream component is
  * deliberately shell-agnostic — it renders the bar and emits caption
  * events; this wrapper wires them to the Tauri window via the
  * `withGlobalTauri` global API (the shell frontend carries no
@@ -18,7 +18,7 @@ export default defineComponent({
   name: "AppTitleBar",
   props: {
     icon: { type: String, default: "" },
-    title: { type: String, default: "WoWSP" },
+    title: { type: String, default: "Shun" },
     showMaximize: { type: Boolean, default: true },
   },
   setup(props) {
