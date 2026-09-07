@@ -397,8 +397,11 @@ mod icons {
 }
 
 mod sign {
-    use std::path::{Path, PathBuf};
+    #[cfg(windows)]
+    use std::path::Path;
+    use std::path::PathBuf;
 
+    #[cfg(windows)]
     use super::StdCommand;
     use shun::config::SigningConfig;
 
