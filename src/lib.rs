@@ -23,6 +23,7 @@ pub mod config;
 pub mod error;
 pub mod flow;
 pub mod payload;
+pub mod payload_online;
 pub mod targets;
 
 pub use error::ShunError;

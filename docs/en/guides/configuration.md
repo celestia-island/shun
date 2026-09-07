@@ -45,3 +45,61 @@ require-removable = true                   # refuse non-removable devices
 | `skip` | nothing | system WebView2 | Standard artifact |
 | `evergreen-installer` | Evergreen offline installer (~127 MB) | elevation at install | Registers a system-wide runtime |
 | `fixed-version` | extracted runtime folder | nothing | One private copy shared by the shell and the installed app across install and portable modes |
+
+## Shell UI
+
+`[package.metadata.shun.shell]` (or the `shell` key in a standalone
+document) configures the runtime shell:
+
+```toml
+[shell]
+timeline = "left"          # top (horizontal rail) | left (vertical rail)
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+
+[shell.theme]
+mode = "system"            # system | light | dark
+accent = [34, 211, 238]    # RGB channels — overrides --color-primary
+```
+
+## Source
+
+`[package.metadata.shun.source]` picks where the payload comes from at
+install time:
+
+```toml
+[source]
+type = "embedded"          # the payload archive is embedded in the installer
+```
+
+```toml
+[source]
+type = "online"            # the installer downloads the payload
+url = "https://github.com/<org>/<repo>/releases/latest/download/ShunDemo.shun"
+```
+
+An online installer streams **download → extract → verify in one pass**:
+bytes are verified against the manifest as they arrive, and progress events
+report the download and extract phases concurrently (multi-layer progress).
+Point `url` at your release feed (GitHub Releases or any HTTP host) and the
+installer is updated by simply publishing a new package.
+
+## License and custom steps
+
+```toml
+license = "docs/LICENSE.md"                # markdown, rendered on the license step
+
+[license-locales]                          # per-locale license overrides
+zh-Hans = "docs/LICENSE.zh-Hans.md"
+ja = "docs/LICENSE.ja.md"
+
+[[custom-steps]]                           # inject a markdown content step
+key = "whats-new"
+after = "license"
+title = "What's New"
+markdown = "docs/whats-new.md"
+```
+
+The UI ships eight locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`,
+`ru`, `es`) with default texts; `shell.language = "auto"` follows the
+system, a fixed locale pins it, and per-locale license overrides keep
+localized agreements working.

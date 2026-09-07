@@ -44,3 +44,56 @@ require-removable = true                   # 拒绝非可移动设备
 | `skip` | 无 | 系统 WebView2 | 标准发行物 |
 | `evergreen-installer` | Evergreen 离线安装器（约 127 MB） | 安装时提权 | 注册系统级运行时 |
 | `fixed-version` | 解压后的运行时目录 | 无 | 私有副本由壳与已装应用共享，横跨安装与便携模式 |
+
+## 壳 UI
+
+`[package.metadata.shun.shell]`（独立文档中使用 `shell` 键）配置运行时壳：
+
+```toml
+[shell]
+timeline = "left"          # top（顶部横排）| left（左侧竖排）
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+
+[shell.theme]
+mode = "system"            # system | light | dark
+accent = [34, 211, 238]    # RGB 通道——覆盖 --color-primary
+```
+
+## Payload 来源
+
+`[package.metadata.shun.source]` 选择安装时 payload 的来源：
+
+```toml
+[source]
+type = "embedded"          # payload 归档内嵌于安装器本体
+```
+
+```toml
+[source]
+type = "online"            # 安装器自行下载 payload
+url = "https://github.com/<org>/<repo>/releases/latest/download/ShunDemo.shun"
+```
+
+在线安装器以单次流水线完成 **下载 → 解压 → 校验**：字节到达即按清单校验，
+进度事件同时上报下载与解压两个阶段（多层进度）。把 `url` 指向发布源
+（GitHub Releases 或任意 HTTP 主机），发布新包即完成安装器更新。
+
+## 许可与自定义步骤
+
+```toml
+license = "docs/LICENSE.md"                # markdown，渲染于许可步骤
+
+[license-locales]                          # 分语言许可覆盖
+zh-Hans = "docs/LICENSE.zh-Hans.md"
+ja = "docs/LICENSE.ja.md"
+
+[[custom-steps]]                           # 注入 markdown 内容步骤
+key = "whats-new"
+after = "license"
+title = "What's New"
+markdown = "docs/whats-new.md"
+```
+
+界面内置八种语言的默认文案（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
+`ru`、`es`）；`shell.language = "auto"` 跟随系统，固定语言可直接指定，
+分语言许可覆盖保证本地化协议正常工作。

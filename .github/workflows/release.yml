@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags: [v*]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Windows installer shell
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        run: npm install -g pnpm@11
+
+      - name: Build shell frontend
+        working-directory: shell/web
+        run: |
+          pnpm install
+          pnpm build
+
+      - name: Build demo shell
+        run: cargo build --release -p shun_demo_shell
+
+      - name: Package artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\release\shun-demo-shell.exe dist\shun-demo-shell-windows-x64.exe
+          Compress-Archive -Path dist\shun-demo-shell-windows-x64.exe -DestinationPath shun-demo-shell-windows-x64.zip
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: shun-demo-shell-windows-x64.zip
+
+  build-linux:
+    name: Linux demo binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test --workspace --all-features
+
+      - name: Build examples
+        run: cargo build --release --examples
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/examples/demo_install dist/shun-demo-install-linux-x86_64
+          cp target/release/examples/demo_flash dist/shun-demo-flash-linux-x86_64
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/shun-demo-install-linux-x86_64
+            dist/shun-demo-flash-linux-x86_64

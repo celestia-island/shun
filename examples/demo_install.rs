@@ -120,9 +120,13 @@ fn default_install_dir(product: &str, portable: bool) -> PathBuf {
 fn print_event(event: FlowEvent) {
     match event {
         FlowEvent::Started => println!("▸ flow started"),
-        FlowEvent::Progress { step, percent } => match percent {
-            Some(percent) => println!("  [{percent:>3}%] {step}"),
-            None => println!("  [ ··· ] {step}"),
+        FlowEvent::Progress {
+            phase,
+            step,
+            percent,
+        } => match percent {
+            Some(percent) => println!("  [{percent:>3}%] [{phase:?}] {step}"),
+            None => println!("  [ ··· ] [{phase:?}] {step}"),
         },
         FlowEvent::Completed => println!("✔ flow completed"),
         FlowEvent::Failed { message } => println!("✖ failed: {message}"),

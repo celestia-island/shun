@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
+
 use shun::config::{
-    FlashConfig, InstallConfig, ProductIdentity, ShunConfig, TargetConfig, Webview2Strategy,
+    CustomStepConfig, FlashConfig, InstallConfig, ProductIdentity, ShunConfig, SourceConfig,
+    TargetConfig, ThemeConfig, ThemeMode, Webview2Strategy,
 };
 
 fn sample() -> ShunConfig {
@@ -18,6 +21,25 @@ fn sample() -> ShunConfig {
             TargetConfig::Install(InstallConfig::default()),
             TargetConfig::Flash(FlashConfig::default()),
         ],
+        shell: Some(shun::config::ShellUiConfig {
+            timeline: Some(shun::config::TimelineOrientation::Left),
+            theme: Some(ThemeConfig {
+                mode: Some(ThemeMode::Dark),
+                accent: Some([34, 211, 238]),
+            }),
+            language: Some("zh-Hans".into()),
+        }),
+        source: Some(SourceConfig::Online {
+            url: "https://example.test/ShunDemo.shun".into(),
+        }),
+        license: Some("docs/LICENSE.md".into()),
+        license_locales: BTreeMap::from([("zh-Hans".into(), "docs/LICENSE.zh.md".into())]),
+        custom_steps: vec![CustomStepConfig {
+            key: "whats-new".into(),
+            after: "license".into(),
+            title: "What's New".into(),
+            markdown: "whats-new.md".into(),
+        }],
     }
 }
 

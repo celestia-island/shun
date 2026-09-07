@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::error::ShunError;
-use crate::flow::FlowEvent;
+use crate::flow::{FlowEvent, FlowPhase};
 
 /// Manifest entry name inside the payload archive.
 pub const MANIFEST_PATH: &str = "shun-manifest.json";
@@ -70,13 +70,17 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
             .strip_prefix(source_dir)
             .map_err(|e| ShunError::Config(format!("payload root walk drift: {e}")))?
             .to_path_buf();
+        // The tar format requires forward-slash names; normalize here so
+        // the header and the manifest agree on every platform.
+        let name = relative.to_string_lossy().replace('\\', "/");
+        let normalized = PathBuf::from(&name);
         let bytes = std::fs::read(path)?;
         entries.push(PayloadEntry {
-            path: relative.clone(),
+            path: normalized.clone(),
             size: bytes.len() as u64,
             sha256: sha256_hex(&bytes),
         });
-        contents.insert(relative, bytes);
+        contents.insert(normalized, bytes);
     }
 
     let manifest = serde_json::to_vec(&entries)
@@ -96,7 +100,11 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
             header.set_size(entry.size);
             header.set_mode(0o644);
             header.set_cksum();
-            builder.append_data(&mut header, &entry.path, bytes.as_slice())?;
+            builder.append_data(
+                &mut header,
+                entry.path.to_string_lossy().as_ref(),
+                bytes.as_slice(),
+            )?;
         }
         builder.finish()?;
     }
@@ -187,6 +195,7 @@ impl PayloadSource for ArchivePayload {
 
             done += entry.size;
             on_event(FlowEvent::Progress {
+                phase: FlowPhase::Extract,
                 step: format!("Extracting {}", entry.path.display()),
                 percent: Some((done * 100 / total).min(100) as u8),
             });

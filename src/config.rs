@@ -1,22 +1,23 @@
 //! Declarative configuration — one document drives both the build CLI
 //! (artifact matrix) and the runtime shell (flows).
 //!
-//! Two sources, one schema:
+//! Three sources, one schema:
 //!
-//! - a standalone document (JSON/TOML), or
 //! - **the application's own `Cargo.toml`**, via a
 //!   `[package.metadata.shun]` table (see
 //!   [`ShunConfig::from_cargo_manifest`]) — the cargo-deb / cargo-wix
 //!   pattern. Product identity defaults to `[package]` (`name`, `version`),
-//!   and everything under `metadata.shun` customizes the delivery flow:
-//!   publisher, logo, payload directory, entry point, install modes, and
-//!   the WebView2 strategy.
+//!   and everything under `metadata.shun` customizes the delivery flow;
+//! - a standalone **TOML** document with the same table shape at the top
+//!   level ([`ShunConfig::from_path`]);
+//! - a standalone **JSON** document (the serialized [`ShunConfig`]).
 //!
 //! The schema is settling against three real consumers: the WoWSP installer
 //! shell (install + portable modes, dual WebView2 variants), shittim-chest
 //! local, and the evernight image flasher. Anything not demanded by one of
 //! those stays out.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -38,20 +39,109 @@ pub struct ShunConfig {
 
     /// Delivery targets enabled for this product.
     pub targets: Vec<TargetConfig>,
+
+    /// Runtime shell UI knobs (timeline placement, theme, language).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<ShellUiConfig>,
+
+    /// Where the payload comes from at install time. Defaults to the
+    /// embedded archive; `online` turns the artifact into a web installer
+    /// that streams download → extract → verify in one pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceConfig>,
+
+    /// License document (markdown), relative to the config source. Shown on
+    /// the license step; per-locale overrides via [`Self::license_locales`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<PathBuf>,
+
+    /// Per-locale license overrides keyed by locale (`zh-Hans`, `ja`, ...).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub license_locales: BTreeMap<String, PathBuf>,
+
+    /// Extra content steps injected into the wizard, rendered as markdown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_steps: Vec<CustomStepConfig>,
 }
 
 impl ShunConfig {
     /// Loads the configuration from a `Cargo.toml`.
     ///
-    /// Product identity defaults to the package's own `name` and `version`;
-    /// a `[package.metadata.shun]` table overrides the publisher, logo,
+    /// Product identity defaults to the package's own `name` and `version`
+    /// (`version.workspace = true` inherits from the workspace root); a
+    /// `[package.metadata.shun]` table overrides the publisher, logo,
     /// payload directory, entry point, install modes, and WebView2
     /// strategy.
     pub fn from_cargo_manifest(cargo_toml: &Path) -> Result<Self, crate::error::ShunError> {
         let raw = std::fs::read_to_string(cargo_toml)?;
         let draft: CargoTomlDraft = toml::from_str(&raw)
             .map_err(|e| crate::error::ShunError::Config(format!("manifest parse: {e}")))?;
-        draft.into_config(cargo_toml)
+
+        let package = draft.package;
+        let (name, version, metadata) = match package.version {
+            Some(toml::Value::String(version)) => (package.name, version, package.metadata),
+            Some(table) if table.get("workspace").and_then(toml::Value::as_bool) == Some(true) => {
+                // `version.workspace = true` — inherit from the enclosing
+                // workspace root manifest (one level up).
+                let inherited = cargo_toml
+                    .parent()
+                    .and_then(Path::parent)
+                    .map(|dir| dir.join("Cargo.toml"))
+                    .and_then(|path| std::fs::read_to_string(path).ok())
+                    .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
+                    .and_then(|value| {
+                        value
+                            .get("workspace")?
+                            .get("package")?
+                            .get("version")?
+                            .as_str()
+                            .map(String::from)
+                    });
+                let version = inherited.ok_or_else(|| {
+                    crate::error::ShunError::Config(
+                        "version.workspace = true, but the workspace root declares no version"
+                            .into(),
+                    )
+                })?;
+                (package.name, version, package.metadata)
+            }
+            _ => {
+                return Err(crate::error::ShunError::Config(
+                    "package.version missing or not a string".into(),
+                ));
+            }
+        };
+
+        let base = cargo_toml.parent().unwrap_or(Path::new(""));
+        let shun_meta = metadata.and_then(|m| m.shun).unwrap_or_default();
+        Ok(shun_meta.into_config(name, version, base))
+    }
+
+    /// Loads a standalone shun configuration document. TOML documents use
+    /// the `[package.metadata.shun]` table shape at the top level; JSON
+    /// documents are the serialized [`ShunConfig`].
+    pub fn from_path(path: &Path) -> Result<Self, crate::error::ShunError> {
+        let raw = std::fs::read_to_string(path)?;
+        match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+            "json" => serde_json::from_str(&raw)
+                .map_err(|e| crate::error::ShunError::Config(format!("config parse: {e}"))),
+            "toml" => {
+                let draft: ShunMetadataDraft = toml::from_str(&raw)
+                    .map_err(|e| crate::error::ShunError::Config(format!("config parse: {e}")))?;
+                let name = draft
+                    .product
+                    .clone()
+                    .unwrap_or_else(|| "shun-product".to_string());
+                Ok(draft.into_config(
+                    name,
+                    "0.0.0".to_string(),
+                    path.parent().unwrap_or(Path::new("")),
+                ))
+            }
+            other => Err(crate::error::ShunError::Config(format!(
+                "unsupported config extension: {other}"
+            ))),
+        }
     }
 }
 
@@ -151,6 +241,92 @@ fn default_true() -> bool {
     true
 }
 
+/// Runtime shell UI knobs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct ShellUiConfig {
+    /// Step indicator placement: `top` (horizontal rail) or `left`
+    /// (vertical rail beside the panes).
+    #[serde(default)]
+    pub timeline: Option<TimelineOrientation>,
+
+    /// Theme selection: follow the system, or pin light/dark.
+    #[serde(default)]
+    pub theme: Option<ThemeConfig>,
+
+    /// UI language: `auto` (follow the system) or a fixed locale
+    /// (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`, `ru`, `es`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+/// Step indicator placement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimelineOrientation {
+    /// Horizontal rail across the top (default).
+    #[default]
+    Top,
+    /// Vertical rail beside the panes.
+    Left,
+}
+
+/// Theme selection for the runtime shell.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct ThemeConfig {
+    /// `system` follows the OS preference; `light`/`dark` pin the mode.
+    #[serde(default)]
+    pub mode: Option<ThemeMode>,
+    /// Accent tint override as RGB channels (drives --color-primary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent: Option<[u8; 3]>,
+}
+
+/// Theme mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThemeMode {
+    /// Follow the OS preference.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// Where the payload comes from at install time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum SourceConfig {
+    /// The payload archive is embedded in the installer binary.
+    #[default]
+    Embedded,
+    /// The installer downloads the payload from `url` and streams
+    /// download → extract → verify in a single pass (online installer).
+    Online {
+        /// Release URL of the packed payload (`*.shun`).
+        url: String,
+    },
+}
+
+/// A custom content step injected into the wizard, rendered as markdown.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CustomStepConfig {
+    /// Stable step key used for ordering.
+    pub key: String,
+
+    /// Insert the step after this built-in step key
+    /// (`mode` | `license` | `install`).
+    pub after: String,
+
+    /// Step label on the timeline.
+    pub title: String,
+
+    /// Markdown document, relative to the config source.
+    pub markdown: String,
+}
+
 // ── Cargo.toml draft types ──────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -176,6 +352,7 @@ struct MetadataDraft {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 struct ShunMetadataDraft {
     /// Product name override; defaults to the package name.
     #[serde(default)]
@@ -188,7 +365,7 @@ struct ShunMetadataDraft {
     #[serde(default)]
     payload: Option<String>,
     /// Payload-relative entry point the shortcut targets.
-    #[serde(default, rename = "main-exe")]
+    #[serde(default)]
     main_exe: Option<String>,
     #[serde(default)]
     webview2: Option<Webview2Strategy>,
@@ -198,73 +375,58 @@ struct ShunMetadataDraft {
     /// `[package.metadata.shun.flash]`.
     #[serde(default)]
     flash: Option<FlashConfig>,
+    /// `[package.metadata.shun.shell]` — runtime UI knobs.
+    #[serde(default)]
+    shell: Option<ShellUiConfig>,
+    /// `[package.metadata.shun.source]` — embedded (default) or online.
+    #[serde(default)]
+    source: Option<SourceConfig>,
+    /// License document (markdown), relative to the manifest.
+    #[serde(default)]
+    license: Option<String>,
+    /// Per-locale license overrides keyed by locale.
+    #[serde(default, rename = "license-locales")]
+    license_locales: Option<BTreeMap<String, String>>,
+    /// Custom content steps injected into the wizard.
+    #[serde(default)]
+    custom_steps: Option<Vec<CustomStepConfig>>,
 }
 
-impl CargoTomlDraft {
-    fn into_config(self, manifest_path: &Path) -> Result<ShunConfig, crate::error::ShunError> {
-        let shun = self
-            .package
-            .metadata
-            .and_then(|m| m.shun)
-            .unwrap_or_default();
-
-        let version = match self.package.version {
-            Some(toml::Value::String(version)) => version,
-            Some(table) if table.get("workspace").and_then(toml::Value::as_bool) == Some(true) => {
-                // `version.workspace = true` — inherit from the enclosing
-                // workspace root manifest (one level up).
-                let workspace_manifest = manifest_path
-                    .parent()
-                    .and_then(Path::parent)
-                    .map(|dir| dir.join("Cargo.toml"));
-                let inherited = workspace_manifest
-                    .and_then(|path| std::fs::read_to_string(path).ok())
-                    .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
-                    .and_then(|value| {
-                        value
-                            .get("workspace")?
-                            .get("package")?
-                            .get("version")?
-                            .as_str()
-                            .map(String::from)
-                    });
-                inherited.ok_or_else(|| {
-                    crate::error::ShunError::Config(
-                        "version.workspace = true, but the workspace root declares no version"
-                            .into(),
-                    )
-                })?
-            }
-            _ => {
-                return Err(crate::error::ShunError::Config(
-                    "package.version missing or not a string".into(),
-                ));
-            }
-        };
-
+impl ShunMetadataDraft {
+    fn into_config(self, product_name: String, version: String, _base: &Path) -> ShunConfig {
         let mut targets = Vec::new();
-        match shun.install {
+        match self.install {
             Some(install) => targets.push(TargetConfig::Install(install)),
             None => targets.push(TargetConfig::Install(InstallConfig {
-                main_exe: shun.main_exe.clone().map(PathBuf::from),
+                main_exe: self.main_exe.clone().map(PathBuf::from),
                 ..InstallConfig::default()
             })),
         }
-        if let Some(flash) = shun.flash {
+        if let Some(flash) = self.flash {
             targets.push(TargetConfig::Flash(flash));
         }
 
-        Ok(ShunConfig {
+        ShunConfig {
             product: ProductIdentity {
-                name: shun.product.unwrap_or(self.package.name),
+                name: self.product.unwrap_or(product_name),
                 version,
-                publisher: shun.publisher,
-                logo: shun.logo,
+                publisher: self.publisher,
+                logo: self.logo,
             },
-            payload: shun.payload.map(PathBuf::from),
-            webview2: shun.webview2,
+            payload: self.payload.map(PathBuf::from),
+            webview2: self.webview2,
             targets,
-        })
+            shell: self.shell,
+            source: self.source,
+            license: self.license.map(PathBuf::from),
+            license_locales: self
+                .license_locales
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(k, v)| (k, PathBuf::from(v)))
+                .collect(),
+            custom_steps: self.custom_steps.unwrap_or_default(),
+        }
     }
 }
 
@@ -288,6 +450,11 @@ mod tests {
                 TargetConfig::Install(InstallConfig::default()),
                 TargetConfig::Flash(FlashConfig::default()),
             ],
+            shell: None,
+            source: None,
+            license: None,
+            license_locales: BTreeMap::new(),
+            custom_steps: Vec::new(),
         }
     }
 
@@ -400,5 +567,45 @@ require-removable = true
         let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
         assert_eq!(config.product.name, "app");
         assert_eq!(config.product.version, "2.5.0");
+    }
+
+    #[test]
+    fn loads_shell_ui_and_source_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("shun.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+product = "ShunDemo"
+payload = "payload"
+license-locales = { zh-Hans = "LICENSE.zh.md" }
+
+[shell]
+timeline = "left"
+language = "zh-Hans"
+
+[shell.theme]
+mode = "dark"
+accent = [34, 211, 238]
+
+[source]
+type = "online"
+url = "https://example.test/ShunDemo.shun"
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_path(&config_path).unwrap();
+        let shell = config.shell.expect("shell table parsed");
+        assert_eq!(shell.timeline, Some(TimelineOrientation::Left));
+        assert_eq!(shell.language.as_deref(), Some("zh-Hans"));
+        let theme = shell.theme.expect("theme parsed");
+        assert_eq!(theme.mode, Some(ThemeMode::Dark));
+        assert_eq!(theme.accent, Some([34, 211, 238]));
+        assert!(matches!(
+            config.source,
+            Some(SourceConfig::Online { ref url }) if url == "https://example.test/ShunDemo.shun"
+        ));
+        assert!(config.license_locales.contains_key("zh-Hans"));
     }
 }

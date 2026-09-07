@@ -61,6 +61,12 @@ struct ShellView {
     product: shun::config::ProductIdentity,
     /// Delivery-mode ids the UI should offer, in order.
     modes: Vec<String>,
+    /// Step indicator placement for the wizard layout.
+    timeline: Option<shun::config::TimelineOrientation>,
+    /// Theme knobs for the frontend (mode pin + accent override).
+    theme: Option<shun::config::ThemeConfig>,
+    /// Configured UI language, `None` = follow the system.
+    language: Option<String>,
     /// Whether a flash target is declared (the UI shows it as pending).
     flash: bool,
 }
@@ -86,9 +92,13 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
         .targets
         .iter()
         .any(|t| matches!(t, TargetConfig::Flash(_)));
+    let shell = state.config.shell.clone().unwrap_or_default();
     ShellView {
         product: state.config.product.clone(),
         modes,
+        timeline: shell.timeline,
+        theme: shell.theme,
+        language: shell.language,
         flash,
     }
 }
@@ -96,6 +106,12 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
 #[derive(Serialize)]
 struct DirDefaults {
     dir: String,
+}
+
+fn local_appdata() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 
 fn exe_dir() -> Option<PathBuf> {
@@ -164,10 +180,77 @@ fn uninstall_demo(state: State<'_, AppState>, mode: String, dir: String) -> Resu
     uninstall(&ctx, &WindowsRegistration).map_err(|e| e.to_string())
 }
 
+/// Automated-install arguments (the NSIS `/S` analog): `--silent` skips the
+/// UI and runs the flow headlessly with `--mode=local|portable`,
+/// `--dir=<path>` and an optional `--uninstall`. The host application is
+/// expected to exit cleanly BEFORE invoking the installer with these flags
+/// during an update.
+fn run_headless(
+    args: &[String],
+    config: &ShunConfig,
+    payload: &ArchivePayload,
+) -> Result<(), String> {
+    let mut mode = "local".to_string();
+    let mut dir: Option<PathBuf> = None;
+    let mut uninstall_mode = false;
+    for arg in args {
+        if let Some(value) = arg.strip_prefix("--mode=") {
+            mode = value.to_string();
+        } else if let Some(value) = arg.strip_prefix("--dir=") {
+            dir = Some(PathBuf::from(value));
+        } else if arg == "--uninstall" {
+            uninstall_mode = true;
+        }
+    }
+    let product = config.product.name.clone();
+    let dir = dir.unwrap_or_else(|| match mode.as_str() {
+        "portable" => exe_dir()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+            .join(format!("{product}-portable")),
+        _ => local_appdata().join(&product),
+    });
+    let ctx = InstallContext {
+        product,
+        version: config.product.version.clone(),
+        publisher: config.product.publisher.clone(),
+        install_dir: dir,
+        main_exe: config.targets.iter().find_map(|t| match t {
+            TargetConfig::Install(install) => install.main_exe.clone(),
+            _ => None,
+        }),
+        portable: mode == "portable",
+        estimated_size_kb: 0,
+    };
+    if uninstall_mode {
+        uninstall(&ctx, &WindowsRegistration).map_err(|e| e.to_string())?;
+        println!("shun: uninstalled {}", ctx.install_dir.display());
+        return Ok(());
+    }
+    let flow = InstallFlow {
+        payload,
+        registration: &WindowsRegistration,
+        ctx,
+    };
+    flow.run(&mut |event| println!("{event:?}"))
+        .map_err(|e| e.to_string())?;
+    println!("shun: install complete");
+    Ok(())
+}
+
 fn main() {
     let config: ShunConfig =
         serde_json::from_str(SHUN_CONFIG_JSON).expect("embedded config decodes");
     let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let silent = args.iter().any(|a| a == "--silent" || a == "/S");
+    if silent {
+        if let Err(err) = run_headless(&args, &config, &payload) {
+            eprintln!("shun: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

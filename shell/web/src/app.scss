@@ -128,16 +128,24 @@ body {
   overflow: hidden;
 }
 
-/* The step flow host fills the remaining height between titlebar and
-   footer, and stretches its body so panes can use the full page. */
-.installer > .hk-step-flow {
+/* Wizard layout: the timeline rides on top (horizontal rail) or in a left
+   column (vertical rail) per the delivery manifest. */
+.wizard-layout {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: 18px;
 }
 
-.installer > .hk-step-flow > .hk-stepflow-body {
+.wizard-layout--left {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 22px;
+  align-items: start;
+}
+
+.wizard-layout__pane {
   flex: 1;
   min-height: 0;
   display: flex;
