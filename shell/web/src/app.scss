@@ -124,13 +124,29 @@ body {
 /* ── wizard (HkStepFlow host) ─────────────────────────────────── */
 
 .installer {
-  /* the step flow host fills the page between titlebar and footer */
+  /* the page must not scroll on its own; panes manage their scrolling */
+  overflow: hidden;
+}
+
+/* The step flow host fills the remaining height between titlebar and
+   footer, and stretches its body so panes can use the full page. */
+.installer > .hk-step-flow {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.installer > .hk-step-flow > .hk-stepflow-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .wizard-pane {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -149,9 +165,11 @@ body {
   color: rgb(var(--color-muted));
 }
 
-/* License agreement page — scrollable rendered markdown */
+/* License agreement page — the rendered markdown fills the pane and
+   scrolls inside its own box */
 .license-box {
-  max-height: 300px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 14px 16px;
   border: 1px solid rgb(var(--color-border));
