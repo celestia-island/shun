@@ -1,0 +1,50 @@
+name: Publish crates.io
+
+on:
+  push:
+    tags: [v*]
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Ensure tag is on master
+        run: |
+          git fetch origin master --depth=1
+          if ! git merge-base --is-ancestor HEAD origin/master; then
+            echo "::error::Tag must be on master branch to publish"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.CARGO_HOME }}
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - run: cargo login ${{ secrets.CRATES_IO_API_TOKEN }}
+
+      - name: Skip if already published
+        id: check-exists
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if cargo search shun --limit 1 2>/dev/null | grep -q "^shun = \"${VERSION}\""; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "shun ${VERSION} already on crates.io — skipping"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.check-exists.outputs.published != 'true'
+        run: cargo publish
