@@ -18,6 +18,10 @@ pub enum ShunError {
     #[error("payload entry not found: {0}")]
     MissingEntry(PathBuf),
 
+    /// A JSON (de)serialization step failed.
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+
     /// Filesystem I/O failed.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

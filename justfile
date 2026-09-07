@@ -67,3 +67,15 @@ ci:
     just fmt-check
     just clippy
     just test
+
+# Demo: generate ShunDemo.shun and run a local install (ARP + uninstaller).
+demo-install ARGS='':
+    cargo run --example demo_install -- {{ARGS}}
+
+# Demo: uninstall the demo install.
+demo-uninstall ARGS='':
+    cargo run --example demo_install -- --uninstall {{ARGS}}
+
+# Demo: enumerate flash-candidate devices.
+demo-flash:
+    cargo run --example demo_flash

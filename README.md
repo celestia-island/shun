@@ -54,6 +54,26 @@ complete. APIs are unstable until `0.1`.
 The Tauri runtime shell (hikari-based UI) and the build CLI land on top of
 this contract in later iterations.
 
+## Examples
+
+The demo examples deliver a stand-in application (`examples/demo_payload`)
+end to end and double as an integration check on a real machine:
+
+```bash
+cargo run --example demo_flash                        # enumerate flash-candidate devices
+cargo run --example demo_install                      # generate ShunDemo.shun + local install
+cargo run --example demo_install -- --portable        # portable install (no registry)
+cargo run --example demo_install -- --uninstall       # remove the install (all traces)
+```
+
+`demo_install` generates the installer package `ShunDemo.shun` (zstd tar +
+SHA-256 manifest) in the working directory, extracts it with streamed
+progress, and — in local mode — performs the NSIS-like registration: a
+per-user ARP entry (Settings → Apps), a start-menu shortcut, and a
+self-copying `uninstall.exe`. Portable mode writes a `.shun-portable`
+marker instead of touching the registry; every trace of either mode is
+removed by the uninstall pass.
+
 ## Development
 
 ```bash
