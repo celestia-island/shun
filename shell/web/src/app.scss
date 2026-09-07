@@ -120,3 +120,77 @@ body {
     }
   }
 }
+
+/* ── wizard (HkStepFlow host) ─────────────────────────────────── */
+
+.installer {
+  /* the step flow host fills the page between titlebar and footer */
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.wizard-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  h1 {
+    margin: 0 0 6px;
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: rgb(var(--color-text));
+  }
+}
+
+.wizard-sub {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  color: rgb(var(--color-muted));
+}
+
+/* License agreement page — scrollable rendered markdown */
+.license-box {
+  max-height: 300px;
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: var(--radius-md);
+  background: rgb(var(--color-surface) / 55%);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  user-select: text;
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--color-focused-border) / 60%);
+  }
+}
+
+.wizard-done {
+  align-items: flex-start;
+
+  .wizard-done__title {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: rgb(var(--color-success));
+  }
+
+  .wizard-done__path {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: rgb(var(--color-text));
+  }
+}
+
+.wizard-live {
+  font-size: var(--text-xs);
+  color: rgb(var(--color-muted));
+}
+
+.installer__nav {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
