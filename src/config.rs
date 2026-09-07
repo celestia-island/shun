@@ -50,6 +50,12 @@ pub struct ShunConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceConfig>,
 
+    /// MSIX packaging (Windows): identity, publisher and display strings
+    /// for generating the AppxManifest and a signed-free deployment story
+    /// (Store distribution signs the package for you).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub msix: Option<MsixConfig>,
+
     /// License document (markdown), relative to the config source. Shown on
     /// the license step; per-locale overrides via [`Self::license_locales`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,6 +68,11 @@ pub struct ShunConfig {
     /// Extra content steps injected into the wizard, rendered as markdown.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_steps: Vec<CustomStepConfig>,
+
+    /// Code-signing configuration applied to built artifacts. Absent =
+    /// unsigned artifacts (fine for local testing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signing: Option<SigningConfig>,
 }
 
 impl ShunConfig {
@@ -115,6 +126,16 @@ impl ShunConfig {
         let base = cargo_toml.parent().unwrap_or(Path::new(""));
         let shun_meta = metadata.and_then(|m| m.shun).unwrap_or_default();
         Ok(shun_meta.into_config(name, version, base))
+    }
+
+    /// Dispatches by file shape: a `Cargo.toml` is read via
+    /// [`from_cargo_manifest`], anything else via [`from_path`].
+    pub fn from_any(path: &Path) -> Result<Self, crate::error::ShunError> {
+        if path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml") {
+            Self::from_cargo_manifest(path)
+        } else {
+            Self::from_path(path)
+        }
     }
 
     /// Loads a standalone shun configuration document. TOML documents use
@@ -327,6 +348,71 @@ pub struct CustomStepConfig {
     pub markdown: String,
 }
 
+/// Code-signing configuration for built artifacts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct SigningConfig {
+    /// Windows Authenticode signing (signtool).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<WindowsSigningConfig>,
+    /// macOS codesign profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub macos: Option<MacSigningConfig>,
+}
+
+/// Windows Authenticode signing via signtool.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct WindowsSigningConfig {
+    /// Sign the produced binaries.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Certificate thumbprint — selects a certificate from the user or
+    /// machine store (signtool /sha1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbprint: Option<String>,
+    /// RFC 3161 timestamp server (signtool /tr + /td SHA256).
+    #[serde(default = "default_timestamp_url")]
+    pub timestamp_url: String,
+}
+
+/// macOS codesign profile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct MacSigningConfig {
+    /// Sign the produced bundles (codesign --sign).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Signing identity passed to codesign --sign.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+}
+
+fn default_timestamp_url() -> String {
+    "http://timestamp.digicert.com".to_string()
+}
+
+/// MSIX packaging inputs (Windows). The manifest is generated from these
+/// fields; the identity publisher MUST match the signing certificate
+/// subject, or the package will not install.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct MsixConfig {
+    /// Identity Name — no spaces (Package Identity).
+    pub identity_name: String,
+    /// Identity Publisher — must equal the signing cert subject
+    /// (e.g. `CN=celestia-island`).
+    pub publisher: String,
+    /// Display name shown in the Start menu / Settings.
+    pub display_name: String,
+    /// Package description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Payload-relative path of the app executable (full-trust entry).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<PathBuf>,
+}
+
 // ── Cargo.toml draft types ──────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -390,6 +476,12 @@ struct ShunMetadataDraft {
     /// Custom content steps injected into the wizard.
     #[serde(default)]
     custom_steps: Option<Vec<CustomStepConfig>>,
+    /// `[package.metadata.shun.signing]` — code-signing profile.
+    #[serde(default)]
+    signing: Option<SigningConfig>,
+    /// `[package.metadata.shun.msix]` — MSIX packaging inputs.
+    #[serde(default)]
+    msix: Option<MsixConfig>,
 }
 
 impl ShunMetadataDraft {
@@ -426,6 +518,8 @@ impl ShunMetadataDraft {
                 .map(|(k, v)| (k, PathBuf::from(v)))
                 .collect(),
             custom_steps: self.custom_steps.unwrap_or_default(),
+            signing: self.signing,
+            msix: self.msix,
         }
     }
 }
@@ -455,6 +549,8 @@ mod tests {
             license: None,
             license_locales: BTreeMap::new(),
             custom_steps: Vec::new(),
+            signing: None,
+            msix: None,
         }
     }
 

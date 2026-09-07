@@ -45,5 +45,12 @@ main-exe = "bin/shun-demo.cmd"
 local = true
 portable = true
 
+[package.metadata.shun.msix]
+identity-name = "ShunDemo"
+publisher = "CN=celestia-island"
+display-name = "ShunDemo"
+description = "Shun delivery demo"
+executable = "bin/shun-demo.exe"
+
 [package.metadata.shun.webview2]
 type = "skip"

@@ -23,15 +23,24 @@ zstd.workspace = true
 sha2.workspace = true
 walkdir.workspace = true
 ureq = { version = "^2", optional = true }
+clap = { version = "^4", features = ["derive"], optional = true }
+image = { version = "^0.25", default-features = false, features = ["ico", "png", "webp"], optional = true }
 
 [features]
-default = ["online"]
+default = ["online", "cli"]
 online = ["dep:ureq"]
+# The `shun` CLI binary: artifact builder, packer, icon tooling, signing.
+cli = ["dep:clap", "dep:image", "online"]
 
 [target.'cfg(windows)'.dependencies]
 winreg = "^0.56"
 mslnk = "^0.1.8"
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+
+[[bin]]
+name = "shun"
+path = "src/bin/shun.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 tempfile = "^3"

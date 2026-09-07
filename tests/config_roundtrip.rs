@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use shun::config::{
-    CustomStepConfig, FlashConfig, InstallConfig, ProductIdentity, ShunConfig, SourceConfig,
-    TargetConfig, ThemeConfig, ThemeMode, Webview2Strategy,
+    CustomStepConfig, FlashConfig, InstallConfig, ProductIdentity, ShunConfig, SigningConfig,
+    SourceConfig, TargetConfig, ThemeConfig, ThemeMode, Webview2Strategy,
 };
 
 fn sample() -> ShunConfig {
@@ -40,6 +40,21 @@ fn sample() -> ShunConfig {
             title: "What's New".into(),
             markdown: "whats-new.md".into(),
         }],
+        msix: Some(shun::config::MsixConfig {
+            identity_name: "ShunDemo".into(),
+            publisher: "CN=celestia-island".into(),
+            display_name: "ShunDemo".into(),
+            description: Some("Shun delivery demo".into()),
+            executable: Some("bin/shun-demo.cmd".into()),
+        }),
+        signing: Some(SigningConfig {
+            windows: Some(shun::config::WindowsSigningConfig {
+                enabled: true,
+                thumbprint: Some("0123456789abcdef".into()),
+                timestamp_url: "http://timestamp.digicert.com".into(),
+            }),
+            macos: None,
+        }),
     }
 }
 

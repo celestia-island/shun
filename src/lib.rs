@@ -22,6 +22,7 @@
 pub mod config;
 pub mod error;
 pub mod flow;
+pub mod msix;
 pub mod payload;
 pub mod payload_online;
 pub mod targets;
