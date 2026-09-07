@@ -47,6 +47,13 @@ jobs:
             ${{ matrix.os }}-${{ matrix.rust }}-cargo-
             ${{ matrix.os }}-cargo-
 
+      - name: Build shell frontend
+        working-directory: shell/web
+        run: |
+          npm install -g pnpm@11
+          pnpm install
+          pnpm build
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

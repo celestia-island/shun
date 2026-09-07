@@ -47,6 +47,7 @@ pub trait FlashTarget {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LogicalDrives;
 
+#[cfg(windows)]
 const DRIVE_REMOVABLE: u32 = 2;
 
 #[cfg(windows)]
