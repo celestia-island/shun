@@ -74,13 +74,14 @@ to end**; the cost is the payload.
   `webview2_available`): UI rendered (offline screenshot verified) and
   **all six renderer processes came from the carried folder**, not the
   system Evergreen install.
-- Verdict: feasible but heavy. A single-file installer grows by ~300 MB
-  compressed; compare `evergreen-installer` (~127 MB offline installer,
-  system-wide, needs elevation once). Fixed-version makes sense only
-  for air-gapped/locked-down fleets or strict version pinning — the
-  existing `fixed-version` strategy in the manifest describes exactly
-  this deployment; the egui fallback remains the zero-cost floor for
-  machines with nothing at all.
+- Verdict: feasible; the ~300 MB cost is **accepted** (in line with
+  other packagers). The double-copy concern is engineered away: the
+  artifact embeds ONE copy — the shell bootstraps itself from the
+  payload's runtime subtree (`extract_prefix` staging + hash-aware
+  reuse in extraction), so the installer and the installed app share
+  it; see the WebView2 strategies section in configuration.md. The
+  egui fallback remains the zero-cost floor for machines with nothing
+  at all.
 
 
 ## Embedded Python (researched, feasible)

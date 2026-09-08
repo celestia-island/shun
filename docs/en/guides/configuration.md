@@ -47,6 +47,15 @@ require-removable = true                   # refuse non-removable devices
 | `evergreen-installer` | Evergreen offline installer (~127 MB) | elevation at install | Registers a system-wide runtime |
 | `fixed-version` | extracted runtime folder | nothing | One private copy shared by the shell and the installed app across install and portable modes |
 
+Measured (2026-09, v151 x64): the fixed-version runtime is **~293 MB
+compressed / ~661 MB unpacked** — an accepted cost, in line with other
+packagers' output. The artifact embeds exactly **one** copy: the shell
+bootstraps itself by staging the payload's runtime subtree into
+`%LOCALAPPDATA%\shun\<product>\webview2` and pointing
+`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` there; extraction is hash-aware, so
+re-installs and pre-staged files are adopted instead of rewritten
+("Reusing" progress events) — no second copy of the same engine.
+
 ## MSIX logo plate
 
 Windows plates the logo of a packaged desktop app over a default system

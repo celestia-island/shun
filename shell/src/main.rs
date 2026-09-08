@@ -244,6 +244,39 @@ fn run_headless(
     Ok(())
 }
 
+/// Stages the payload's fixed-version WebView2 runtime into the shun
+/// cache and points the WebView2 loader at it. Idempotent: hash-aware
+/// staging reuses an already-cached copy, so this costs nothing after
+/// the first run. On any failure the caller's normal detection applies
+/// (system runtime, or the egui fallback).
+fn bootstrap_fixed_webview2(config: &ShunConfig, payload: &ArchivePayload) {
+    let runtime_path = match config.webview2.as_ref() {
+        Some(shun::config::Webview2Strategy::FixedVersion { path }) => PathBuf::from(path),
+        _ => return,
+    };
+    let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) else {
+        eprintln!("shun: no LOCALAPPDATA to cache the fixed-version runtime in");
+        return;
+    };
+    let cache = local
+        .join("shun")
+        .join(&config.product.name)
+        .join("webview2");
+    if let Err(err) = payload.extract_prefix(&cache, &runtime_path, &mut |_| {}) {
+        eprintln!("shun: staging the fixed-version runtime failed ({err}); falling back");
+        return;
+    }
+    // Safety: single-threaded bootstrap before any UI or worker thread
+    // exists, and the loader must find the variable before WebView2 is
+    // first initialized.
+    unsafe {
+        std::env::set_var(
+            "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+            cache.join(&runtime_path),
+        );
+    }
+}
+
 fn main() {
     let config: ShunConfig =
         serde_json::from_str(SHUN_CONFIG_JSON).expect("embedded config decodes");
@@ -272,6 +305,13 @@ fn main() {
             .and_then(|v| v.parse().ok())
     });
     let delay = screenshot_delay.unwrap_or(4000);
+
+    // One-copy WebView2 bootstrap: when the manifest ships a
+    // fixed-version runtime INSIDE the payload, stage just that subtree
+    // into a cache dir and run on it. The installer shell and the
+    // installed app then share a single embedded copy (hash-aware
+    // extraction adopts the staged files instead of rewriting them).
+    bootstrap_fixed_webview2(&config, &payload);
 
     // UI engine selection: Tauri renders through WebView2 on Windows and
     // there is no alternative engine inside Tauri — when the runtime is

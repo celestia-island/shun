@@ -58,3 +58,96 @@ fn manifest_paths_are_relative() {
         assert_eq!(entry.sha256.len(), 64);
     }
 }
+
+/// Counts extraction events whose step label starts with `marker`.
+fn count_steps(payload: &ArchivePayload, dest: &std::path::Path, marker: &str) -> usize {
+    let mut count = 0;
+    payload
+        .extract(dest, &mut |event| {
+            if let FlowEvent::Progress { step, .. } = event {
+                if step.starts_with(marker) {
+                    count += 1;
+                }
+            }
+        })
+        .unwrap();
+    count
+}
+
+#[test]
+fn extraction_reuses_identical_files_and_rewrites_drifted_ones() {
+    // Build a tiny synthetic payload: two files, so drift can hit one.
+    let source = tempfile::tempdir().unwrap();
+    std::fs::write(source.path().join("a.txt"), b"alpha").unwrap();
+    std::fs::create_dir(source.path().join("sub")).unwrap();
+    std::fs::write(source.path().join("sub").join("b.txt"), b"beta").unwrap();
+    let archive = pack_directory(source.path()).unwrap();
+    let payload = ArchivePayload::from_bytes(&archive).unwrap();
+
+    let dest = tempfile::tempdir().unwrap();
+    let extracted = count_steps(&payload, dest.path(), "Extracting");
+    assert_eq!(extracted, 2);
+
+    // Second pass over identical bytes: every entry reused, none written.
+    let reused = count_steps(&payload, dest.path(), "Reusing");
+    assert_eq!(reused, 2);
+
+    // Drift one file: it is rewritten, the untouched one still reused.
+    std::fs::write(dest.path().join("a.txt"), b"drifted").unwrap();
+    let reused = count_steps(&payload, dest.path(), "Reusing");
+    assert_eq!(reused, 1);
+    assert_eq!(std::fs::read(dest.path().join("a.txt")).unwrap(), b"alpha");
+}
+
+#[test]
+fn extract_prefix_stages_only_the_subtree() {
+    let source = tempfile::tempdir().unwrap();
+    std::fs::write(source.path().join("top.txt"), b"top").unwrap();
+    std::fs::create_dir_all(source.path().join("WebView2Runtime").join("x64")).unwrap();
+    std::fs::write(
+        source
+            .path()
+            .join("WebView2Runtime")
+            .join("x64")
+            .join("engine.bin"),
+        b"engine",
+    )
+    .unwrap();
+    let archive = pack_directory(source.path()).unwrap();
+    let payload = ArchivePayload::from_bytes(&archive).unwrap();
+
+    let dest = tempfile::tempdir().unwrap();
+    let written = payload
+        .extract_prefix(
+            dest.path(),
+            std::path::Path::new("WebView2Runtime"),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(written, b"engine".len() as u64);
+    assert!(
+        dest.path()
+            .join("WebView2Runtime")
+            .join("x64")
+            .join("engine.bin")
+            .is_file()
+    );
+    assert!(!dest.path().join("top.txt").exists());
+
+    // Restaging the same subtree reuses everything: zero bytes written.
+    let written = payload
+        .extract_prefix(
+            dest.path(),
+            std::path::Path::new("WebView2Runtime"),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(written, 0);
+
+    // Unknown prefixes are an error, not an empty stage.
+    assert!(
+        payload
+            .extract_prefix(dest.path(), std::path::Path::new("nope"), &mut |_| {})
+            .is_err()
+    );
+}
