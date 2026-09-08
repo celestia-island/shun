@@ -65,18 +65,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("✔ installer package written: {}", package_path.display());
 
     let install_dir = install_dir.unwrap_or_else(|| default_install_dir(&product, portable));
-    let ctx = InstallContext {
-        version: config.product.version.clone(),
-        publisher: config.product.publisher.clone(),
-        main_exe: config.targets.iter().find_map(|t| match t {
-            TargetConfig::Install(install) => install.main_exe.clone(),
-            _ => None,
-        }),
+    let mut ctx = InstallContext::new(
         product,
+        config.product.version.clone(),
         install_dir,
         portable,
-        estimated_size_kb: 0,
-    };
+    );
+    ctx.publisher = config.product.publisher.clone();
+    ctx.main_exe = config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => install.main_exe.clone(),
+        _ => None,
+    });
+    if let Some(install) = config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => Some(install),
+        _ => None,
+    }) {
+        // Headless demo: the `ask` policy resolves to its default-checked
+        // answer.
+        ctx.apply_config(install, shun::targets::install::WizardAnswers::defaults());
+    }
 
     // The entry executable only exists in the payload once the demo app
     // is staged (`just demo-payload`); local installs create a shortcut

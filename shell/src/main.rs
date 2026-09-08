@@ -40,26 +40,36 @@ struct AppState {
 }
 
 impl AppState {
-    fn install_context(&self, mode: &str, dir: &str) -> Result<InstallContext, String> {
-        let install = self
-            .config
+    fn install_target(&self) -> Result<shun::config::InstallConfig, String> {
+        self.config
             .targets
             .iter()
             .find_map(|t| match t {
                 TargetConfig::Install(install) => Some(install.clone()),
                 _ => None,
             })
-            .ok_or_else(|| "此配置未声明安装目标".to_string())?;
+            .ok_or_else(|| "此配置未声明安装目标".to_string())
+    }
 
-        Ok(InstallContext {
-            product: self.config.product.name.clone(),
-            version: self.config.product.version.clone(),
-            publisher: self.config.product.publisher.clone(),
-            install_dir: PathBuf::from(dir),
-            main_exe: install.main_exe.clone(),
-            portable: mode == "portable",
-            estimated_size_kb: 0,
-        })
+    /// The wizard's answers to the `ask` policies (desktop checkbox,
+    /// install scope).
+    fn install_context(
+        &self,
+        mode: &str,
+        dir: &str,
+        answers: shun::targets::install::WizardAnswers,
+    ) -> Result<InstallContext, String> {
+        let install = self.install_target()?;
+        let mut ctx = InstallContext::new(
+            self.config.product.name.clone(),
+            self.config.product.version.clone(),
+            PathBuf::from(dir),
+            mode == "portable",
+        );
+        ctx.publisher = self.config.product.publisher.clone();
+        ctx.main_exe = install.main_exe.clone();
+        ctx.apply_config(&install, answers);
+        Ok(ctx)
     }
 }
 
@@ -68,6 +78,8 @@ struct ShellView {
     product: shun::config::ProductIdentity,
     /// Delivery-mode ids the UI should offer, in order.
     modes: Vec<String>,
+    /// The resolved wizard pipeline (ordered steps with inlined bodies).
+    steps: Vec<shun::config::ResolvedStep>,
     /// Step indicator placement for the wizard layout.
     timeline: Option<shun::config::TimelineOrientation>,
     /// Theme knobs for the frontend (mode pin + accent override).
@@ -103,6 +115,10 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
     ShellView {
         product: state.config.product.clone(),
         modes,
+        // The wizard pipeline, resolved at build time (markdown bodies
+        // inlined into shun-steps.json next to the config).
+        steps: serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json")))
+            .expect("embedded wizard pipeline parses"),
         timeline: shell.timeline,
         theme: shell.theme,
         language: shell.language,
@@ -160,12 +176,25 @@ fn start_install(
     state: State<'_, AppState>,
     mode: String,
     dir: String,
+    // The wizard's answers to the `ask` policies; absent values (older
+    // front-ends) resolve to the defaults (desktop on, per-user).
+    desktop: Option<bool>,
+    machine: Option<bool>,
 ) -> Result<(), String> {
     let dir = dir.trim().trim_end_matches('\\').to_string();
     if dir.is_empty() {
         return Err("安装目录不能为空".into());
     }
-    let ctx = state.install_context(&mode, &dir)?;
+    let answers = shun::targets::install::WizardAnswers {
+        desktop_shortcut: desktop.unwrap_or(true),
+        machine: machine.unwrap_or(false),
+    };
+    let ctx = state.install_context(&mode, &dir, answers)?;
+
+    // Machine scope needs an elevated token; re-launch this binary under
+    // UAC carrying the resolved answers, headlessly.
+    ensure_elevated_for(&ctx, &mode, &dir, answers, false)?;
+    let _ = &app;
 
     let payload = state.payload.clone();
     let flow = InstallFlow {
@@ -183,13 +212,53 @@ fn uninstall_demo(state: State<'_, AppState>, mode: String, dir: String) -> Resu
     if dir.is_empty() {
         return Err("安装目录不能为空".into());
     }
-    let ctx = state.install_context(&mode, &dir)?;
+    let answers = shun::targets::install::WizardAnswers::defaults();
+    let ctx = state.install_context(&mode, &dir, answers)?;
+    ensure_elevated_for(&ctx, &mode, &dir, answers, true)?;
     uninstall(&ctx, &WindowsRegistration).map_err(|e| e.to_string())
+}
+
+/// When the resolved install scope is machine-wide and the current
+/// process is not elevated, re-launches this executable under UAC with
+/// the same choices (headless) and exits. A declined UAC prompt surfaces
+/// as an error the wizard can show. No-op for per-user installs.
+pub(crate) fn ensure_elevated_for(
+    ctx: &InstallContext,
+    mode: &str,
+    dir: &str,
+    answers: shun::targets::install::WizardAnswers,
+    uninstalling: bool,
+) -> Result<(), String> {
+    use shun::targets::install::InstallScope;
+    if ctx.scope != InstallScope::Machine || shun::targets::elevate::is_elevated() {
+        return Ok(());
+    }
+    let mut args = format!("--silent --mode={mode} --dir=\"{}\"", dir.trim());
+    if !answers.desktop_shortcut {
+        args.push_str(" --no-desktop");
+    }
+    args.push_str(" --scope=machine");
+    if uninstalling {
+        args.push_str(" --uninstall");
+    }
+    match shun::targets::elevate::relaunch_elevated(&args) {
+        Ok(true) => {
+            // The elevated copy carries on; this (unelevated) instance is
+            // done. Give the front-end a beat to flush, then exit.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::process::exit(0);
+        }
+        Ok(false) => Err("需要管理员权限才能进行机器级安装（UAC 被拒绝）/ \
+                          machine-wide install needs the UAC prompt to be accepted"
+            .into()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Automated-install arguments (headless mode): `--silent` skips the
 /// UI and runs the flow headlessly with `--mode=local|portable`,
-/// `--dir=<path>` and an optional `--uninstall`. The host application is
+/// `--dir=<path>`, `--scope=user|machine`, `--desktop`/`--no-desktop`
+/// and an optional `--uninstall`. The host application is
 /// expected to exit cleanly BEFORE invoking the installer with these flags
 /// during an update.
 fn run_headless(
@@ -200,13 +269,25 @@ fn run_headless(
     let mut mode = "local".to_string();
     let mut dir: Option<PathBuf> = None;
     let mut uninstall_mode = false;
+    let mut desktop: Option<bool> = None;
+    let mut machine: Option<bool> = None;
     for arg in args {
         if let Some(value) = arg.strip_prefix("--mode=") {
             mode = value.to_string();
         } else if let Some(value) = arg.strip_prefix("--dir=") {
-            dir = Some(PathBuf::from(value));
-        } else if arg == "--uninstall" {
+            dir = Some(PathBuf::from(value.trim_matches('"')));
+        } else if arg == "--uninstall" || arg == "/uninstall" {
+            // `/uninstall` is what the ARP UninstallString passes; the
+            // double dash spelling stays for script symmetry.
             uninstall_mode = true;
+        } else if arg == "--desktop" {
+            desktop = Some(true);
+        } else if arg == "--no-desktop" {
+            desktop = Some(false);
+        } else if arg == "--scope=machine" {
+            machine = Some(true);
+        } else if arg == "--scope=user" {
+            machine = Some(false);
         }
     }
     let product = config.product.name.clone();
@@ -214,20 +295,40 @@ fn run_headless(
         "portable" => exe_dir()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
             .join(format!("{product}-portable")),
-        _ => local_appdata().join(&product),
+        _ => match machine {
+            // Machine-wide installs land in Program Files by default.
+            Some(true) => std::env::var_os("ProgramFiles")
+                .map(|root| PathBuf::from(root).join(&product))
+                .unwrap_or_else(|| local_appdata().join(&product)),
+            _ => local_appdata().join(&product),
+        },
     });
-    let ctx = InstallContext {
+    let mut ctx = InstallContext::new(
         product,
-        version: config.product.version.clone(),
-        publisher: config.product.publisher.clone(),
-        install_dir: dir,
-        main_exe: config.targets.iter().find_map(|t| match t {
-            TargetConfig::Install(install) => install.main_exe.clone(),
-            _ => None,
-        }),
-        portable: mode == "portable",
-        estimated_size_kb: 0,
+        config.product.version.clone(),
+        dir,
+        mode == "portable",
+    );
+    ctx.publisher = config.product.publisher.clone();
+    ctx.main_exe = config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => install.main_exe.clone(),
+        _ => None,
+    });
+    let answers = shun::targets::install::WizardAnswers {
+        desktop_shortcut: desktop.unwrap_or(true),
+        machine: machine.unwrap_or(false),
     };
+    if let Some(install) = config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => Some(install),
+        _ => None,
+    }) {
+        ctx.apply_config(install, answers);
+    }
+    // The elevation gate for machine scope: re-launch under UAC when the
+    // answers (or a `machine` policy) resolved machine-wide and this
+    // process is not elevated.
+    let dir_display = ctx.install_dir.display().to_string();
+    ensure_elevated_for(&ctx, &mode, &dir_display, answers, uninstall_mode)?;
     if uninstall_mode {
         uninstall(&ctx, &WindowsRegistration).map_err(|e| e.to_string())?;
         println!("shun: uninstalled {}", ctx.install_dir.display());
@@ -276,6 +377,10 @@ fn bootstrap_fixed_webview2(config: &ShunConfig, payload: &ArchivePayload) {
         );
     }
 }
+
+/// The resolved wizard pipeline, embedded at build time (markdown
+/// bodies inlined).
+const SHUN_STEPS_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json"));
 
 fn main() {
     let config: ShunConfig =
@@ -329,7 +434,14 @@ fn main() {
             let title = fallback::window_title(&config);
             screenshot::schedule_by_title(title, path, screenshot_delay.unwrap_or(2500));
         }
-        fallback::run(config, payload, reason, LOGO_KIND.trim(), LOGO_BYTES);
+        fallback::run(
+            config,
+            payload,
+            reason,
+            LOGO_KIND.trim(),
+            LOGO_BYTES,
+            serde_json::from_str(SHUN_STEPS_JSON).expect("embedded wizard pipeline parses"),
+        );
         return;
     }
 

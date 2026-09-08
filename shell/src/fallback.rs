@@ -200,8 +200,17 @@ struct Texts {
     banner_missing: &'static str,
     banner_manual: &'static str,
     step_mode: &'static str,
+    step_scope: &'static str,
+    step_license: &'static str,
     step_install: &'static str,
     step_done: &'static str,
+    next: &'static str,
+    back: &'static str,
+    license_agree: &'static str,
+    scope_user: &'static str,
+    scope_user_hint: &'static str,
+    scope_machine: &'static str,
+    scope_machine_hint: &'static str,
     mode_local: &'static str,
     mode_local_hint: &'static str,
     mode_portable: &'static str,
@@ -209,6 +218,7 @@ struct Texts {
     dir_label: &'static str,
     browse: &'static str,
     dir_empty: &'static str,
+    desktop_shortcut: &'static str,
     hint_local: &'static str,
     hint_portable: &'static str,
     install: &'static str,
@@ -233,8 +243,17 @@ const TEXTS_ZH: Texts = Texts {
     banner_missing: "未检测到 WebView2 运行时（缺失必要环境）—— 已自动切换至离线降级安装界面。安装功能不受影响，界面不带特效。",
     banner_manual: "已通过命令行参数 --fallback 手动启用离线降级安装界面（离线版本，不带特效）。",
     step_mode: "交付方式",
+    step_scope: "安装范围",
+    step_license: "许可协议",
     step_install: "安装",
     step_done: "完成",
+    next: "下一步",
+    back: "上一步",
+    license_agree: "我已阅读并同意上述许可协议",
+    scope_user: "仅为我安装",
+    scope_user_hint: "每用户安装：写入当前用户的注册表与开始菜单，全程无需管理员权限。",
+    scope_machine: "为本机所有用户安装",
+    scope_machine_hint: "机器级安装：写入 HKLM 与全局开始菜单，确认后 Windows 将请求管理员权限（UAC）。",
     mode_local: "安装到本机",
     mode_local_hint: "直接 Windows 注册：ARP 卸载条目、开始菜单快捷方式与卸载器。",
     mode_portable: "便携模式",
@@ -242,6 +261,7 @@ const TEXTS_ZH: Texts = Texts {
     dir_label: "安装位置",
     browse: "浏览…",
     dir_empty: "安装目录不能为空",
+    desktop_shortcut: "创建桌面快捷方式",
     hint_local: "登记到系统「应用」列表，可从设置或本界面卸载。",
     hint_portable: "写入 .shun-portable 标记；卸载即删除整个目录。",
     install: "开始安装",
@@ -266,8 +286,17 @@ const TEXTS_EN: Texts = Texts {
     banner_missing: "WebView2 runtime not detected (missing required environment) — switched to the offline fallback installer. Installation is fully functional; the UI carries no effects.",
     banner_manual: "Offline fallback installer enabled manually via --fallback (the no-effects offline version).",
     step_mode: "Delivery mode",
+    step_scope: "Install scope",
+    step_license: "License",
     step_install: "Install",
     step_done: "Done",
+    next: "Next",
+    back: "Back",
+    license_agree: "I have read and agree to the license above",
+    scope_user: "Install for me only",
+    scope_user_hint: "Per-user install: current user's registry and Start Menu; no administrator needed.",
+    scope_machine: "Install for all users of this PC",
+    scope_machine_hint: "Machine-wide install: HKLM and the all-users Start Menu; Windows will ask for administrator (UAC) on confirm.",
     mode_local: "Install to this PC",
     mode_local_hint: "direct Windows registration: ARP entry, start-menu shortcut, uninstaller.",
     mode_portable: "Portable",
@@ -275,6 +304,7 @@ const TEXTS_EN: Texts = Texts {
     dir_label: "Install location",
     browse: "Browse…",
     dir_empty: "Install directory cannot be empty",
+    desktop_shortcut: "Create a desktop shortcut",
     hint_local: "Registered in system Apps; uninstall from Settings or here.",
     hint_portable: "Writes a .shun-portable marker; uninstalling removes the folder.",
     install: "Install",
@@ -375,6 +405,29 @@ fn default_dir(config: &ShunConfig, mode: &str) -> PathBuf {
     }
 }
 
+/// Whether the install target's desktop-shortcut policy is `ask` (the
+/// wizard checkbox); `always`/`never` never consult the user.
+fn desktop_policy_asks(config: &ShunConfig) -> bool {
+    install_of(config)
+        .map(|install| install.desktop_shortcut == shun::config::DesktopShortcutPolicy::Ask)
+        .unwrap_or(false)
+}
+
+/// Whether the install target's scope policy is `ask` (the wizard
+/// choice); `user`/`machine` never consult the user.
+fn scope_policy_asks(config: &ShunConfig) -> bool {
+    install_of(config)
+        .map(|install| install.scope == shun::config::ScopePolicy::Ask)
+        .unwrap_or(false)
+}
+
+fn install_of(config: &ShunConfig) -> Option<&shun::config::InstallConfig> {
+    config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => Some(install),
+        _ => None,
+    })
+}
+
 /// One wizard instance over the embedded config + payload.
 struct FallbackApp {
     config: ShunConfig,
@@ -387,6 +440,18 @@ struct FallbackApp {
     stage: Stage,
     mode: &'static str,
     dir: String,
+    /// The wizard's answer to the `ask` desktop-shortcut policy
+    /// (default checked, the NSIS convention).
+    desktop_shortcut: bool,
+    /// The wizard's answer to the `ask` install-scope policy
+    /// (default per-user).
+    machine: bool,
+    /// The resolved wizard pipeline (ordered steps, bodies inlined).
+    steps: Vec<shun::config::ResolvedStep>,
+    /// Cursor into `steps` while on `Stage::Configure`.
+    step: usize,
+    /// The license checkbox (`license` steps gate progression on it).
+    license_accepted: bool,
     /// Current progress step + percent (`None` while indeterminate).
     progress: Option<(String, Option<u8>)>,
     /// Delivery phases already finished (the checklist ticks them off).
@@ -408,6 +473,7 @@ impl FallbackApp {
         zh: bool,
         receiver: Receiver<WorkerMsg>,
         logo: Option<TextureHandle>,
+        steps: Vec<shun::config::ResolvedStep>,
     ) -> Self {
         let theme = resolve_theme(&config);
         let shell = config.shell.clone().unwrap_or_default();
@@ -423,6 +489,11 @@ impl FallbackApp {
             logo,
             stage: Stage::Configure,
             mode,
+            desktop_shortcut: true,
+            machine: false,
+            steps,
+            step: 0,
+            license_accepted: false,
             progress: None,
             phases_done: Vec::new(),
             phase_active: None,
@@ -440,7 +511,7 @@ impl FallbackApp {
             .targets
             .iter()
             .find_map(|t| match t {
-                TargetConfig::Install(install) => Some(install.clone()),
+                TargetConfig::Install(install) => Some(install),
                 _ => None,
             })
             .ok_or_else(|| "此配置未声明安装目标 / no install target declared".to_string())?;
@@ -448,15 +519,22 @@ impl FallbackApp {
         if dir.is_empty() {
             return Err(self.texts.dir_empty.to_string());
         }
-        Ok(InstallContext {
-            product: self.config.product.name.clone(),
-            version: self.config.product.version.clone(),
-            publisher: self.config.product.publisher.clone(),
-            install_dir: PathBuf::from(dir),
-            main_exe: install.main_exe.clone(),
-            portable: self.mode == "portable",
-            estimated_size_kb: 0,
-        })
+        let mut ctx = InstallContext::new(
+            self.config.product.name.clone(),
+            self.config.product.version.clone(),
+            PathBuf::from(dir),
+            self.mode == "portable",
+        );
+        ctx.publisher = self.config.product.publisher.clone();
+        ctx.main_exe = install.main_exe.clone();
+        ctx.apply_config(
+            install,
+            shun::targets::install::WizardAnswers {
+                desktop_shortcut: self.desktop_shortcut,
+                machine: self.machine,
+            },
+        );
+        Ok(ctx)
     }
 
     /// Spawns the worker thread driving the flow. The egui context is
@@ -470,6 +548,23 @@ impl FallbackApp {
                 return;
             }
         };
+        // Machine scope needs an elevated token; re-launch under UAC
+        // carrying the resolved answers (headless) and exit this
+        // instance — the elevated copy carries on.
+        if let Err(err) = crate::ensure_elevated_for(
+            &install_ctx,
+            self.mode,
+            self.dir.trim(),
+            shun::targets::install::WizardAnswers {
+                desktop_shortcut: self.desktop_shortcut,
+                machine: self.machine,
+            },
+            uninstalling,
+        ) {
+            self.outcome = Some(Outcome::Failed(err));
+            self.stage = Stage::Finished;
+            return;
+        }
         self.stage = Stage::Running;
         self.progress = None;
         self.phases_done.clear();
@@ -617,6 +712,7 @@ pub fn run(
     reason: FallbackReason,
     logo_kind: &str,
     logo_bytes: &[u8],
+    steps: Vec<shun::config::ResolvedStep>,
 ) {
     let title = window_title(&config);
     // Frameless like the hikari shell: the title bar below draws the
@@ -650,7 +746,7 @@ pub fn run(
             let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
             let (_sender, receiver) = channel::<WorkerMsg>();
             Ok(Box::new(FallbackApp::new(
-                config, payload, reason, zh, receiver, logo,
+                config, payload, reason, zh, receiver, logo, steps,
             )))
         }),
     );
@@ -700,9 +796,9 @@ impl FallbackApp {
         }
     }
 
-    /// The HTimeline analog: mode → install → done. Horizontal under the
-    /// caption (default) or vertical on the left when `shell.timeline =
-    /// "left"`.
+    /// The HTimeline analog: one marker per wizard step, then install,
+    /// then done. Horizontal under the caption (default) or vertical on
+    /// the left when `shell.timeline = "left"`.
     fn timeline(&self, ui: &mut egui::Ui, vertical: bool) {
         let theme = &self.theme;
         // A failed run sends the user back to configure.
@@ -710,31 +806,49 @@ impl FallbackApp {
             (Stage::Finished, Some(Outcome::Failed(_))) => Stage::Configure,
             (stage, _) => *stage,
         };
-        let order = |stage: Stage| match stage {
-            Stage::Configure => 0,
-            Stage::Running => 1,
-            Stage::Finished => 2,
+        // The rail lists every pre-install step (localized per kind,
+        // configured title for content steps), then install and done.
+        let preinstall: Vec<(usize, String)> = self
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(index, step)| (index, self.step_label(step).into_owned()))
+            .collect();
+        let active_marker = match current {
+            Stage::Configure => Some(self.step),
+            _ => None,
         };
-        let steps = [
-            (Stage::Configure, self.texts.step_mode),
-            (Stage::Running, self.texts.step_install),
-            (Stage::Finished, self.texts.step_done),
-        ];
+        let order_current = match current {
+            Stage::Configure => self.step,
+            Stage::Running => self.steps.len(),
+            Stage::Finished => self.steps.len() + 1,
+        };
+        let mut items: Vec<(bool, bool, String)> = preinstall
+            .iter()
+            .map(|(index, label)| {
+                (
+                    active_marker == Some(*index),
+                    *index < order_current,
+                    label.clone(),
+                )
+            })
+            .collect();
+        items.push((
+            current == Stage::Running,
+            order_current > self.steps.len(),
+            self.texts.step_install.to_owned(),
+        ));
+        items.push((
+            current == Stage::Finished && !matches!(self.outcome, Some(Outcome::Failed(_))),
+            false,
+            self.texts.step_done.to_owned(),
+        ));
         let rail: Box<dyn FnOnce(&mut egui::Ui)> = Box::new(|ui| {
-            let items: Vec<(bool, bool, &str)> = steps
-                .iter()
-                .map(|(stage, label)| (current == *stage, order(*stage) < order(current), *label))
-                .collect();
+            let items = items.clone();
             let paint = |ui: &mut egui::Ui| {
                 for (index, (active, done, label)) in items.iter().enumerate() {
                     if !vertical && index > 0 {
-                        // Connector segment.
-                        let (marker_color, line_color) = if *done {
-                            (theme.success, theme.success)
-                        } else {
-                            (theme.text_tertiary, theme.border)
-                        };
-                        let _ = marker_color;
+                        let line_color = if *done { theme.success } else { theme.border };
                         ui.label(RichText::new("——").color(line_color).small());
                         ui.add_space(6.0);
                     } else if vertical && index > 0 {
@@ -749,7 +863,7 @@ impl FallbackApp {
                     };
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(marker).color(marker_color).small());
-                        ui.label(RichText::new(*label).color(text_color).small());
+                        ui.label(RichText::new(label.as_str()).color(text_color).small());
                     });
                     ui.add_space(if vertical { 10.0 } else { 0.0 });
                 }
@@ -761,6 +875,19 @@ impl FallbackApp {
             }
         });
         rail(ui);
+    }
+
+    /// Localized rail label for a step (content steps carry their
+    /// configured title).
+    fn step_label<'a>(&self, step: &'a shun::config::ResolvedStep) -> std::borrow::Cow<'a, str> {
+        use shun::config::StepKind;
+        match step.kind {
+            StepKind::Mode => self.texts.step_mode.into(),
+            StepKind::Scope => self.texts.step_scope.into(),
+            StepKind::License => self.texts.step_license.into(),
+            StepKind::Content => step.title.as_str().into(),
+            StepKind::Install => self.texts.step_install.into(),
+        }
     }
 
     /// The fallback-reason banner. This is the contract: a
@@ -782,8 +909,141 @@ impl FallbackApp {
             });
     }
 
-    /// Mode selection grid + target row (the "mode" pane).
+    /// The configure pane: dispatches on the current wizard step's kind.
     fn configure_view(&mut self, ui: &mut egui::Ui) {
+        use shun::config::StepKind;
+        match self
+            .steps
+            .get(self.step)
+            .map(|step| step.kind)
+            .unwrap_or(StepKind::Mode)
+        {
+            StepKind::Mode => self.mode_view(ui),
+            StepKind::Scope => self.scope_view(ui),
+            StepKind::License => self.license_view(ui),
+            StepKind::Content => self.content_view(ui),
+            // An install step never renders here (the run takes over),
+            // but a mis-resolved pipeline still shows something sane.
+            StepKind::Install => self.mode_view(ui),
+        }
+    }
+
+    /// The install-scope pane (also embedded in the mode pane when its
+    /// policy is `ask`): user vs machine radio.
+    fn scope_view(&mut self, ui: &mut egui::Ui) {
+        self.scope_choice(ui);
+    }
+
+    /// The license pane: the agreement text with an accept checkbox.
+    fn license_view(&mut self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        let body = self
+            .steps
+            .get(self.step)
+            .and_then(|step| step.body.as_deref())
+            .unwrap_or_default();
+        Frame::default()
+            .fill(theme.surface)
+            .stroke(Stroke::new(1.0f32, theme.border))
+            .inner_margin(Margin::same(12))
+            .corner_radius(CornerRadius::same(10))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("license-body")
+                    .auto_shrink([false, false])
+                    .max_height(ui.available_height() - 44.0)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(body).size(12.5).color(theme.text_secondary));
+                    });
+            });
+        ui.add_space(8.0);
+        ui.checkbox(&mut self.license_accepted, self.texts.license_agree);
+    }
+
+    /// A markdown content step: title + body in a scroll area.
+    fn content_view(&mut self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        let step = self.steps.get(self.step);
+        let title = step.map(|s| s.title.as_str()).unwrap_or_default();
+        let body = step.and_then(|s| s.body.as_deref()).unwrap_or_default();
+        if !title.is_empty() {
+            ui.label(RichText::new(title).strong().size(17.0).color(theme.text));
+            ui.add_space(8.0);
+        }
+        Frame::default()
+            .fill(theme.surface)
+            .stroke(Stroke::new(1.0f32, theme.border))
+            .inner_margin(Margin::same(12))
+            .corner_radius(CornerRadius::same(10))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("content-body")
+                    .auto_shrink([false, false])
+                    .max_height(ui.available_height() - 16.0)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(body).size(12.5).color(theme.text_secondary));
+                    });
+            });
+    }
+
+    /// The user/machine radio pair (shared by the standalone scope pane
+    /// and the mode pane's embedded variant).
+    fn scope_choice(&mut self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        let texts = self.texts;
+        ui.add_space(4.0);
+        for (is_machine, title, hint) in [
+            (false, texts.scope_user, texts.scope_user_hint),
+            (true, texts.scope_machine, texts.scope_machine_hint),
+        ] {
+            let selected = self.machine == is_machine;
+            let card = Frame::default()
+                .fill(if selected {
+                    theme.primary_tint()
+                } else {
+                    theme.surface
+                })
+                .stroke(if selected {
+                    Stroke::new(1.5f32, theme.primary)
+                } else {
+                    Stroke::new(1.0f32, theme.border)
+                })
+                .inner_margin(Margin::same(12))
+                .corner_radius(CornerRadius::same(10));
+            let inner = card.show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(if selected { "●" } else { "○" })
+                                .color(if selected {
+                                    theme.primary
+                                } else {
+                                    theme.text_tertiary
+                                })
+                                .small(),
+                        );
+                        ui.label(RichText::new(title).strong().size(14.0).color(if selected {
+                            theme.text
+                        } else {
+                            theme.text_secondary
+                        }));
+                    });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(hint).size(12.0).color(theme.text_tertiary));
+                });
+            });
+            if ui.rect_contains_pointer(inner.response.rect) && inner.response.hovered() {
+                self.machine = is_machine;
+            }
+            ui.add_space(8.0);
+        }
+    }
+
+    /// Mode selection grid + target row (the "mode" pane).
+    fn mode_view(&mut self, ui: &mut egui::Ui) {
         let theme = &self.theme;
         let texts = self.texts;
 
@@ -916,6 +1176,31 @@ impl FallbackApp {
                 .size(12.0)
                 .color(theme.text_tertiary),
         );
+
+        // Desktop-shortcut toggle: only the `ask` policy consults the
+        // wizard (always/never are decided by the config), and only for
+        // registered installs — portable mode writes no shortcuts.
+        if self.mode != "portable" && desktop_policy_asks(&self.config) {
+            ui.add_space(8.0);
+            ui.checkbox(&mut self.desktop_shortcut, texts.desktop_shortcut);
+        }
+
+        // The `ask` install-scope policy embeds its choice here when no
+        // standalone scope step is declared.
+        let has_scope_step = self
+            .steps
+            .iter()
+            .any(|step| step.kind == shun::config::StepKind::Scope);
+        if self.mode != "portable" && !has_scope_step && scope_policy_asks(&self.config) {
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(texts.step_scope)
+                    .strong()
+                    .size(13.0)
+                    .color(theme.text_secondary),
+            );
+            self.scope_choice(ui);
+        }
     }
 
     /// Progress view (the "install" pane): per-phase rows like the
@@ -1112,9 +1397,14 @@ impl FallbackApp {
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let configuring = self.stage == Stage::Configure;
-                // Primary button, right edge.
+                // The last pre-install step carries the action buttons;
+                // intermediate steps walk the pipeline (license steps
+                // gate progression on their checkbox).
+                let on_last_step = self.step + 1 >= self.steps.len().max(1);
+                let step_blocked = self.step_blocked();
                 let (label, enabled) = match self.stage {
-                    Stage::Configure => (self.texts.install, true),
+                    Stage::Configure if !on_last_step => (self.texts.next, !step_blocked),
+                    Stage::Configure => (self.texts.install, !step_blocked),
                     Stage::Running => (
                         match self.uninstalling {
                             Some(true) => self.texts.uninstalling,
@@ -1157,6 +1447,7 @@ impl FallbackApp {
                                 }
                                 _ => std::process::exit(0),
                             },
+                            Stage::Configure if !on_last_step => self.step += 1,
                             _ => self.spawn_worker(ctx, uninstalling),
                         }
                     }
@@ -1175,8 +1466,9 @@ impl FallbackApp {
                     );
                 }
 
-                // Ghost buttons to the left of the primary: uninstall on
-                // configure/done, open-folder on a successful install.
+                // Ghost buttons to the left of the primary: back while
+                // walking steps; uninstall on the last configure step and
+                // after a successful install; open-folder on success.
                 let ghost = |ui: &mut egui::Ui, label: &str| {
                     ui.add(
                         Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
@@ -1188,7 +1480,10 @@ impl FallbackApp {
                     .clicked()
                 };
                 if configuring {
-                    if ghost(ui, self.texts.uninstall) {
+                    if self.step > 0 && ghost(ui, self.texts.back) {
+                        self.step -= 1;
+                    }
+                    if on_last_step && ghost(ui, self.texts.uninstall) {
                         self.spawn_worker(ctx, true);
                     }
                 } else if self.stage == Stage::Finished
@@ -1204,6 +1499,15 @@ impl FallbackApp {
             });
         });
         ui.add_space(6.0);
+    }
+
+    /// Whether the current step blocks progression (a license step
+    /// without its checkbox ticked).
+    fn step_blocked(&self) -> bool {
+        match self.steps.get(self.step).map(|s| s.kind) {
+            Some(shun::config::StepKind::License) => !self.license_accepted,
+            _ => false,
+        }
     }
 }
 

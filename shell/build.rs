@@ -48,6 +48,32 @@ fn main() {
     std::fs::write(out_dir.join("shun-config.json"), config_json).expect("write embedded config");
     println!("cargo:rerun-if-changed={}", manifest_path.display());
 
+    // 1b. Resolve the wizard pipeline with markdown bodies inlined —
+    // runtime shells carry no file dependencies, so license/content
+    // documents are read (relative to the manifest) and embedded here.
+    let steps = config
+        .resolve_steps(&manifest_dir, None)
+        .expect("wizard pipeline resolves");
+    for doc in config.license.iter().chain(config.license_locales.values()) {
+        println!(
+            "cargo:rerun-if-changed={}",
+            manifest_dir.join(doc).display()
+        );
+    }
+    for step in &config.steps.clone().unwrap_or_default() {
+        if let shun::config::StepConfig::Content { markdown, .. } = step {
+            println!(
+                "cargo:rerun-if-changed={}",
+                manifest_dir.join(markdown).display()
+            );
+        }
+    }
+    std::fs::write(
+        out_dir.join("shun-steps.json"),
+        serde_json::to_vec_pretty(&steps).expect("steps serialize"),
+    )
+    .expect("write embedded steps");
+
     // 2. Pack the payload directory declared in the configuration (paths in
     //    the manifest are relative to it).
     let payload_relative = config

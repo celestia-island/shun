@@ -66,8 +66,19 @@ pub struct ShunConfig {
     pub license_locales: BTreeMap<String, PathBuf>,
 
     /// Extra content steps injected into the wizard, rendered as markdown.
+    ///
+    /// Legacy injection model (steps keyed `after` built-ins); superseded
+    /// by [`Self::steps`], which declares the whole ordered pipeline.
+    /// Declaring both is a configuration error.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_steps: Vec<CustomStepConfig>,
+
+    /// The ordered wizard pipeline, freely composed from the step kinds
+    /// (mode/scope/license/content/install). Absent = the default
+    /// pipeline: mode → license (when a license is declared) → install,
+    /// with `custom-steps` injected per their `after` keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<StepConfig>>,
 
     /// Code-signing configuration applied to built artifacts. Absent =
     /// unsigned artifacts (fine for local testing).
@@ -160,9 +171,134 @@ impl ShunConfig {
                 ))
             }
             other => Err(crate::error::ShunError::Config(format!(
-                "unsupported config extension: {other}"
+                "unsupported config extension: {other}",
             ))),
         }
+    }
+
+    /// Resolves the wizard pipeline: the declared `steps` when present
+    /// (validated: exactly one `install` step, and `custom-steps`
+    /// unset), otherwise the default mode → license → install pipeline
+    /// with the legacy `custom-steps` injected after their `after`
+    /// keys. Markdown bodies (license and content steps) are read
+    /// relative to `base` and inlined, locale-aware for the license, so
+    /// runtime shells carry no file dependencies.
+    pub fn resolve_steps(
+        &self,
+        base: &Path,
+        locale: Option<&str>,
+    ) -> Result<Vec<ResolvedStep>, crate::error::ShunError> {
+        let config_error = |message: &str| crate::error::ShunError::Config(message.to_string());
+        let read_markdown = |path: &str, what: &str| -> Result<String, crate::error::ShunError> {
+            std::fs::read_to_string(base.join(path)).map_err(|e| {
+                crate::error::ShunError::Config(format!("{what} document `{path}`: {e}"))
+            })
+        };
+
+        let pipeline: Vec<StepConfig> = match &self.steps {
+            Some(steps) => {
+                if !self.custom_steps.is_empty() {
+                    return Err(config_error(
+                        "declare one of `steps` or `custom-steps`, not both",
+                    ));
+                }
+                let installs = steps
+                    .iter()
+                    .filter(|s| matches!(s, StepConfig::Install))
+                    .count();
+                match installs {
+                    1 => steps.clone(),
+                    0 => {
+                        return Err(config_error(
+                            "the `steps` pipeline must contain one `install` step",
+                        ));
+                    }
+                    n => {
+                        return Err(config_error(&format!(
+                            "the `steps` pipeline contains {n} `install` steps; \
+                             exactly one is allowed"
+                        )));
+                    }
+                }
+            }
+            None => {
+                // Default pipeline with legacy injections.
+                let mut steps = vec![StepConfig::Mode];
+                steps.extend(
+                    self.custom_steps
+                        .iter()
+                        .filter(|c| c.after == "mode")
+                        .map(custom_to_step),
+                );
+                if self.license.is_some() || !self.license_locales.is_empty() {
+                    steps.push(StepConfig::License);
+                    steps.extend(
+                        self.custom_steps
+                            .iter()
+                            .filter(|c| c.after == "license")
+                            .map(custom_to_step),
+                    );
+                }
+                steps.push(StepConfig::Install);
+                steps.extend(
+                    self.custom_steps
+                        .iter()
+                        .filter(|c| c.after == "install")
+                        .map(custom_to_step),
+                );
+                steps
+            }
+        };
+
+        let license_body = || -> Result<Option<String>, crate::error::ShunError> {
+            let path = locale
+                .and_then(|l| self.license_locales.get(l))
+                .or(self.license.as_ref());
+            match path {
+                Some(path) => read_markdown(&path.display().to_string(), "license").map(Some),
+                None => Ok(None),
+            }
+        };
+
+        pipeline
+            .into_iter()
+            .map(|step| {
+                Ok(match &step {
+                    StepConfig::Mode => ResolvedStep {
+                        kind: StepKind::Mode,
+                        title: String::new(),
+                        body: None,
+                    },
+                    StepConfig::Scope => ResolvedStep {
+                        kind: StepKind::Scope,
+                        title: String::new(),
+                        body: None,
+                    },
+                    StepConfig::License => ResolvedStep {
+                        kind: StepKind::License,
+                        title: String::new(),
+                        body: license_body()?,
+                    },
+                    StepConfig::Content { title, markdown } => ResolvedStep {
+                        kind: StepKind::Content,
+                        title: title.clone(),
+                        body: Some(read_markdown(markdown, "content step")?),
+                    },
+                    StepConfig::Install => ResolvedStep {
+                        kind: StepKind::Install,
+                        title: String::new(),
+                        body: None,
+                    },
+                })
+            })
+            .collect()
+    }
+}
+
+fn custom_to_step(custom: &CustomStepConfig) -> StepConfig {
+    StepConfig::Content {
+        title: custom.title.clone(),
+        markdown: custom.markdown.clone(),
     }
 }
 
@@ -223,6 +359,7 @@ pub enum TargetConfig {
 /// Install target: standard (registered) install and portable mode, both
 /// enabled by default.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct InstallConfig {
     /// Standard install mode: ARP entry, uninstaller, shortcuts.
     #[serde(default = "default_true")]
@@ -236,6 +373,43 @@ pub struct InstallConfig {
     /// Payload-relative path of the app entry point the shortcut targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub main_exe: Option<PathBuf>,
+
+    /// Desktop-shortcut policy for local mode. `ask` (the default) is the
+    /// NSIS checkbox convention: the wizard shows a default-checked toggle
+    /// (headless runs treat it as checked).
+    #[serde(default)]
+    pub desktop_shortcut: DesktopShortcutPolicy,
+
+    /// Install scope: per-user (the default, no elevation anywhere) or
+    /// machine-wide (Windows: HKLM, all-users shortcuts; the shell
+    /// self-elevates), or a wizard question.
+    #[serde(default)]
+    pub scope: ScopePolicy,
+
+    /// Context-menu verbs registered beside the app's launchers
+    /// (Explorer verbs under `HKCU\Software\Classes\Applications` on
+    /// Windows, Desktop Actions on Linux; macOS has no analog yet).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verbs: Vec<VerbConfig>,
+
+    /// URL-scheme deep links the app owns (`myapp://…`): protocol
+    /// registration under `HKCU\Software\Classes` on Windows, the
+    /// launcher's `MimeType=` on Linux, `CFBundleURLTypes` in a
+    /// synthesized macOS `Info.plist`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deep_links: Vec<String>,
+
+    /// Explicit `System.AppUserModel.ID` for the shortcuts (Windows) —
+    /// the grouping identity the app should also pass to
+    /// `SetCurrentProcessExplicitAppUserModelID`. Defaults to a generated
+    /// `{publisher}.{product}` value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aumid: Option<String>,
+
+    /// Payload-relative icon file the Linux launcher references
+    /// (`Icon=` accepts absolute paths; macOS bundles use `Contents/Resources`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<PathBuf>,
 }
 
 impl Default for InstallConfig {
@@ -244,8 +418,61 @@ impl Default for InstallConfig {
             local: true,
             portable: true,
             main_exe: None,
+            desktop_shortcut: DesktopShortcutPolicy::Ask,
+            scope: ScopePolicy::User,
+            verbs: Vec::new(),
+            deep_links: Vec::new(),
+            aumid: None,
+            icon: None,
         }
     }
+}
+
+/// Who decides whether the desktop shortcut is created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesktopShortcutPolicy {
+    /// Wizard checkbox, default checked (the NSIS convention).
+    #[default]
+    Ask,
+    /// Always create it.
+    Always,
+    /// Never create it.
+    Never,
+}
+
+/// One context-menu verb offered on the app's launchers. The `target`
+/// tag picks what the verb invokes; `key` and `display` are shared by
+/// every target.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "target", rename_all = "kebab-case")]
+pub enum VerbConfig {
+    /// Open the install directory in the file manager.
+    DataFolder {
+        /// Stable verb key — the registry segment / desktop-action id.
+        key: String,
+        /// Display string shown in the menu.
+        display: String,
+    },
+
+    /// Run the copied uninstaller.
+    Uninstall {
+        /// Stable verb key — the registry segment / desktop-action id.
+        key: String,
+        /// Display string shown in the menu.
+        display: String,
+    },
+
+    /// Launch the app entry point with extra `arguments`.
+    App {
+        /// Stable verb key — the registry segment / desktop-action id.
+        key: String,
+        /// Display string shown in the menu.
+        display: String,
+        /// Extra command-line arguments appended to the entry point.
+        #[serde(default)]
+        arguments: String,
+    },
 }
 
 /// Flash target: write an image to a block device with post-write
@@ -346,6 +573,95 @@ pub struct CustomStepConfig {
 
     /// Markdown document, relative to the config source.
     pub markdown: String,
+}
+
+/// One wizard step in the declarative pipeline. Steps render in
+/// declaration order; the pipeline must contain exactly one `install`
+/// step (the delivery run itself).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum StepConfig {
+    /// Delivery-mode + directory selection; the `ask` policies
+    /// (desktop shortcut, install scope) surface as toggles inside it.
+    Mode,
+
+    /// A standalone user/machine install-scope choice. Asks when the
+    /// install target's scope policy is `ask`; renders as a notice
+    /// otherwise. Machine scope elevates (UAC) before the install runs.
+    Scope,
+
+    /// The license agreement pane (content from `license` /
+    /// `license-locales`, resolved at embed time).
+    License,
+
+    /// A custom markdown content pane.
+    Content {
+        /// Step label on the timeline.
+        title: String,
+        /// Markdown document, relative to the config source.
+        markdown: String,
+    },
+
+    /// The delivery run itself (extraction progress). Exactly one.
+    Install,
+}
+
+/// A wizard step with its content resolved for embedding: markdown
+/// documents (license and content steps) are read relative to the
+/// config source and inlined, so runtime shells carry no file
+/// dependencies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResolvedStep {
+    /// Which pane renders this step.
+    pub kind: StepKind,
+    /// Timeline label.
+    pub title: String,
+    /// Inlined markdown body (`None` for non-content steps).
+    pub body: Option<String>,
+}
+
+/// The rendered pane behind a resolved step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StepKind {
+    /// Mode + directory selection.
+    Mode,
+    /// User/machine install scope.
+    Scope,
+    /// License agreement.
+    License,
+    /// Markdown content.
+    Content,
+    /// The delivery run.
+    Install,
+}
+
+impl From<&StepConfig> for StepKind {
+    fn from(step: &StepConfig) -> Self {
+        match step {
+            StepConfig::Mode => Self::Mode,
+            StepConfig::Scope => Self::Scope,
+            StepConfig::License => Self::License,
+            StepConfig::Content { .. } => Self::Content,
+            StepConfig::Install => Self::Install,
+        }
+    }
+}
+
+/// Who decides the install scope (per-user vs machine-wide).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScopePolicy {
+    /// Per-user install (HKCU / `~/.local` / `~/Applications`): the
+    /// default, no elevation anywhere.
+    #[default]
+    User,
+    /// Machine-wide install (Windows: HKLM, all-users shortcuts,
+    /// Program Files; requires elevation — the shell self-elevates).
+    Machine,
+    /// A wizard step asks (embedded in the mode pane or standalone);
+    /// headless runs default to per-user.
+    Ask,
 }
 
 /// Code-signing configuration for built artifacts.
@@ -485,6 +801,9 @@ struct ShunMetadataDraft {
     /// Custom content steps injected into the wizard.
     #[serde(default)]
     custom_steps: Option<Vec<CustomStepConfig>>,
+    /// The ordered wizard pipeline (`[[package.metadata.shun.steps]]`).
+    #[serde(default)]
+    steps: Option<Vec<StepConfig>>,
     /// `[package.metadata.shun.signing]` — code-signing profile.
     #[serde(default)]
     signing: Option<SigningConfig>,
@@ -534,6 +853,7 @@ impl ShunMetadataDraft {
                 .map(|(k, v)| (k, PathBuf::from(v)))
                 .collect(),
             custom_steps: self.custom_steps.unwrap_or_default(),
+            steps: self.steps,
             signing: self.signing,
             msix: self.msix,
         }
@@ -565,6 +885,7 @@ mod tests {
             license: None,
             license_locales: BTreeMap::new(),
             custom_steps: Vec::new(),
+            steps: None,
             signing: None,
             msix: None,
         }
@@ -641,6 +962,67 @@ require-removable = true
     }
 
     #[test]
+    fn install_registration_knobs_parse_from_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "shun-demo"
+version = "0.3.1"
+
+[package.metadata.shun]
+main-exe = "bin/shun-demo.exe"
+
+[package.metadata.shun.install]
+desktop-shortcut = "always"
+aumid = "celestia-island.ShunDemo"
+icon = "assets/icon.png"
+deep-links = ["shundemo"]
+
+[[package.metadata.shun.install.verbs]]
+key = "open-data"
+display = "Open data folder"
+target = "data-folder"
+
+[[package.metadata.shun.install.verbs]]
+key = "safe-mode"
+display = "Safe mode"
+target = "app"
+arguments = "--safe"
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        let TargetConfig::Install(install) = &config.targets[0] else {
+            panic!("expected an install target");
+        };
+        assert_eq!(install.desktop_shortcut, DesktopShortcutPolicy::Always);
+        assert_eq!(install.aumid.as_deref(), Some("celestia-island.ShunDemo"));
+        assert_eq!(install.icon.as_deref(), Some(Path::new("assets/icon.png")));
+        assert_eq!(install.deep_links, vec!["shundemo".to_string()]);
+        assert_eq!(install.verbs.len(), 2);
+        assert_eq!(
+            install.verbs[0],
+            VerbConfig::DataFolder {
+                key: "open-data".into(),
+                display: "Open data folder".into(),
+            },
+            "data-folder verbs take no arguments"
+        );
+        assert_eq!(
+            install.verbs[1],
+            VerbConfig::App {
+                key: "safe-mode".into(),
+                display: "Safe mode".into(),
+                arguments: "--safe".into(),
+            }
+        );
+    }
+
+    #[test]
     fn manifest_without_shun_metadata_defaults_to_install() {
         let dir = tempfile::tempdir().unwrap();
         let manifest = dir.path().join("Cargo.toml");
@@ -679,6 +1061,181 @@ require-removable = true
         let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
         assert_eq!(config.product.name, "app");
         assert_eq!(config.product.version, "2.5.0");
+    }
+
+    #[test]
+    fn default_pipeline_is_mode_license_install() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            "[package]
+name = \"app\"
+version = \"1.0.0\"
+",
+        )
+        .unwrap();
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+
+        // No license declared: mode → install.
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        assert_eq!(
+            steps.iter().map(|s| s.kind).collect::<Vec<_>>(),
+            vec![StepKind::Mode, StepKind::Install]
+        );
+
+        // A declared license adds its step (with the body inlined).
+        std::fs::write(
+            dir.path().join("LICENSE.md"),
+            "# terms
+",
+        )
+        .unwrap();
+        let mut config = config;
+        config.license = Some("LICENSE.md".into());
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        assert_eq!(
+            steps.iter().map(|s| s.kind).collect::<Vec<_>>(),
+            vec![StepKind::Mode, StepKind::License, StepKind::Install]
+        );
+        assert_eq!(steps[1].body.as_deref(), Some("# terms\n"));
+    }
+
+    #[test]
+    fn declared_pipeline_orders_and_inlines_freely() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("why.md"),
+            "# why
+",
+        )
+        .unwrap();
+        let config_path = dir.path().join("shun.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+product = "App"
+
+[[steps]]
+kind = "content"
+title = "Why"
+markdown = "why.md"
+
+[[steps]]
+kind = "scope"
+
+[[steps]]
+kind = "license"
+
+[[steps]]
+kind = "mode"
+
+[[steps]]
+kind = "install"
+"#,
+        )
+        .unwrap();
+        let config = ShunConfig::from_path(&config_path).unwrap();
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        assert_eq!(
+            steps.iter().map(|s| s.kind).collect::<Vec<_>>(),
+            vec![
+                StepKind::Content,
+                StepKind::Scope,
+                StepKind::License,
+                StepKind::Mode,
+                StepKind::Install,
+            ]
+        );
+        assert_eq!(steps[0].title, "Why");
+        assert_eq!(steps[0].body.as_deref(), Some("# why\n"));
+        // The license step exists even with no license configured — the
+        // pane renders whatever (empty) body it resolved.
+        assert_eq!(steps[2].body, None);
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_bad_declarations() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = sample();
+
+        // No install step.
+        config.steps = Some(vec![StepConfig::Mode]);
+        assert!(config.resolve_steps(dir.path(), None).is_err());
+
+        // Two install steps.
+        config.steps = Some(vec![
+            StepConfig::Mode,
+            StepConfig::Install,
+            StepConfig::Install,
+        ]);
+        assert!(config.resolve_steps(dir.path(), None).is_err());
+
+        // The legacy custom-steps injection stays working alongside no
+        // declared pipeline, but not with one.
+        config.steps = Some(vec![StepConfig::Mode, StepConfig::Install]);
+        config.custom_steps = vec![CustomStepConfig {
+            key: "extra".into(),
+            after: "mode".into(),
+            title: "Extra".into(),
+            markdown: "extra.md".into(),
+        }];
+        let error = config.resolve_steps(dir.path(), None).unwrap_err();
+        assert!(error.to_string().contains("not both"));
+
+        // Legacy injections alone keep their after-key ordering.
+        config.steps = None;
+        config.license = None;
+        config.license_locales.clear();
+        config.custom_steps = vec![
+            CustomStepConfig {
+                key: "a".into(),
+                after: "mode".into(),
+                title: "A".into(),
+                markdown: "a.md".into(),
+            },
+            CustomStepConfig {
+                key: "b".into(),
+                after: "install".into(),
+                title: "B".into(),
+                markdown: "b.md".into(),
+            },
+        ];
+        std::fs::write(dir.path().join("a.md"), "a").unwrap();
+        std::fs::write(dir.path().join("b.md"), "b").unwrap();
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        assert_eq!(
+            steps.iter().map(|s| s.kind).collect::<Vec<_>>(),
+            vec![
+                StepKind::Mode,
+                StepKind::Content,
+                StepKind::Install,
+                StepKind::Content
+            ]
+        );
+    }
+
+    #[test]
+    fn install_scope_policy_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            concat!(
+                "[package]\n",
+                "name = \"app\"\n",
+                "version = \"1.0.0\"\n",
+                "\n",
+                "[package.metadata.shun.install]\n",
+                "scope = \"machine\"\n",
+            ),
+        )
+        .unwrap();
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        let TargetConfig::Install(install) = &config.targets[0] else {
+            panic!("install target expected")
+        };
+        assert_eq!(install.scope, ScopePolicy::Machine);
     }
 
     #[test]

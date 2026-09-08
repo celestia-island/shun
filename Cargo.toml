@@ -43,7 +43,26 @@ python-probe = ["dep:pyo3"]
 [target.'cfg(windows)'.dependencies]
 winreg = "^0.56"
 mslnk = "^0.1.8"
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = [
+  "Win32_Storage_FileSystem",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Com",
+  "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_Foundation",
+] }
+# The Shell COM interfaces (IShellLink/IPersistFile/IPropertyStore) only
+# exist in the `windows` crate — windows-sys ships functions, not these
+# interface types. Used for the AUMID stamp (src/targets/aumid.rs).
+windows = { version = "^0.61", features = [
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_Storage_EnhancedStorage",
+] }
 
 [[bin]]
 name = "shun"
