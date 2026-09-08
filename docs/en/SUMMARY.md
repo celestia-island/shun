@@ -15,3 +15,4 @@
 
 - [Delivery Model](./design/delivery-model.md)
 - [Install-time Scripting (draft)](./design/scripting.md)
+- [Cross-platform Delivery (draft)](./design/cross-platform-delivery.md)

@@ -16,10 +16,30 @@ main-exe = "bin/shun-demo.exe"             # payload 内のエントリーポイ
 [package.metadata.shun.install]            # install ターゲット（既定）
 local = true                               # 登録インストール（ARP、アンインストーラー、ショートカット）
 portable = true                            # ポータブルモード（.shun-portable マーカー、レジストリ不使用）
+desktop-shortcut = "ask"                   # always | never | ask（ウィザードのチェックボックス、既定でオン）
+scope = "ask"                              # user（既定）| machine | ask
+deep-links = ["shundemo"]                  # アプリが保有する URL スキーム（myapp://…）
+
+[[package.metadata.shun.install.verbs]]    # 右クリック動詞（Explorer 動詞 / デスクトップアクション）
+key = "open-data"                          # 安定した動詞 id
+display = "Open data folder"               # メニュー表示
+target = "data-folder"                     # data-folder | uninstall | app
+# arguments = "--safe"                     # app ターゲットのみ：追加 CLI 引数
 
 [package.metadata.shun.webview2]           # Windows のみ
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 専用：展開済みランタイムフォルダー
+
+[[package.metadata.shun.steps]]            # 順序付きウィザードパイプライン（任意）
+kind = "mode"                              # mode | scope | license | content | install
+
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "Release notes"                    # content ステップはタイトルを持つ…
+markdown = "notes.md"                      # …とドキュメント、ビルド時にインライン化
+
+[[package.metadata.shun.steps]]
+kind = "install"                           # install ステップはちょうど 1 つ
 
 [package.metadata.shun.flash]              # flash ターゲット（任意）
 require-removable = true                   # リムーバブル以外のデバイスを拒否

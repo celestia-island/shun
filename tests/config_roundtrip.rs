@@ -40,6 +40,7 @@ fn sample() -> ShunConfig {
             title: "What's New".into(),
             markdown: "whats-new.md".into(),
         }],
+        steps: None,
         msix: Some(shun::config::MsixConfig {
             identity_name: "ShunDemo".into(),
             publisher: "CN=celestia-island".into(),

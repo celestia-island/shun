@@ -23,10 +23,7 @@ local) o escribe el marcador portable (modo portable).
 
 ## Targets
 
-- **install** — registro estilo NSIS (entrada ARP por usuario, desinstalador
-  auto-copiante, acceso directo en el menú Inicio, deep links) más un modo
-  portable sin ningún registro. La desinstalación borra todo rastro según el
-  manifiesto.
+- **install** — registro directo por plataforma: en Windows, una entrada ARP por usuario, un desinstalador que se auto-copia, accesos de inicio/escritorio (con AUMID) y verbos opcionales del menú contextual del Explorador; en Linux, un lanzador `.desktop` por usuario con acciones de escritorio (incluida Desinstalar); en macOS, completado del bundle `.app` más registro en Launch Services. El modo portable no toca ningún estado del sistema en ninguna plataforma. La desinstalación borra todo rastro según el manifiesto.
 - **flash** — escritura en dispositivos de bloques y verificación posterior
   (grabación de imágenes). El backend llega con el flasheur evernight; la
   superficie trait y la enumeración de dispositivos están disponibles hoy.

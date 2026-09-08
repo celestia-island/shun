@@ -16,10 +16,30 @@ main-exe = "bin/shun-demo.exe"             # точка входа внутри 
 [package.metadata.shun.install]            # цель install (по умолчанию)
 local = true                               # регистрируемая установка (ARP, деинсталлятор, ярлыки)
 portable = true                            # портативный режим (маркер .shun-portable, без реестра)
+desktop-shortcut = "ask"                   # always | never | ask (флажок мастера, по умолчанию включён)
+scope = "ask"                              # user (по умолчанию) | machine | ask
+deep-links = ["shundemo"]                  # принадлежащие приложению схемы URL (myapp://…)
+
+[[package.metadata.shun.install.verbs]]    # команды контекстного меню (команды Проводника / действия рабочего стола)
+key = "open-data"                          # стабильный id команды
+display = "Open data folder"               # текст меню
+target = "data-folder"                     # data-folder | uninstall | app
+# arguments = "--safe"                     # только для цели app: дополнительные аргументы CLI
 
 [package.metadata.shun.webview2]           # только Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version: распакованная папка рантайма
+
+[[package.metadata.shun.steps]]            # упорядоченный конвейер мастера (опционально)
+kind = "mode"                              # mode | scope | license | content | install
+
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "Release notes"                    # шаги content имеют заголовок…
+markdown = "notes.md"                      # …и документ, встраиваемый при сборке
+
+[[package.metadata.shun.steps]]
+kind = "install"                           # ровно один шаг install
 
 [package.metadata.shun.flash]              # цель flash (опционально)
 require-removable = true                   # отказывать несъёмным устройствам

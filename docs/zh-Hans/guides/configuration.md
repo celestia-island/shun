@@ -15,6 +15,16 @@ main-exe = "bin/shun-demo.exe"             # payload 内入口点
 [package.metadata.shun.install]            # install target（默认）
 local = true                               # 注册安装（ARP、卸载器、快捷方式）
 portable = true                            # 便携模式（.shun-portable 标记，零注册表）
+desktop-shortcut = "ask"                   # always | never | ask（向导复选框，默认勾选）
+deep-links = ["shundemo"]                  # 应用持有的 URL scheme（myapp://…）
+aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生成
+icon = "assets/icon.png"                   # 载荷内启动器图标（Linux 的 Icon=）
+
+[[package.metadata.shun.install.verbs]]    # 右键菜单动词（Explorer 动词 / Desktop Action）
+key = "open-data"                          # 稳定动词 id
+display = "打开数据目录"                    # 菜单文案
+target = "data-folder"                     # data-folder | uninstall | app
+# arguments = "--safe"                     # 仅 app 目标：附加命令行参数
 
 [package.metadata.shun.webview2]           # 仅 Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version

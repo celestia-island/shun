@@ -33,6 +33,29 @@ main-exe = "bin/shun-demo.exe"
 [package.metadata.shun.install]
 local = true
 portable = true
+# The desktop-shortcut policy defaults to `ask` (the wizard checkbox).
+# The install scope asks too — as a standalone step (see the steps
+# pipeline below).
+scope = "ask"
+deep-links = ["shundemo"]
+
+# Right-click verbs on the installed app's shortcuts/exe (per-user,
+# no elevation) — the shun demo of the context-menu surface.
+[[package.metadata.shun.install.verbs]]
+key = "open-data"
+display = "Open data folder"
+target = "data-folder"
+
+# The ordered wizard pipeline: freely composed, exactly one install
+# step. Absent = mode → license (if any) → install.
+[[package.metadata.shun.steps]]
+kind = "mode"
+
+[[package.metadata.shun.steps]]
+kind = "scope"
+
+[[package.metadata.shun.steps]]
+kind = "install"
 
 [package.metadata.shun.msix]
 identity-name = "ShunDemo"

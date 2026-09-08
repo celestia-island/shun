@@ -16,10 +16,31 @@ main-exe = "bin/shun-demo.exe"             # payload-relative entry point
 [package.metadata.shun.install]            # install target (default)
 local = true                               # registered install (ARP, uninstaller, shortcuts)
 portable = true                            # portable mode (.shun-portable marker, no registry)
+desktop-shortcut = "ask"                   # always | never | ask (wizard checkbox, default checked)
+deep-links = ["shundemo"]                  # URL schemes the app owns (myapp://...)
+aumid = "celestia-island.ShunDemo"         # default: generated from publisher + product
+icon = "assets/icon.png"                   # payload-relative launcher icon (Linux Icon=)
+
+[[package.metadata.shun.install.verbs]]    # right-click verbs (Explorer verbs / desktop actions)
+key = "open-data"                          # stable verb id
+display = "Open data folder"               # menu text
+target = "data-folder"                     # data-folder | uninstall | app
+# arguments = "--safe"                     # app target only: extra CLI arguments
 
 [package.metadata.shun.webview2]           # Windows-only strategy
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version only: extracted runtime folder
+
+[[package.metadata.shun.steps]]            # ordered wizard pipeline (optional)
+kind = "mode"                              # mode | scope | license | content | install
+
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "Release notes"                       # content steps carry a title…
+markdown = "notes.md"                   # …and a document, inlined at build time
+
+[[package.metadata.shun.steps]]
+kind = "install"                           # exactly one install step
 
 [package.metadata.shun.flash]              # flash target (optional)
 require-removable = true                   # refuse non-removable devices
@@ -34,7 +55,7 @@ require-removable = true                   # refuse non-removable devices
 | `logo` | path | — | Shell logo asset (relative to the manifest) |
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
-| `install` | table | both modes on | `local` / `portable` switches |
+| `install` | table | both modes on | `local` / `portable` switches, `desktop-shortcut` policy, `verbs`, `deep-links`, `aumid`, `icon` |
 | `webview2` | table | `skip` | Windows runtime strategy |
 | `msix.logo-background` | color | `transparent` | Plate flattened under a transparent MSIX logo |
 | `flash` | table | — | Declares the flash target |
@@ -46,6 +67,15 @@ require-removable = true                   # refuse non-removable devices
 | `skip` | nothing | system WebView2 | Standard artifact |
 | `evergreen-installer` | Evergreen offline installer (~127 MB) | elevation at install | Registers a system-wide runtime |
 | `fixed-version` | extracted runtime folder | nothing | One private copy shared by the shell and the installed app across install and portable modes |
+
+Measured (2026-09, v151 x64): the fixed-version runtime is **~293 MB
+compressed / ~661 MB unpacked** — an accepted cost, in line with other
+packagers' output. The artifact embeds exactly **one** copy: the shell
+bootstraps itself by staging the payload's runtime subtree into
+`%LOCALAPPDATA%\shun\<product>\webview2` and pointing
+`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` there; extraction is hash-aware, so
+re-installs and pre-staged files are adopted instead of rewritten
+("Reusing" progress events) — no second copy of the same engine.
 
 ## MSIX logo plate
 

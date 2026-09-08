@@ -20,9 +20,13 @@ mode) or drops the portable marker (portable mode).
 
 ## Targets
 
-- **install** — NSIS-like registration (per-user ARP entry, self-copying
-  uninstaller, start-menu shortcut, deep links) plus a portable mode that
-  touches no registry. Uninstall removes every trace per the manifest.
+- **install** — direct registration, per platform: on Windows a per-user
+  ARP entry, a self-copying uninstaller, start-menu/desktop shortcuts
+  (AUMID-stamped), and optional Explorer context-menu verbs; on Linux a
+  per-user `.desktop` launcher with desktop actions (including
+  Uninstall); on macOS `.app`-bundle completion plus Launch Services
+  registration. A portable mode touches no system state anywhere.
+  Uninstall removes every trace per the manifest.
 - **flash** — block-device writes with post-write verification (image
   flashing). Backend lands with the evernight flasher; the trait surface
   and device enumeration ship today.

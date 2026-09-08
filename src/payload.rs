@@ -164,6 +164,105 @@ impl ArchivePayload {
             manifest.ok_or_else(|| ShunError::MissingEntry(PathBuf::from(MANIFEST_PATH)))?;
         Ok(Self { entries, files })
     }
+
+    /// Extracts only the entries under `prefix`, preserving their archive
+    /// paths under `dest`. The single-copy bootstrap path: a shell carrying
+    /// a fixed-version WebView2 runtime inside its payload stages just
+    /// that subtree for its own UI without unpacking the rest. Returns
+    /// the number of bytes written (reused entries do not count).
+    pub fn extract_prefix(
+        &self,
+        dest: &Path,
+        prefix: &Path,
+        on_event: &mut dyn FnMut(FlowEvent),
+    ) -> Result<u64, ShunError> {
+        let selected: Vec<&PayloadEntry> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.path.starts_with(prefix))
+            .collect();
+        if selected.is_empty() {
+            return Err(ShunError::MissingEntry(prefix.to_path_buf()));
+        }
+        let selected_sizes: Vec<u64> = selected.iter().map(|entry| entry.size).collect();
+        let total = u64::max(selected_sizes.iter().sum(), 1);
+        let mut done: u64 = 0;
+        let mut written: u64 = 0;
+        for entry in selected {
+            let reused = self.stage_entry(entry, dest, &mut done, total, on_event)?;
+            if !reused {
+                written += entry.size;
+            }
+        }
+        Ok(written)
+    }
+
+    /// Verifies one entry against the in-memory bytes and writes it to
+    /// `dest` — unless the destination already holds byte-identical
+    /// content, in which case it is reused as-is (idempotent installs,
+    /// pre-staged shared copies). Returns `true` when the entry was
+    /// reused rather than written.
+    fn stage_entry(
+        &self,
+        entry: &PayloadEntry,
+        dest: &Path,
+        done: &mut u64,
+        total: u64,
+        on_event: &mut dyn FnMut(FlowEvent),
+    ) -> Result<bool, ShunError> {
+        let bytes = self
+            .files
+            .get(&entry.path)
+            .ok_or_else(|| ShunError::MissingEntry(entry.path.clone()))?;
+        if sha256_hex(bytes) != entry.sha256 || bytes.len() as u64 != entry.size {
+            return Err(ShunError::Config(format!(
+                "payload integrity check failed for {}",
+                entry.path.display()
+            )));
+        }
+
+        let target = dest.join(&entry.path);
+        let reused = target_is_identical(&target, entry)?;
+        if !reused {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&target, bytes)?;
+        }
+
+        *done += entry.size;
+        on_event(FlowEvent::Progress {
+            phase: FlowPhase::Extract,
+            step: format!(
+                "{} {}",
+                if reused { "Reusing" } else { "Extracting" },
+                entry.path.display()
+            ),
+            percent: Some((*done * 100 / total).min(100) as u8),
+        });
+        Ok(reused)
+    }
+}
+
+/// `true` when `target` exists with exactly `entry`'s size and SHA-256 —
+/// streamed, so multi-hundred-MB runtime folders verify without loading
+/// into memory.
+fn target_is_identical(target: &Path, entry: &PayloadEntry) -> Result<bool, ShunError> {
+    let Ok(meta) = std::fs::metadata(target) else {
+        return Ok(false);
+    };
+    if !meta.is_file() || meta.len() != entry.size {
+        return Ok(false);
+    }
+    let mut file = std::fs::File::open(target)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    Ok(hex == entry.sha256)
 }
 
 impl PayloadSource for ArchivePayload {
@@ -176,29 +275,7 @@ impl PayloadSource for ArchivePayload {
         let mut done: u64 = 0;
 
         for entry in &self.entries {
-            let bytes = self
-                .files
-                .get(&entry.path)
-                .ok_or_else(|| ShunError::MissingEntry(entry.path.clone()))?;
-            if sha256_hex(bytes) != entry.sha256 || bytes.len() as u64 != entry.size {
-                return Err(ShunError::Config(format!(
-                    "payload integrity check failed for {}",
-                    entry.path.display()
-                )));
-            }
-
-            let target = dest.join(&entry.path);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&target, bytes)?;
-
-            done += entry.size;
-            on_event(FlowEvent::Progress {
-                phase: FlowPhase::Extract,
-                step: format!("Extracting {}", entry.path.display()),
-                percent: Some((done * 100 / total).min(100) as u8),
-            });
+            self.stage_entry(entry, dest, &mut done, total, on_event)?;
         }
 
         Ok(())

@@ -15,10 +15,30 @@ main-exe = "bin/shun-demo.exe"             # payload 內進入點
 [package.metadata.shun.install]            # install target（預設）
 local = true                               # 註冊安裝（ARP、解除安裝器、捷徑）
 portable = true                            # 可攜模式（.shun-portable 標記，零登錄檔）
+desktop-shortcut = "ask"                   # always | never | ask（精靈核取方塊，預設勾選）
+scope = "ask"                              # user（預設）| machine | ask
+deep-links = ["shundemo"]                  # 應用程式持有的 URL scheme（myapp://…）
+
+[[package.metadata.shun.install.verbs]]    # 右鍵選單動詞（Explorer 動詞 / 桌面動作）
+key = "open-data"                          # 穩定的動詞 id
+display = "Open data folder"               # 選單文字
+target = "data-folder"                     # data-folder | uninstall | app
+# arguments = "--safe"                     # 僅 app 目標：額外 CLI 參數
 
 [package.metadata.shun.webview2]           # 僅 Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 專用：解壓後的執行時目錄
+
+[[package.metadata.shun.steps]]            # 有序的精靈管線（可選）
+kind = "mode"                              # mode | scope | license | content | install
+
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "Release notes"                    # content 步驟帶有標題…
+markdown = "notes.md"                      # …與文件，建置期內嵌
+
+[[package.metadata.shun.steps]]
+kind = "install"                           # 恰好一個 install 步驟
 
 [package.metadata.shun.flash]              # flash target（可選）
 require-removable = true                   # 拒絕非可移除裝置

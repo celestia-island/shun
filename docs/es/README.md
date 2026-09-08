@@ -37,7 +37,7 @@ como el shell de ejecución:
 - un **flujo** — elegir un modo, elegir un destino, transmitir eventos de
   progreso reales;
 - **targets** enchufables:
-  - `install` — registro estilo NSIS (entrada ARP por usuario, desinstalador
+  - `install` — registro directo de Windows (entrada ARP por usuario, desinstalador
     auto-copiante, acceso directo en el menú Inicio, enlaces profundos) *y*
     un modo portable sin ningún registro;
   - `flash` — escritura de una imagen en dispositivo de bloques con
@@ -69,7 +69,7 @@ cargo run --example demo_install -- --uninstall       # desinstalación (borra t
 
 `demo_install` genera el paquete de instalación `ShunDemo.shun` (tar zstd +
 manifiesto SHA-256) en el directorio de trabajo, lo extrae con progreso en
-streaming y — en modo local — realiza el registro estilo NSIS descrito
+streaming y — en modo local — realiza el registro directo de Windows descrito
 anteriormente. El shell de demo Tauri (`shell/`, construido sobre
 [@celestia-island/hikari](https://github.com/celestia-island/hikari)) muestra
 el mismo flujo con una interfaz completa, incrustando el payload en tiempo de

@@ -27,7 +27,7 @@ shun 包含桌面软件发布的**交付**半边。一份配置文件同时驱�
 - **payload**——应用目录打包一次，内嵌为单文件安装器或作为 sidecar 携带；
 - **flow**——选择模式、选择目标、流式真实进度事件；
 - 可插拔 **targets**：
-  - `install` —— NSIS 式注册（用户级 ARP 条目、自拷贝卸载器、开始菜单快捷方式、深链）*以及* 零注册表的便携模式；
+  - `install` —— 直接 Windows 注册（用户级 ARP 条目、自拷贝卸载器、开始菜单快捷方式、深链）*以及* 零注册表的便携模式；
   - `flash` —— 镜像写入块设备并做写后校验。
 
 在 Windows 上，双变体 WebView2 策略覆盖干净机器：标准发行物要求系统运行时，完整自包含发行物则**私有携带固定版本 WebView2 运行时**——一份副本由安装器壳与已装应用共享，横跨安装与便携模式，免管理员、零系统写入。
@@ -44,7 +44,7 @@ cargo run --example demo_install -- --uninstall       # 卸载（清干净全部
 ```
 
 `demo_install` 生成安装包 `ShunDemo.shun`（zstd tar + SHA-256 清单）在工作目录中，
-以流式进度解压，并在本机模式下执行 NSIS 式注册。Tauri demo 壳
+以流式进度解压，并在本机模式下执行 直接 Windows 注册。Tauri demo 壳
 （`shell/`，基于 [@celestia-island/hikari](https://github.com/celestia-island/hikari)）
 用完整 UI 渲染同一流程，构建时嵌入 payload。
 
