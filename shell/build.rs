@@ -25,6 +25,7 @@ fn main() {
     // build of the shell falls back to the demo application's manifest —
     // one source of truth for the comprehensive demo (product identity,
     // payload, MSIX inputs all live there).
+    println!("cargo:rerun-if-env-changed=SHUN_MANIFEST");
     let manifest_path = std::env::var("SHUN_MANIFEST")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -71,8 +72,9 @@ fn main() {
             let extension = config
                 .product
                 .logo
-                .as_ref()
-                .and_then(|p| p.extension().map(|e| e.to_string_lossy().into_owned()))
+                .as_deref()
+                .map(Path::new)
+                .and_then(|path| path.extension().map(|e| e.to_string_lossy().into_owned()))
                 .unwrap_or_else(|| "none".into());
             std::fs::write(out_dir.join("shun-logo.bin"), bytes).expect("write embedded logo");
             extension

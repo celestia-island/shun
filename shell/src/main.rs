@@ -27,6 +27,10 @@ use tauri::{Emitter, State};
 const SHUN_CONFIG_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-config.json"));
 /// The payload archive packed by build.rs from `metadata.shun.payload`.
 const EMBEDDED_PAYLOAD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shun-demo-payload.shun"));
+/// The product logo embedded by build.rs (kind file + bytes) — both UIs
+/// render it in their caption bars.
+const LOGO_KIND: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-logo-kind.txt"));
+const LOGO_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shun-logo.bin"));
 
 /// State shared by the commands: the resolved config and the payload
 /// (cloned per install run).
@@ -285,7 +289,7 @@ fn main() {
             let title = fallback::window_title(&config);
             screenshot::schedule_by_title(title, path, screenshot_delay.unwrap_or(2500));
         }
-        fallback::run(config, payload, reason);
+        fallback::run(config, payload, reason, LOGO_KIND.trim(), LOGO_BYTES);
         return;
     }
 

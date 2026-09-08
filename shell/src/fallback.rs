@@ -7,31 +7,30 @@
 //! the hikari UI (one manifest, two renderers), used when WebView2 is
 //! missing or when the operator forces it with `--fallback`.
 //!
+//! The look derives from the same source as the hikari shell:
+//! `shell/web/src/theme.scss` (the "Abyssal Glass" token layer). The
+//! fallback is the crippled sibling — no CSS effects, no web fonts, no
+//! lucide icons — but the palette, radii, typography scale, wizard
+//! layout and the UI copy (i18n strings of the web shell) are shared, so
+//! both renderers are recognizably the same product. Theme knobs apply
+//! to both sides: `shell.theme.accent` recolors primary controls,
+//! `shell.theme.mode` picks the light/dark token set, `shell.timeline`
+//! orients the step rail.
+//!
 //! The banner states why the fallback is running — a missing-runtime
 //! install must say so, not silently degrade.
-//!
+
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 
 use egui::{
     Align, Button, Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, Frame,
-    Layout, Margin, ProgressBar, RichText, ScrollArea, TextEdit, Vec2, Visuals,
+    Layout, Margin, RichText, ScrollArea, Sense, Stroke, TextEdit, TextureHandle, Vec2,
 };
 use shun::config::{ShunConfig, TargetConfig};
 use shun::flow::{Flow, FlowEvent, FlowPhase};
 use shun::payload::ArchivePayload;
 use shun::targets::install::{InstallContext, InstallFlow, WindowsRegistration, uninstall};
-
-/// Brand accent (matches the hikari theme default).
-const ACCENT: Color32 = Color32::from_rgb(34, 211, 238);
-const ACCENT_FILL: Color32 = Color32::from_rgb(23, 54, 66);
-const PANEL: Color32 = Color32::from_rgb(17, 26, 44);
-const PANEL_EDGE: Color32 = Color32::from_rgb(30, 41, 59);
-const OK_GREEN: Color32 = Color32::from_rgb(74, 222, 128);
-const ERR_RED: Color32 = Color32::from_rgb(248, 113, 113);
-const WARN_AMBER: Color32 = Color32::from_rgb(253, 224, 71);
-const WARN_FILL: Color32 = Color32::from_rgb(66, 47, 4);
-const WARN_EDGE: Color32 = Color32::from_rgb(133, 100, 16);
 
 /// Why the fallback UI is running — drives the banner text.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -66,6 +65,284 @@ enum Outcome {
     Failed(String),
 }
 
+// ── Theme: the shared token layer (see shell/web/src/theme.scss) ────────
+//
+// Values mirror the scss tokens 1:1: the dark set the installer ships,
+// the light set kept for schema parity, and the accent channels that
+// `shell.theme.accent` overrides. Semi-transparent whites use egui's
+// from_white_alpha (230/153/115 ≈ 90%/60%/45%).
+
+#[derive(Copy, Clone)]
+struct Theme {
+    background: Color32,
+    surface: Color32,
+    border: Color32,
+    text: Color32,
+    text_secondary: Color32,
+    text_tertiary: Color32,
+    primary: Color32,
+    on_primary: Color32,
+    success: Color32,
+    error: Color32,
+    warning: Color32,
+}
+
+impl Theme {
+    /// The dark token set (the installer default), with the optional
+    /// accent override from `shell.theme.accent`.
+    fn dark(accent: Option<[u8; 3]>) -> Self {
+        Self {
+            background: Color32::from_rgb(12, 18, 30),
+            surface: Color32::from_rgb(22, 30, 46),
+            border: Color32::from_rgb(50, 60, 75),
+            text: Color32::from_white_alpha(230),
+            text_secondary: Color32::from_white_alpha(153),
+            text_tertiary: Color32::from_white_alpha(115),
+            primary: accent.map_or(Color32::from_rgb(0, 120, 200), |[r, g, b]| {
+                Color32::from_rgb(r, g, b)
+            }),
+            on_primary: Color32::from_black_alpha(230),
+            success: Color32::from_rgb(60, 180, 120),
+            error: Color32::from_rgb(220, 80, 80),
+            warning: Color32::from_rgb(230, 170, 50),
+        }
+    }
+
+    /// The light token set (`shell.theme.mode = "light"`).
+    fn light(accent: Option<[u8; 3]>) -> Self {
+        Self {
+            background: Color32::from_rgb(245, 248, 252),
+            surface: Color32::from_rgb(255, 255, 255),
+            border: Color32::from_rgb(200, 210, 220),
+            text: Color32::from_rgb(30, 40, 55),
+            text_secondary: Color32::from_rgb(90, 100, 115),
+            text_tertiary: Color32::from_rgb(90, 100, 115),
+            primary: accent.map_or(Color32::from_rgb(0, 120, 200), |[r, g, b]| {
+                Color32::from_rgb(r, g, b)
+            }),
+            on_primary: Color32::from_rgb(255, 255, 255),
+            success: Color32::from_rgb(60, 180, 120),
+            error: Color32::from_rgb(220, 80, 80),
+            warning: Color32::from_rgb(190, 140, 30),
+        }
+    }
+
+    /// Accent-tinted fill (a selection card at ~14% over the surface).
+    fn primary_tint(&self) -> Color32 {
+        mix(self.surface, self.primary, 0.14)
+    }
+
+    /// Warning banner fill (warning at ~12% over the background).
+    fn warning_tint(&self) -> Color32 {
+        mix(self.background, self.warning, 0.12)
+    }
+
+    /// Error alert fill.
+    fn error_tint(&self) -> Color32 {
+        mix(self.background, self.error, 0.12)
+    }
+}
+
+/// Alpha-blends `over` onto `base`.
+fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
+    let channel = |b: u8, o: u8| {
+        let blended = f32::from(b) * (1.0 - factor) + f32::from(o) * factor;
+        blended.round().clamp(0.0, 255.0) as u8
+    };
+    Color32::from_rgb(
+        channel(base.r(), over.r()),
+        channel(base.g(), over.g()),
+        channel(base.b(), over.b()),
+    )
+}
+
+/// Resolves `shell.theme.mode` (default dark; `system` asks Windows).
+fn resolve_theme(config: &ShunConfig) -> Theme {
+    let shell = config.shell.clone().unwrap_or_default();
+    let accent = shell.theme.as_ref().and_then(|theme| theme.accent);
+    // Same semantics as the webview shell (App.tsx applyTheme): an
+    // unset mode defaults to dark — the installer ships dark — and only
+    // an explicit `system` follows the OS preference.
+    match shell.theme.as_ref().and_then(|theme| theme.mode) {
+        Some(shun::config::ThemeMode::Light) => Theme::light(accent),
+        Some(shun::config::ThemeMode::System) => {
+            if system_prefers_light() {
+                Theme::light(accent)
+            } else {
+                Theme::dark(accent)
+            }
+        }
+        Some(shun::config::ThemeMode::Dark) | None => Theme::dark(accent),
+    }
+}
+
+/// Windows "apps use light theme" probe; non-Windows assumes dark.
+#[cfg(windows)]
+fn system_prefers_light() -> bool {
+    use winreg::RegKey;
+    const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+    RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(KEY)
+        .and_then(|key| key.get_value::<u32, _>("AppsUseLightTheme"))
+        .is_ok_and(|light| light == 1)
+}
+
+#[cfg(not(windows))]
+fn system_prefers_light() -> bool {
+    false
+}
+
+// ── UI copy: the i18n strings of the web shell (shell/web/src/i18n.ts) ──
+
+struct Texts {
+    title_suffix: &'static str,
+    version_prefix: &'static str,
+    banner_missing: &'static str,
+    banner_manual: &'static str,
+    step_mode: &'static str,
+    step_install: &'static str,
+    step_done: &'static str,
+    mode_local: &'static str,
+    mode_local_hint: &'static str,
+    mode_portable: &'static str,
+    mode_portable_hint: &'static str,
+    dir_label: &'static str,
+    browse: &'static str,
+    dir_empty: &'static str,
+    hint_local: &'static str,
+    hint_portable: &'static str,
+    install: &'static str,
+    uninstall: &'static str,
+    installing: &'static str,
+    uninstalling: &'static str,
+    preparing: &'static str,
+    done_title: &'static str,
+    done_uninstall: &'static str,
+    failed: &'static str,
+    open_dir: &'static str,
+    finish: &'static str,
+    retry: &'static str,
+    log: &'static str,
+    phase_download: &'static str,
+    phase_extract: &'static str,
+}
+
+const TEXTS_ZH: Texts = Texts {
+    title_suffix: "的交付方式",
+    version_prefix: "版本",
+    banner_missing: "未检测到 WebView2 运行时（缺失必要环境）—— 已自动切换至离线降级安装界面。安装功能不受影响，界面不带特效。",
+    banner_manual: "已通过命令行参数 --fallback 手动启用离线降级安装界面（离线版本，不带特效）。",
+    step_mode: "交付方式",
+    step_install: "安装",
+    step_done: "完成",
+    mode_local: "安装到本机",
+    mode_local_hint: "NSIS 式注册：ARP 卸载条目、开始菜单快捷方式与卸载器。",
+    mode_portable: "便携模式",
+    mode_portable_hint: "绿色免注册：只写 .shun-portable 标记，数据全部就地存放。",
+    dir_label: "安装位置",
+    browse: "浏览…",
+    dir_empty: "安装目录不能为空",
+    hint_local: "登记到系统「应用」列表，可从设置或本界面卸载。",
+    hint_portable: "写入 .shun-portable 标记；卸载即删除整个目录。",
+    install: "开始安装",
+    uninstall: "卸载",
+    installing: "正在安装…",
+    uninstalling: "正在卸载…",
+    preparing: "正在准备安装…",
+    done_title: "安装完成",
+    done_uninstall: "卸载完成",
+    failed: "失败",
+    open_dir: "打开安装目录",
+    finish: "完成",
+    retry: "重试",
+    log: "事件日志",
+    phase_download: "下载",
+    phase_extract: "解压",
+};
+
+const TEXTS_EN: Texts = Texts {
+    title_suffix: "delivery",
+    version_prefix: "Version",
+    banner_missing: "WebView2 runtime not detected (missing required environment) — switched to the offline fallback installer. Installation is fully functional; the UI carries no effects.",
+    banner_manual: "Offline fallback installer enabled manually via --fallback (the no-effects offline version).",
+    step_mode: "Delivery mode",
+    step_install: "Install",
+    step_done: "Done",
+    mode_local: "Install to this PC",
+    mode_local_hint: "NSIS-like registration: ARP entry, start-menu shortcut, uninstaller.",
+    mode_portable: "Portable",
+    mode_portable_hint: "Green install: only a .shun-portable marker, data stays local.",
+    dir_label: "Install location",
+    browse: "Browse…",
+    dir_empty: "Install directory cannot be empty",
+    hint_local: "Registered in system Apps; uninstall from Settings or here.",
+    hint_portable: "Writes a .shun-portable marker; uninstalling removes the folder.",
+    install: "Install",
+    uninstall: "Uninstall",
+    installing: "Installing…",
+    uninstalling: "Uninstalling…",
+    preparing: "Preparing install…",
+    done_title: "Install complete",
+    done_uninstall: "Uninstall complete",
+    failed: "failed",
+    open_dir: "Open install folder",
+    finish: "Finish",
+    retry: "Retry",
+    log: "Events",
+    phase_download: "Download",
+    phase_extract: "Extract",
+};
+
+/// Registers a system CJK font as a glyph fallback so the Chinese UI
+/// renders. Returns `false` when none is found (the UI falls back to
+/// English strings). Only single-file `.ttf` fonts are probed — egui
+/// cannot index `.ttc` collections.
+fn install_cjk_font(ctx: &Context) -> bool {
+    const CJK_FONTS: [&str; 4] = [
+        r"C:\Windows\Fonts\simhei.ttf",
+        r"C:\Windows\Fonts\deng.ttf",
+        r"C:\Windows\Fonts\simfang.ttf",
+        r"C:\Windows\Fonts\simkai.ttf",
+    ];
+    for path in CJK_FONTS {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let mut fonts = FontDefinitions::default();
+        fonts
+            .font_data
+            .insert("cjk".into(), FontData::from_owned(bytes).into());
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            fonts.families.entry(family).or_default().push("cjk".into());
+        }
+        ctx.set_fonts(fonts);
+        return true;
+    }
+    false
+}
+
+/// The embedded product logo, decoded to an egui texture (like the
+/// hikari title bar's icon prop). `None` when the manifest declares no
+/// logo or the bytes do not decode.
+fn load_logo(ctx: &Context, kind: &str, bytes: &[u8]) -> Option<TextureHandle> {
+    if kind == "none" || bytes.is_empty() {
+        return None;
+    }
+    let format = match kind.to_ascii_lowercase().as_str() {
+        "png" => image::ImageFormat::Png,
+        "jpg" | "jpeg" => image::ImageFormat::Jpeg,
+        "webp" => image::ImageFormat::WebP,
+        _ => return None,
+    };
+    let logo = image::load_from_memory_with_format(bytes, format).ok()?;
+    // Title-bar scale — a 2048px webp would waste 16MB of VRAM.
+    let logo = logo.resize_exact(48, 48, image::imageops::FilterType::Triangle);
+    let rgba = logo.to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw().as_slice());
+    Some(ctx.load_texture("shun-logo", color_image, egui::TextureOptions::LINEAR))
+}
+
 /// Which delivery modes the config declares (rendered in declaration
 /// order, mirroring the hikari shell view).
 fn offered_modes(config: &ShunConfig) -> Vec<&'static str> {
@@ -98,131 +375,15 @@ fn default_dir(config: &ShunConfig, mode: &str) -> PathBuf {
     }
 }
 
-/// UI strings. Chinese when a CJK font is available, English otherwise —
-/// egui's default fonts are Latin-only and tofu boxes help nobody.
-struct Texts {
-    subtitle: &'static str,
-    banner_missing: &'static str,
-    banner_manual: &'static str,
-    step_choose: &'static str,
-    step_install: &'static str,
-    step_done: &'static str,
-    mode: &'static str,
-    mode_local: &'static str,
-    mode_local_hint: &'static str,
-    mode_portable: &'static str,
-    mode_portable_hint: &'static str,
-    dir: &'static str,
-    browse: &'static str,
-    dir_empty: &'static str,
-    install: &'static str,
-    uninstall: &'static str,
-    installing: &'static str,
-    uninstalling: &'static str,
-    done_install: &'static str,
-    done_uninstall: &'static str,
-    failed: &'static str,
-    entry: &'static str,
-    open_dir: &'static str,
-    retry: &'static str,
-    finish: &'static str,
-    log: &'static str,
-}
-
-const TEXTS_ZH: Texts = Texts {
-    subtitle: "shun 离线安装程序",
-    banner_missing: "未检测到 WebView2 运行时（缺失必要环境）—— 已自动切换至离线降级安装界面。安装功能不受影响，界面不带特效。",
-    banner_manual: "已通过命令行参数 --fallback 手动启用离线降级安装界面（离线版本，不带特效）。",
-    step_choose: "选择模式",
-    step_install: "安装",
-    step_done: "完成",
-    mode: "安装模式",
-    mode_local: "本机安装",
-    mode_local_hint: "ARP 注册项 + 卸载器 + 开始菜单快捷方式",
-    mode_portable: "便携安装",
-    mode_portable_hint: "不写注册表，落一个 .shun-portable 标记",
-    dir: "安装位置",
-    browse: "浏览…",
-    dir_empty: "安装目录不能为空",
-    install: "安装",
-    uninstall: "卸载",
-    installing: "正在安装…",
-    uninstalling: "正在卸载…",
-    done_install: "安装完成",
-    done_uninstall: "卸载完成",
-    failed: "失败",
-    entry: "入口",
-    open_dir: "打开安装目录",
-    retry: "重试",
-    finish: "完成",
-    log: "事件日志",
-};
-
-const TEXTS_EN: Texts = Texts {
-    subtitle: "shun offline installer",
-    banner_missing: "WebView2 runtime not detected (missing required environment) — switched to the offline fallback installer. Installation is fully functional; the UI carries no effects.",
-    banner_manual: "Offline fallback installer enabled manually via --fallback (the no-effects offline version).",
-    step_choose: "Choose",
-    step_install: "Install",
-    step_done: "Done",
-    mode: "Mode",
-    mode_local: "Local install",
-    mode_local_hint: "ARP entry + uninstaller + Start-menu shortcut",
-    mode_portable: "Portable install",
-    mode_portable_hint: "No registry, drops a .shun-portable marker",
-    dir: "Install location",
-    browse: "Browse…",
-    dir_empty: "Install directory cannot be empty",
-    install: "Install",
-    uninstall: "Uninstall",
-    installing: "Installing…",
-    uninstalling: "Uninstalling…",
-    done_install: "Install complete",
-    done_uninstall: "Uninstall complete",
-    failed: "failed",
-    entry: "Entry",
-    open_dir: "Open install folder",
-    retry: "Retry",
-    finish: "Finish",
-    log: "Events",
-};
-
-/// Registers a system CJK font as a glyph fallback so the Chinese UI
-/// renders. Returns `false` when none is found (the UI falls back to
-/// English strings). Only single-file `.ttf` fonts are probed — egui
-/// cannot index `.ttc` collections.
-fn install_cjk_font(ctx: &Context) -> bool {
-    const CJK_FONTS: [&str; 4] = [
-        r"C:\Windows\Fonts\simhei.ttf",
-        r"C:\Windows\Fonts\deng.ttf",
-        r"C:\Windows\Fonts\simfang.ttf",
-        r"C:\Windows\Fonts\simkai.ttf",
-    ];
-    for path in CJK_FONTS {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-        let mut fonts = FontDefinitions::default();
-        fonts
-            .font_data
-            .insert("cjk".into(), FontData::from_owned(bytes).into());
-        for family in [FontFamily::Proportional, FontFamily::Monospace] {
-            fonts.families.entry(family).or_default().push("cjk".into());
-        }
-        ctx.set_fonts(fonts);
-        return true;
-    }
-    false
-}
-
 /// One wizard instance over the embedded config + payload.
 struct FallbackApp {
     config: ShunConfig,
-    /// Accent color from `shell.theme.accent` (brand default otherwise).
-    accent: Color32,
     payload: ArchivePayload,
     reason: FallbackReason,
     texts: &'static Texts,
+    theme: Theme,
+    timeline_left: bool,
+    logo: Option<TextureHandle>,
     stage: Stage,
     mode: &'static str,
     dir: String,
@@ -246,25 +407,20 @@ impl FallbackApp {
         reason: FallbackReason,
         zh: bool,
         receiver: Receiver<WorkerMsg>,
+        logo: Option<TextureHandle>,
     ) -> Self {
+        let theme = resolve_theme(&config);
+        let shell = config.shell.clone().unwrap_or_default();
         let mode = offered_modes(&config).first().copied().unwrap_or("local");
-        // The wizard follows the same theme knobs as the hikari UI: the
-        // accent override in `shell.theme.accent` recolors buttons,
-        // highlights and the step rail.
-        let accent = config
-            .shell
-            .as_ref()
-            .and_then(|shell| shell.theme.as_ref())
-            .and_then(|theme| theme.accent)
-            .map(|[r, g, b]| Color32::from_rgb(r, g, b))
-            .unwrap_or(ACCENT);
         Self {
             dir: default_dir(&config, mode).to_string_lossy().into_owned(),
-            accent,
             config,
             payload,
             reason,
             texts: if zh { &TEXTS_ZH } else { &TEXTS_EN },
+            theme,
+            timeline_left: shell.timeline == Some(shun::config::TimelineOrientation::Left),
+            logo,
             stage: Stage::Configure,
             mode,
             progress: None,
@@ -368,7 +524,7 @@ impl FallbackApp {
                         Err(err) => Outcome::Failed(err),
                     };
                     match &outcome {
-                        Outcome::InstallOk => self.push_log(self.texts.done_install.to_string()),
+                        Outcome::InstallOk => self.push_log(self.texts.done_title.to_string()),
                         Outcome::UninstallOk => {
                             self.push_log(self.texts.done_uninstall.to_string())
                         }
@@ -423,280 +579,11 @@ impl FallbackApp {
         }
     }
 
-    /// The step rail: Choose → Install → Done, current one highlighted,
-    /// earlier ones ticked green.
-    fn step_rail(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let steps: [(Stage, &str); 3] = [
-                (Stage::Configure, self.texts.step_choose),
-                (Stage::Running, self.texts.step_install),
-                (Stage::Finished, self.texts.step_done),
-            ];
-            // A failed run sends the user back to configure.
-            let current = match (&self.stage, self.outcome.as_ref()) {
-                (Stage::Finished, Some(Outcome::Failed(_))) => Stage::Configure,
-                (stage, _) => *stage,
-            };
-            let order = |stage: Stage| match stage {
-                Stage::Configure => 0,
-                Stage::Running => 1,
-                Stage::Finished => 2,
-            };
-            for (index, (stage, label)) in steps.iter().enumerate() {
-                if index > 0 {
-                    ui.label(RichText::new("—").weak().small());
-                    ui.add_space(6.0);
-                }
-                let done = order(*stage) < order(current);
-                let (marker, text) = if current == *stage {
-                    (
-                        RichText::new("●").color(ACCENT).small(),
-                        RichText::new(*label).color(ACCENT).strong(),
-                    )
-                } else if done {
-                    (
-                        RichText::new("●").color(OK_GREEN).small(),
-                        RichText::new(*label).weak(),
-                    )
-                } else {
-                    (
-                        RichText::new("○").weak().small(),
-                        RichText::new(*label).weak(),
-                    )
-                };
-                ui.label(marker);
-                ui.label(text);
-                ui.add_space(6.0);
-            }
-        });
-    }
-
-    /// The fallback-reason banner. This is the contract: a
-    /// missing-environment install must say so.
-    fn banner(&self, ui: &mut egui::Ui) {
-        let text = match self.reason {
-            FallbackReason::MissingWebview2 => self.texts.banner_missing,
-            FallbackReason::ManualOverride => self.texts.banner_manual,
-        };
-        Frame::default()
-            .fill(WARN_FILL)
-            .stroke(egui::Stroke::new(1.0f32, WARN_EDGE))
-            .inner_margin(Margin::same(10))
-            .corner_radius(CornerRadius::same(6))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new(text).color(WARN_AMBER).small());
-            });
-    }
-
-    /// Mode cards + directory row (stage: Configure).
-    fn configure_view(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new(self.texts.mode).strong().size(15.0));
-        ui.add_space(6.0);
-
-        for mode in offered_modes(&self.config) {
-            let selected = self.mode == mode;
-            let (title, hint) = match mode {
-                "portable" => (self.texts.mode_portable, self.texts.mode_portable_hint),
-                _ => (self.texts.mode_local, self.texts.mode_local_hint),
-            };
-            Frame::default()
-                .fill(if selected { ACCENT_FILL } else { PANEL })
-                .stroke(if selected {
-                    egui::Stroke::new(1.5f32, self.accent)
-                } else {
-                    egui::Stroke::new(1.0f32, PANEL_EDGE)
-                })
-                .inner_margin(Margin::same(12))
-                .corner_radius(CornerRadius::same(8))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        if ui.add(egui::RadioButton::new(selected, "")).clicked() {
-                            self.mode = mode;
-                            self.dir = default_dir(&self.config, mode)
-                                .to_string_lossy()
-                                .into_owned();
-                        }
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(title).strong().size(14.0));
-                            ui.label(RichText::new(hint).weak().small());
-                        });
-                    });
-                });
-            ui.add_space(6.0);
+    fn hint(&self) -> &'static str {
+        match self.mode {
+            "portable" => self.texts.hint_portable,
+            _ => self.texts.hint_local,
         }
-
-        ui.add_space(8.0);
-        ui.label(RichText::new(self.texts.dir).strong().size(15.0));
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                Vec2::new(ui.available_width() - 92.0, 22.0),
-                TextEdit::singleline(&mut self.dir),
-            );
-            if ui
-                .add_sized(
-                    Vec2::new(80.0, 22.0),
-                    Button::new(RichText::new(self.texts.browse).small()),
-                )
-                .clicked()
-            {
-                if let Some(picked) = rfd::FileDialog::new().pick_folder() {
-                    self.dir = picked.to_string_lossy().into_owned();
-                }
-            }
-        });
-    }
-
-    /// Progress view (stage: Running): phase checklist + bar + log.
-    fn running_view(&mut self, ui: &mut egui::Ui) {
-        let uninstalling = self.uninstalling == Some(true);
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(if uninstalling {
-                self.texts.uninstalling
-            } else {
-                self.texts.installing
-            })
-            .strong()
-            .size(16.0),
-        );
-        ui.add_space(12.0);
-
-        if !uninstalling {
-            // Phase checklist: finished phases tick green, the active one
-            // is accent, the rest are pending.
-            ui.horizontal(|ui| {
-                for phase in ALL_PHASES {
-                    let label = match phase {
-                        FlowPhase::Download => "下载",
-                        FlowPhase::Extract => "解压",
-                        FlowPhase::Verify => "校验",
-                        FlowPhase::Register => "注册",
-                        FlowPhase::Prepare => "准备",
-                    };
-                    let (marker, color) = if self.phases_done.contains(&phase) {
-                        (format!("√ {label}"), OK_GREEN)
-                    } else if self.phase_active == Some(phase) {
-                        (format!("● {label}"), self.accent)
-                    } else {
-                        (format!("○ {label}"), Color32::GRAY)
-                    };
-                    ui.label(RichText::new(marker).color(color).small());
-                    ui.add_space(8.0);
-                }
-            });
-            ui.add_space(10.0);
-        }
-
-        match &self.progress {
-            Some((step, Some(percent))) => {
-                ui.add(
-                    ProgressBar::new(f32::from(*percent) / 100.0)
-                        .desired_height(18.0)
-                        .corner_radius(CornerRadius::same(9))
-                        .text(step.clone()),
-                );
-            }
-            Some((step, None)) => {
-                ui.horizontal(|ui| {
-                    ui.add(egui::Spinner::new().size(18.0));
-                    ui.label(RichText::new(step.as_str()).small().weak());
-                });
-            }
-            None => {
-                ui.add(ProgressBar::new(0.0).desired_height(18.0).show_percentage());
-            }
-        }
-
-        self.log_view(ui);
-    }
-
-    /// Result view (stage: Finished).
-    fn finished_view(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
-        match self.outcome.as_ref().expect("Finished implies an outcome") {
-            Outcome::InstallOk => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(12.0);
-                    ui.label(RichText::new("√").size(34.0).color(OK_GREEN));
-                    ui.label(
-                        RichText::new(self.texts.done_install)
-                            .strong()
-                            .size(17.0)
-                            .color(OK_GREEN),
-                    );
-                    ui.add_space(8.0);
-                    if let Some(entry) = &self.entry {
-                        ui.label(
-                            RichText::new(format!("{}: {}", self.texts.entry, entry.display()))
-                                .weak()
-                                .small(),
-                        );
-                    }
-                });
-            }
-            Outcome::UninstallOk => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(12.0);
-                    ui.label(RichText::new("√").size(34.0).color(OK_GREEN));
-                    ui.label(
-                        RichText::new(self.texts.done_uninstall)
-                            .strong()
-                            .size(17.0)
-                            .color(OK_GREEN),
-                    );
-                });
-            }
-            Outcome::Failed(err) => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(12.0);
-                    ui.label(RichText::new("×").size(34.0).color(ERR_RED));
-                    ui.label(
-                        RichText::new(self.texts.failed)
-                            .strong()
-                            .size(17.0)
-                            .color(ERR_RED),
-                    );
-                    ui.add_space(6.0);
-                });
-                Frame::default()
-                    .fill(Color32::from_rgb(53, 17, 20))
-                    .stroke(egui::Stroke::new(1.0f32, Color32::from_rgb(127, 29, 29)))
-                    .inner_margin(Margin::same(10))
-                    .corner_radius(CornerRadius::same(6))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.label(RichText::new(err.clone()).small().color(ERR_RED));
-                    });
-            }
-        }
-        ui.add_space(8.0);
-        self.log_view(ui);
-    }
-
-    fn log_view(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(10.0);
-        ui.set_min_height(ui.available_height());
-        ui.label(RichText::new(self.texts.log).weak().small());
-        ui.add_space(2.0);
-        Frame::default()
-            .fill(Color32::from_rgb(11, 18, 32))
-            .stroke(egui::Stroke::new(1.0f32, PANEL_EDGE))
-            .inner_margin(Margin::same(8))
-            .corner_radius(CornerRadius::same(6))
-            .show(ui, |ui| {
-                ui.set_min_height(ui.available_height());
-                ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
-                        for line in &self.log {
-                            ui.label(RichText::new(line).weak());
-                        }
-                    });
-            });
     }
 }
 
@@ -709,6 +596,11 @@ const ALL_PHASES: [FlowPhase; 5] = [
     FlowPhase::Register,
 ];
 
+/// The egui window title (the screenshot path locates the window by it).
+pub fn window_title(config: &ShunConfig) -> String {
+    format!("{} — shun offline installer", config.product.name)
+}
+
 /// Opens a directory in the platform file manager.
 fn open_directory(path: &str) {
     #[cfg(windows)]
@@ -718,31 +610,34 @@ fn open_directory(path: &str) {
     let _ = std::process::Command::new(opener).arg(path).spawn();
 }
 
-/// The egui window title (the screenshot path locates the window by it).
-pub fn window_title(config: &ShunConfig) -> String {
-    format!("{} — shun offline installer", config.product.name)
-}
-
 /// Runs the fallback wizard. Does not return until the window closes.
-pub fn run(config: ShunConfig, payload: ArchivePayload, reason: FallbackReason) {
+pub fn run(
+    config: ShunConfig,
+    payload: ArchivePayload,
+    reason: FallbackReason,
+    logo_kind: &str,
+    logo_bytes: &[u8],
+) {
     let title = window_title(&config);
-    // Frameless like the hikari shell: the header below draws the custom
-    // chrome (drag area + close button). This also keeps eframe's
-    // EFRAME_SCREENSHOT_TO capture aligned with the client area.
+    // Frameless like the hikari shell: the title bar below draws the
+    // custom chrome (logo + caption + drag + close). This also keeps the
+    // `--screenshot` capture aligned with the client area.
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_decorations(false)
-            .with_inner_size([640.0, 640.0])
-            .with_min_inner_size([560.0, 560.0]),
+            .with_inner_size([800.0, 600.0])
+            .with_min_inner_size([640.0, 560.0]),
         ..Default::default()
     };
     let result = eframe::run_native(
         &title,
         options,
         Box::new(move |cc| {
-            let mut visuals = Visuals::dark();
-            visuals.panel_fill = PANEL;
-            visuals.window_fill = PANEL;
+            let theme = resolve_theme(&config);
+            let mut visuals = egui::Visuals::dark();
+            visuals.panel_fill = theme.background;
+            visuals.window_fill = theme.background;
+            visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0f32, theme.border);
             cc.egui_ctx.set_visuals(visuals);
             // Language: `shell.language` pins it; `auto` (or unset)
             // follows what the machine can render (CJK font present).
@@ -752,9 +647,10 @@ pub fn run(config: ShunConfig, payload: ArchivePayload, reason: FallbackReason) 
                 Some(language) if language.starts_with("zh") => font_found,
                 _ => font_found,
             };
+            let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
             let (_sender, receiver) = channel::<WorkerMsg>();
             Ok(Box::new(FallbackApp::new(
-                config, payload, reason, zh, receiver,
+                config, payload, reason, zh, receiver, logo,
             )))
         }),
     );
@@ -766,169 +662,605 @@ pub fn run(config: ShunConfig, payload: ArchivePayload, reason: FallbackReason) 
     }
 }
 
-impl eframe::App for FallbackApp {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        self.drain_worker();
+// ── Rendering — mirrors the hikari wizard layout ────────────────────────
 
-        // ── Header band (custom chrome): product identity + step rail on
-        //    the left, close button on the right, the whole band is the
-        //    window drag area.
-        egui::TopBottomPanel::top("header")
-            .frame(Frame::default().fill(PANEL).inner_margin(Margin {
-                left: 16,
-                right: 8,
-                top: 14,
-                bottom: 10,
-            }))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(
-                            RichText::new(self.config.product.name.as_str())
-                                .strong()
-                                .size(21.0),
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "{} · v{} · {}",
-                                self.texts.subtitle,
-                                self.config.product.version,
-                                self.config.product.publisher.as_deref().unwrap_or("")
-                            ))
-                            .weak()
-                            .small(),
-                        );
-                    });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui
-                            .add(Button::new(RichText::new("×").size(17.0)).frame(false))
-                            .clicked()
-                        {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
-                });
-                ui.add_space(8.0);
-                self.step_rail(ui);
-                // Window dragging: the header band doubles as the title
-                // bar (the window is frameless).
-                let drag = ui.interact(
-                    ui.max_rect(),
-                    ui.id().with("header-drag"),
-                    egui::Sense::drag(),
-                );
-                if drag.drag_started() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
-            });
-
-        // ── Footer band: actions, installer style — destructive at the
-        //    far left, the primary action at the far right.
-        egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let configuring = self.stage == Stage::Configure;
+impl FallbackApp {
+    /// The hikari caption bar: logo + title left, close right, the whole
+    /// band drags the window (double-click toggles nothing — the shell
+    /// window is not maximizable).
+    fn title_bar(&mut self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        ui.horizontal(|ui| {
+            ui.add_space(10.0);
+            let bar_height = 24.0;
+            if let Some(logo) = &self.logo {
+                ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(20.0)));
+            }
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!("{} Installer", self.config.product.name))
+                    .color(theme.text_secondary)
+                    .size(13.0),
+            );
+            ui.set_min_height(bar_height);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui
-                    .add_enabled(
-                        configuring,
-                        Button::new(RichText::new(self.texts.uninstall).small().color(ERR_RED)),
-                    )
+                    .add(Button::new(RichText::new("×").size(16.0)).frame(false))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
-                    self.spawn_worker(ctx, true);
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    match self.stage {
-                        Stage::Configure => {
-                            if ui
-                                .add_sized(
-                                    Vec2::new(120.0, 28.0),
-                                    Button::new(
-                                        RichText::new(self.texts.install)
-                                            .strong()
-                                            .color(Color32::BLACK),
-                                    )
-                                    .fill(self.accent)
-                                    .corner_radius(CornerRadius::same(6)),
-                                )
-                                .clicked()
-                            {
-                                self.spawn_worker(ctx, false);
+                ui.add_space(8.0);
+            });
+        });
+        let drag = ui.interact(ui.max_rect(), ui.id().with("titlebar-drag"), Sense::drag());
+        if drag.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+    }
+
+    /// The HTimeline analog: mode → install → done. Horizontal under the
+    /// caption (default) or vertical on the left when `shell.timeline =
+    /// "left"`.
+    fn timeline(&self, ui: &mut egui::Ui, vertical: bool) {
+        let theme = &self.theme;
+        // A failed run sends the user back to configure.
+        let current = match (&self.stage, self.outcome.as_ref()) {
+            (Stage::Finished, Some(Outcome::Failed(_))) => Stage::Configure,
+            (stage, _) => *stage,
+        };
+        let order = |stage: Stage| match stage {
+            Stage::Configure => 0,
+            Stage::Running => 1,
+            Stage::Finished => 2,
+        };
+        let steps = [
+            (Stage::Configure, self.texts.step_mode),
+            (Stage::Running, self.texts.step_install),
+            (Stage::Finished, self.texts.step_done),
+        ];
+        let rail: Box<dyn FnOnce(&mut egui::Ui)> = Box::new(|ui| {
+            let items: Vec<(bool, bool, &str)> = steps
+                .iter()
+                .map(|(stage, label)| (current == *stage, order(*stage) < order(current), *label))
+                .collect();
+            let paint = |ui: &mut egui::Ui| {
+                for (index, (active, done, label)) in items.iter().enumerate() {
+                    if !vertical && index > 0 {
+                        // Connector segment.
+                        let (marker_color, line_color) = if *done {
+                            (theme.success, theme.success)
+                        } else {
+                            (theme.text_tertiary, theme.border)
+                        };
+                        let _ = marker_color;
+                        ui.label(RichText::new("——").color(line_color).small());
+                        ui.add_space(6.0);
+                    } else if vertical && index > 0 {
+                        ui.label(RichText::new("│").color(theme.border).small());
+                    }
+                    let (marker, marker_color, text_color) = if *active {
+                        ("●", theme.primary, theme.text)
+                    } else if *done {
+                        ("●", theme.success, theme.text_secondary)
+                    } else {
+                        ("○", theme.text_tertiary, theme.text_tertiary)
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(marker).color(marker_color).small());
+                        ui.label(RichText::new(*label).color(text_color).small());
+                    });
+                    ui.add_space(if vertical { 10.0 } else { 0.0 });
+                }
+            };
+            if vertical {
+                ui.vertical(paint);
+            } else {
+                ui.horizontal(paint);
+            }
+        });
+        rail(ui);
+    }
+
+    /// The fallback-reason banner. This is the contract: a
+    /// missing-environment install must say so.
+    fn banner(&self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        let text = match self.reason {
+            FallbackReason::MissingWebview2 => self.texts.banner_missing,
+            FallbackReason::ManualOverride => self.texts.banner_manual,
+        };
+        Frame::default()
+            .fill(theme.warning_tint())
+            .stroke(Stroke::new(1.0f32, theme.warning))
+            .inner_margin(Margin::same(10))
+            .corner_radius(CornerRadius::same(8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(text).color(theme.warning).size(12.5));
+            });
+    }
+
+    /// Mode selection grid + target row (the "mode" pane).
+    fn configure_view(&mut self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        let texts = self.texts;
+
+        // Hero — the h1 of the hikari wizard.
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(self.config.product.name.as_str())
+                    .strong()
+                    .size(24.0)
+                    .color(theme.text),
+            );
+            ui.label(
+                RichText::new(texts.title_suffix)
+                    .strong()
+                    .size(24.0)
+                    .color(theme.text),
+            );
+        });
+        ui.label(
+            RichText::new(format!(
+                "{} {}{}",
+                texts.version_prefix,
+                self.config.product.version,
+                self.config
+                    .product
+                    .publisher
+                    .as_deref()
+                    .map(|p| format!(" · {p}"))
+                    .unwrap_or_default()
+            ))
+            .color(theme.text_secondary)
+            .size(14.0),
+        );
+        ui.add_space(14.0);
+
+        // Selection grid: two cards side by side (hikari columns=2),
+        // each allocated an exact equal share of the row.
+        let modes = offered_modes(&self.config);
+        let gap = 8.0;
+        let count = modes.len().max(1) as f32;
+        ui.horizontal(|ui| {
+            for (index, &mode) in modes.iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(gap);
+                }
+                let card_width = (ui.available_width() - gap * (count - index as f32 - 1.0))
+                    / (count - index as f32);
+                let selected = self.mode == mode;
+                let (title, hint) = match mode {
+                    "portable" => (texts.mode_portable, texts.mode_portable_hint),
+                    _ => (texts.mode_local, texts.mode_local_hint),
+                };
+                let card = Frame::default()
+                    .fill(if selected {
+                        theme.primary_tint()
+                    } else {
+                        theme.surface
+                    })
+                    .stroke(if selected {
+                        Stroke::new(1.5f32, theme.primary)
+                    } else {
+                        Stroke::new(1.0f32, theme.border)
+                    })
+                    .inner_margin(Margin::same(12))
+                    .corner_radius(CornerRadius::same(10));
+                let inner = card.show(ui, |ui| {
+                    ui.set_width(card_width);
+                    ui.vertical(|ui| {
+                        ui.add_space(2.0);
+                        ui.label(RichText::new(title).strong().size(15.0).color(if selected {
+                            theme.text
+                        } else {
+                            theme.text_secondary
+                        }));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(hint).size(12.0).color(theme.text_tertiary));
+                    });
+                });
+                // Clicking anywhere on the card selects the mode.
+                if ui.rect_contains_pointer(inner.response.rect)
+                    && inner.response.hovered()
+                    && !selected
+                {
+                    self.mode = mode;
+                    self.dir = default_dir(&self.config, mode)
+                        .to_string_lossy()
+                        .into_owned();
+                }
+                ui.add_space(8.0);
+            }
+        });
+
+        ui.add_space(14.0);
+
+        // Target row: label + input + ghost browse + hint.
+        ui.label(
+            RichText::new(texts.dir_label)
+                .size(13.0)
+                .color(theme.text_secondary),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let input = TextEdit::singleline(&mut self.dir)
+                .desired_width(ui.available_width() - 96.0)
+                .text_color(theme.text);
+            ui.add(input);
+            if ui
+                .add_sized(
+                    Vec2::new(84.0, 24.0),
+                    Button::new(
+                        RichText::new(texts.browse)
+                            .size(13.0)
+                            .color(theme.text_secondary),
+                    )
+                    .fill(theme.surface)
+                    .stroke(Stroke::new(1.0f32, theme.border))
+                    .corner_radius(CornerRadius::same(6)),
+                )
+                .clicked()
+            {
+                if let Some(picked) = rfd::FileDialog::new().pick_folder() {
+                    self.dir = picked.to_string_lossy().into_owned();
+                }
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(self.hint())
+                .size(12.0)
+                .color(theme.text_tertiary),
+        );
+    }
+
+    /// Progress view (the "install" pane): per-phase rows like the
+    /// webview UI (which renders download + extract), then the log.
+    fn running_view(&mut self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        let uninstalling = self.uninstalling == Some(true);
+
+        if uninstalling {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(20.0));
+                ui.label(
+                    RichText::new(self.texts.uninstalling)
+                        .strong()
+                        .size(16.0)
+                        .color(theme.text),
+                );
+            });
+        } else {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(self.texts.preparing)
+                    .strong()
+                    .size(16.0)
+                    .color(theme.text),
+            );
+            ui.add_space(14.0);
+
+            // Per-phase rows, download/extract first (the phases the
+            // webview UI renders), each with an indeterminate spinner and
+            // the live step text.
+            for phase in [FlowPhase::Download, FlowPhase::Extract] {
+                let done = self.phases_done.contains(&phase);
+                let active = self.phase_active == Some(phase);
+                let label = match phase {
+                    FlowPhase::Download => self.texts.phase_download,
+                    _ => self.texts.phase_extract,
+                };
+                let row_step = if active {
+                    self.progress.as_ref().map(|(step, _)| step.clone())
+                } else {
+                    None
+                };
+                Frame::default()
+                    .fill(theme.surface)
+                    .stroke(Stroke::new(1.0f32, theme.border))
+                    .inner_margin(Margin::same(12))
+                    .corner_radius(CornerRadius::same(10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            if done {
+                                ui.label(RichText::new("√").color(theme.success).size(16.0));
+                            } else if active {
+                                ui.add(egui::Spinner::new().size(18.0));
+                            } else {
+                                ui.label(RichText::new("○").color(theme.text_tertiary));
                             }
-                        }
-                        Stage::Running => {
-                            let label = match self.uninstalling {
-                                Some(true) => self.texts.uninstalling,
-                                _ => self.texts.installing,
-                            };
-                            ui.add_enabled(
-                                false,
-                                Button::new(RichText::new(label).strong().color(Color32::BLACK))
-                                    .fill(self.accent)
-                                    .corner_radius(CornerRadius::same(6)),
+                            ui.label(RichText::new(label).strong().size(14.0).color(
+                                if active || done {
+                                    theme.text
+                                } else {
+                                    theme.text_tertiary
+                                },
+                            ));
+                            if let Some(step) = row_step {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if let Some((_, Some(percent))) = &self.progress {
+                                        ui.label(
+                                            RichText::new(format!("{percent}%"))
+                                                .size(12.0)
+                                                .color(theme.primary),
+                                        );
+                                        ui.add_space(8.0);
+                                    }
+                                    ui.label(
+                                        RichText::new(step).size(12.0).color(theme.text_secondary),
+                                    );
+                                });
+                            }
+                        });
+                    });
+                ui.add_space(8.0);
+            }
+        }
+
+        self.log_view(ui);
+    }
+
+    /// Result view (the "done" pane or the failure alert).
+    fn finished_view(&mut self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        ui.add_space(8.0);
+        match self.outcome.as_ref().expect("Finished implies an outcome") {
+            Outcome::InstallOk | Outcome::UninstallOk => {
+                let (title, path) = match self.outcome.as_ref().expect("checked above") {
+                    Outcome::UninstallOk => (self.texts.done_uninstall, None),
+                    _ => (
+                        self.texts.done_title,
+                        Some(self.dir.trim().trim_end_matches('\\').to_string()),
+                    ),
+                };
+                ui.vertical(|ui| {
+                    ui.add_space(12.0);
+                    ui.label(RichText::new("√").size(34.0).color(theme.success));
+                    ui.label(RichText::new(title).strong().size(18.0).color(theme.text));
+                    if let Some(path) = path {
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(path).size(13.0).color(theme.text_secondary));
+                    }
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(self.hint())
+                            .size(12.0)
+                            .color(theme.text_tertiary),
+                    );
+                });
+            }
+            Outcome::Failed(err) => {
+                // The HAlert error analog.
+                Frame::default()
+                    .fill(theme.error_tint())
+                    .stroke(Stroke::new(1.0f32, theme.error))
+                    .inner_margin(Margin::same(12))
+                    .corner_radius(CornerRadius::same(8))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new(format!("× {}", self.texts.failed))
+                                    .strong()
+                                    .size(14.0)
+                                    .color(theme.error),
                             );
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(err.clone()).size(12.5).color(theme.error));
+                        });
+                    });
+            }
+        }
+        ui.add_space(8.0);
+        self.log_view(ui);
+    }
+
+    fn log_view(&mut self, ui: &mut egui::Ui) {
+        let theme = &self.theme;
+        ui.add_space(12.0);
+        ui.label(
+            RichText::new(self.texts.log)
+                .size(12.0)
+                .color(theme.text_tertiary),
+        );
+        ui.add_space(2.0);
+        Frame::default()
+            .fill(mix(theme.background, theme.surface, 0.5))
+            .stroke(Stroke::new(1.0f32, theme.border))
+            .inner_margin(Margin::same(8))
+            .corner_radius(CornerRadius::same(8))
+            .show(ui, |ui| {
+                ui.set_min_height(ui.available_height());
+                ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for line in &self.log {
+                            ui.label(RichText::new(line).size(11.5).color(theme.text_tertiary));
                         }
-                        Stage::Finished => match self.outcome.as_ref() {
-                            Some(Outcome::Failed(_)) => {
-                                if ui
-                                    .add_sized(
-                                        Vec2::new(120.0, 28.0),
-                                        Button::new(RichText::new(self.texts.retry).strong())
-                                            .corner_radius(CornerRadius::same(6)),
-                                    )
-                                    .clicked()
-                                {
+                    });
+            });
+    }
+
+    /// The installer footer: live flow step on the left, nav buttons on
+    /// the right (primary action far right, like the webview footer).
+    fn footer(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+        let theme = self.theme;
+        ui.separator();
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            // Left: the live flow step (wizard-live analog).
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new(if self.stage == Stage::Running {
+                        self.progress
+                            .as_ref()
+                            .map(|(step, _)| step.clone())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    })
+                    .size(12.0)
+                    .color(theme.text_tertiary),
+                );
+            });
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let configuring = self.stage == Stage::Configure;
+                // Primary button, right edge.
+                let (label, enabled) = match self.stage {
+                    Stage::Configure => (self.texts.install, true),
+                    Stage::Running => (
+                        match self.uninstalling {
+                            Some(true) => self.texts.uninstalling,
+                            _ => self.texts.installing,
+                        },
+                        false,
+                    ),
+                    Stage::Finished => match self.outcome.as_ref() {
+                        Some(Outcome::Failed(_)) => (self.texts.retry, true),
+                        _ => (self.texts.finish, true),
+                    },
+                };
+                let action = match (self.stage, self.outcome.as_ref()) {
+                    (Stage::Configure, _) => Some((false, false)),
+                    (Stage::Running, _) => None,
+                    (Stage::Finished, Some(Outcome::Failed(_))) => Some((false, true)),
+                    (Stage::Finished, _) => Some((false, false)),
+                };
+                if let Some((uninstalling, _)) = action {
+                    if ui
+                        .add_enabled(
+                            enabled,
+                            Button::new(
+                                RichText::new(label)
+                                    .strong()
+                                    .size(13.5)
+                                    .color(theme.on_primary),
+                            )
+                            .fill(theme.primary)
+                            .corner_radius(CornerRadius::same(8))
+                            .min_size(Vec2::new(112.0, 30.0)),
+                        )
+                        .clicked()
+                    {
+                        match self.stage {
+                            Stage::Finished => match self.outcome.as_ref() {
+                                Some(Outcome::Failed(_)) => {
                                     self.stage = Stage::Configure;
                                     self.outcome = None;
                                 }
-                            }
-                            _ => {
-                                if self
-                                    .outcome
-                                    .as_ref()
-                                    .is_some_and(|o| matches!(o, Outcome::InstallOk))
-                                    && ui
-                                        .add(
-                                            Button::new(RichText::new(self.texts.open_dir).small())
-                                                .corner_radius(CornerRadius::same(6)),
-                                        )
-                                        .clicked()
-                                {
-                                    open_directory(self.dir.trim().trim_end_matches('\\'));
-                                }
-                                if ui
-                                    .add_sized(
-                                        Vec2::new(120.0, 28.0),
-                                        Button::new(
-                                            RichText::new(self.texts.finish)
-                                                .strong()
-                                                .color(Color32::BLACK),
-                                        )
-                                        .fill(self.accent)
-                                        .corner_radius(CornerRadius::same(6)),
-                                    )
-                                    .clicked()
-                                {
-                                    std::process::exit(0);
-                                }
-                            }
-                        },
+                                _ => std::process::exit(0),
+                            },
+                            _ => self.spawn_worker(ctx, uninstalling),
+                        }
                     }
-                });
-            });
-            ui.add_space(8.0);
-        });
+                } else {
+                    ui.add_enabled(
+                        false,
+                        Button::new(
+                            RichText::new(label)
+                                .strong()
+                                .size(13.5)
+                                .color(theme.on_primary),
+                        )
+                        .fill(theme.primary)
+                        .corner_radius(CornerRadius::same(8))
+                        .min_size(Vec2::new(112.0, 30.0)),
+                    );
+                }
 
-        // ── Content.
+                // Ghost buttons to the left of the primary: uninstall on
+                // configure/done, open-folder on a successful install.
+                let ghost = |ui: &mut egui::Ui, label: &str| {
+                    ui.add(
+                        Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::new(1.0f32, theme.border))
+                            .corner_radius(CornerRadius::same(8))
+                            .min_size(Vec2::new(88.0, 30.0)),
+                    )
+                    .clicked()
+                };
+                if configuring {
+                    if ghost(ui, self.texts.uninstall) {
+                        self.spawn_worker(ctx, true);
+                    }
+                } else if self.stage == Stage::Finished
+                    && matches!(self.outcome, Some(Outcome::InstallOk))
+                {
+                    if ghost(ui, self.texts.uninstall) {
+                        self.spawn_worker(ctx, true);
+                    }
+                    if ghost(ui, self.texts.open_dir) {
+                        open_directory(self.dir.trim().trim_end_matches('\\'));
+                    }
+                }
+            });
+        });
+        ui.add_space(6.0);
+    }
+}
+
+impl eframe::App for FallbackApp {
+    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.drain_worker();
+        let theme = self.theme;
+
+        // ── Caption bar (frameless chrome).
+        egui::TopBottomPanel::top("titlebar")
+            .frame(Frame::default().fill(theme.surface).inner_margin(Margin {
+                left: 0,
+                right: 10,
+                top: 8,
+                bottom: 8,
+            }))
+            .show(ctx, |ui| {
+                self.title_bar(ui);
+            });
+
+        // ── Footer: live step + nav.
+        egui::TopBottomPanel::bottom("footer")
+            .frame(
+                Frame::default()
+                    .fill(theme.background)
+                    .inner_margin(Margin::symmetric(20, 6)),
+            )
+            .show(ctx, |ui| {
+                self.footer(ui, ctx);
+            });
+
+        // ── Optional left rail (`shell.timeline = "left"`).
+        let timeline_left = self.timeline_left;
+        if timeline_left {
+            egui::SidePanel::left("timeline")
+                .frame(
+                    Frame::default()
+                        .fill(theme.surface)
+                        .inner_margin(Margin::same(16)),
+                )
+                .show(ctx, |ui| {
+                    self.timeline(ui, true);
+                });
+        }
+
+        // ── Content pane.
         egui::CentralPanel::default()
             .frame(
                 Frame::default()
-                    .fill(Color32::from_rgb(11, 18, 32))
-                    .inner_margin(Margin::same(16)),
+                    .fill(theme.background)
+                    .inner_margin(Margin::symmetric(20, 12)),
             )
             .show(ctx, |ui| {
+                if !timeline_left {
+                    self.timeline(ui, false);
+                    ui.add_space(10.0);
+                }
                 self.banner(ui);
                 ui.add_space(12.0);
                 match self.stage {
