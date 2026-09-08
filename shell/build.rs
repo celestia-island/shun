@@ -59,7 +59,31 @@ fn main() {
         .expect("write embedded payload");
     println!("cargo:rerun-if-changed={}", payload_dir.display());
 
-    // 3. Embed the application manifest (comctl32 v6 + per-monitor DPI).
+    // 3. Embed the product logo for the UIs (title bars). Always written
+    //    so include_bytes! has a stable target; the kind file says which
+    //    decoder to use ("none" when the manifest declares no logo).
+    let kind = config
+        .product
+        .logo
+        .as_ref()
+        .and_then(|logo| std::fs::read(manifest_dir.join(logo)).ok())
+        .map(|bytes| {
+            let extension = config
+                .product
+                .logo
+                .as_ref()
+                .and_then(|p| p.extension().map(|e| e.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "none".into());
+            std::fs::write(out_dir.join("shun-logo.bin"), bytes).expect("write embedded logo");
+            extension
+        })
+        .unwrap_or_else(|| {
+            std::fs::write(out_dir.join("shun-logo.bin"), []).expect("write empty logo");
+            "none".into()
+        });
+    std::fs::write(out_dir.join("shun-logo-kind.txt"), kind).expect("write logo kind");
+
+    // 4. Embed the application manifest (comctl32 v6 + per-monitor DPI).
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(
         tauri_build::WindowsAttributes::new().app_manifest(include_str!("app.manifest")),
     ))
