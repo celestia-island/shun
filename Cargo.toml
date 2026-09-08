@@ -25,12 +25,20 @@ walkdir.workspace = true
 ureq = { version = "^2", optional = true }
 clap = { version = "^4", features = ["derive"], optional = true }
 image = { version = "^0.25", default-features = false, features = ["ico", "png", "webp"], optional = true }
+# Interpreter probe (optional, `python-probe`): links the build host's
+# CPython — `auto-initialize` embeds it into the process. Never in the
+# default build; see docs/en/design/scripting.md.
+pyo3 = { version = "^0.23", optional = true, features = ["auto-initialize"] }
 
 [features]
 default = ["online", "cli"]
 online = ["dep:ureq"]
 # The `shun` CLI binary: artifact builder, packer, icon tooling, signing.
 cli = ["dep:clap", "dep:image", "online"]
+# Embedding probe for the optional Python runtime (design note:
+# docs/en/design/scripting.md). Opt-in so the default build — and CI —
+# never link an interpreter.
+python-probe = ["dep:pyo3"]
 
 [target.'cfg(windows)'.dependencies]
 winreg = "^0.56"
