@@ -2,6 +2,7 @@ mod common;
 
 #[cfg(windows)]
 use common::{ctx, demo_payload};
+#[cfg(windows)]
 use shun::flow::Flow;
 #[cfg(windows)]
 use shun::targets::install::{InstallFlow, WindowsRegistration, arp_key_path};
