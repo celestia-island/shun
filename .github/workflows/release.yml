@@ -57,6 +57,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
+      # The workspace test pass compiles the Tauri shell, whose
+      # generate_context! needs the built frontend beside it (the dist
+      # is not tracked in git).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        run: npm install -g pnpm@11
+
+      - name: Build shell frontend
+        working-directory: shell/web
+        run: |
+          pnpm install
+          pnpm build
+
       - name: Run tests
         run: cargo test --workspace --all-features
 
