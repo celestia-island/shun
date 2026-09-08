@@ -144,13 +144,18 @@ mod registration {
     }
 
     /// Whether this environment can resolve `.lnk` files through the
-    /// WScript.Shell COM parser. Interactive desktops can; headless CI
-    /// service sessions often cannot (the shell COM objects exist but
-    /// resolve nothing), so the COM round-trip tests skip there and stay
-    /// green on real machines.
-    fn shell_com_works() -> bool {
+    /// WScript.Shell COM parser — probing from inside `dir_name`, so
+    /// callers can also verify the session round-trips non-ASCII paths
+    /// (CI service sessions may resolve ASCII but mojibake CJK).
+    /// Interactive desktops can; headless sessions often cannot, so the
+    /// COM round-trip tests skip there and stay green on real machines.
+    fn shell_com_roundtrips(dir_name: &str) -> bool {
         let dir = tempfile::tempdir().unwrap();
-        let scratch = dir.path().join("probe.lnk");
+        let nested = dir.path().join(dir_name);
+        if std::fs::create_dir_all(&nested).is_err() {
+            return false;
+        }
+        let scratch = nested.join("probe.lnk");
         let exe = std::env::current_exe().unwrap();
         if mslnk::ShellLink::new(&exe)
             .unwrap()
@@ -160,12 +165,18 @@ mod registration {
             return false;
         }
         let script = format!(
-            "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{}'); \
-             Write-Output ($s.TargetPath.Length -gt 0)",
-            scratch.display()
+            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; \
+             $s = (New-Object -ComObject WScript.Shell).CreateShortcut('{}'); \
+             Write-Output ($s.TargetPath -eq '{}')",
+            scratch.display(),
+            exe.display()
         );
         let out = run_powershell(&script);
         out.trim().ends_with("True")
+    }
+
+    fn shell_com_works() -> bool {
+        shell_com_roundtrips("shun-com-probe")
     }
 
     fn read_shortcut_via_shell(lnk: &Path) -> ShortcutView {
@@ -238,8 +249,10 @@ mod registration {
     /// round-trip through the synthetic PIDL that mslnk builds.
     #[test]
     fn shortcut_survives_a_non_ascii_install_path() {
-        if !shell_com_works() {
-            eprintln!("skipping: no interactive shell COM in this session");
+        // Some CI sessions resolve ASCII paths but mojibake CJK ones —
+        // probe with the very directory shape under test.
+        if !shell_com_roundtrips("顺探测目录") {
+            eprintln!("skipping: this session cannot round-trip non-ASCII paths through shell COM");
             return;
         }
         let dest = tempfile::tempdir().unwrap();
