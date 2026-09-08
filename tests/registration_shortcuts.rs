@@ -143,6 +143,31 @@ mod registration {
         String::from_utf8_lossy(&output.stdout).to_string()
     }
 
+    /// Whether this environment can resolve `.lnk` files through the
+    /// WScript.Shell COM parser. Interactive desktops can; headless CI
+    /// service sessions often cannot (the shell COM objects exist but
+    /// resolve nothing), so the COM round-trip tests skip there and stay
+    /// green on real machines.
+    fn shell_com_works() -> bool {
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = dir.path().join("probe.lnk");
+        let exe = std::env::current_exe().unwrap();
+        if mslnk::ShellLink::new(&exe)
+            .unwrap()
+            .create_lnk(&scratch)
+            .is_err()
+        {
+            return false;
+        }
+        let script = format!(
+            "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{}'); \
+             Write-Output ($s.TargetPath.Length -gt 0)",
+            scratch.display()
+        );
+        let out = run_powershell(&script);
+        out.trim().ends_with("True")
+    }
+
     fn read_shortcut_via_shell(lnk: &Path) -> ShortcutView {
         let script = format!(
             "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; \
@@ -182,6 +207,10 @@ mod registration {
     /// on when the user launches the app from the Start menu.
     #[test]
     fn start_menu_shortcut_resolves_through_the_shell() {
+        if !shell_com_works() {
+            eprintln!("skipping: no interactive shell COM in this session");
+            return;
+        }
         let product = "ShunDemo-Test-ShellLnk";
         let (_guard, install_dir) = Installed::install(product, &|_| {});
 
@@ -209,6 +238,10 @@ mod registration {
     /// round-trip through the synthetic PIDL that mslnk builds.
     #[test]
     fn shortcut_survives_a_non_ascii_install_path() {
+        if !shell_com_works() {
+            eprintln!("skipping: no interactive shell COM in this session");
+            return;
+        }
         let dest = tempfile::tempdir().unwrap();
         let install_dir = dest.path().join("顺测试目录").join("ShunDemo-CJK");
         let product = "ShunDemo-Test-CJK";
@@ -377,8 +410,9 @@ mod registration {
     /// shortcut degrades to a warning.
     #[test]
     fn desktop_shortcut_lands_resolves_and_uninstalls() {
+        let com_works = shell_com_works();
         let product = "ShunDemo-Test-Desktop";
-        let writable = desktop_accepts_lnk();
+        let writable = desktop_accepts_lnk() && com_works;
         let (guard, install_dir) = Installed::install(product, &|ctx| {
             ctx.desktop_shortcut = true;
         });
@@ -435,6 +469,10 @@ mod registration {
 
     #[test]
     fn aumid_is_stamped_on_the_start_menu_shortcut() {
+        if !shell_com_works() {
+            eprintln!("skipping: no interactive shell COM in this session");
+            return;
+        }
         let product = "ShunDemo-Test-Aumid";
         let (_guard, _install_dir) = Installed::install(product, &|ctx| {
             ctx.aumid = Some("celestia-island.ShunDemoTest".into());
@@ -544,9 +582,13 @@ mod registration {
         use winreg::RegKey;
         use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
 
-        if !elevate::is_elevated() {
+        // Opt-in: CI Windows runners are administrators by default, so
+        // elevation alone must not unleash HKLM writes — set
+        // SHUN_TEST_MACHINE_SCOPE=1 to run this for real.
+        let opted_in = std::env::var_os("SHUN_TEST_MACHINE_SCOPE").is_some();
+        if !opted_in || !elevate::is_elevated() || !shell_com_works() {
             eprintln!(
-                "skipping: machine-scope registration needs an elevated                  test runner (run cargo from an administrator shell)"
+                "skipping: set SHUN_TEST_MACHINE_SCOPE=1 in an elevated,                  interactive shell to exercise machine-scope registration"
             );
             return;
         }
@@ -636,6 +678,10 @@ mod registration {
     fn illegal_product_names_are_stem_sanitized() {
         use winreg::RegKey;
         use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
+        if !shell_com_works() {
+            eprintln!("skipping: no interactive shell COM in this session");
+            return;
+        }
 
         let product = "ShunDemo/Test *2";
         let (guard, install_dir) = Installed::install(product, &|_| {});
