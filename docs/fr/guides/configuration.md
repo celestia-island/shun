@@ -16,10 +16,30 @@ main-exe = "bin/shun-demo.exe"             # point d'entrée dans le payload
 [package.metadata.shun.install]            # cible install (défaut)
 local = true                               # installation enregistrée (ARP, désinstalleur, raccourcis)
 portable = true                            # mode portable (marqueur .shun-portable, sans registre)
+desktop-shortcut = "ask"                   # always | never | ask (case de l'assistant, cochée par défaut)
+scope = "ask"                              # user (par défaut) | machine | ask
+deep-links = ["shundemo"]                  # schémas d'URL détenus par l'app (myapp://…)
+
+[[package.metadata.shun.install.verbs]]    # verbes du menu contextuel (verbes de l'Explorateur / actions de bureau)
+key = "open-data"                          # id stable du verbe
+display = "Open data folder"               # texte du menu
+target = "data-folder"                     # data-folder | uninstall | app
+# arguments = "--safe"                     # cible app uniquement : arguments CLI supplémentaires
 
 [package.metadata.shun.webview2]           # Windows uniquement
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version : dossier runtime extrait
+
+[[package.metadata.shun.steps]]            # pipeline ordonné de l'assistant (optionnel)
+kind = "mode"                              # mode | scope | license | content | install
+
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "Release notes"                    # les étapes content portent un titre…
+markdown = "notes.md"                      # …et un document, intégré à la compilation
+
+[[package.metadata.shun.steps]]
+kind = "install"                           # exactement une étape install
 
 [package.metadata.shun.flash]              # cible flash (optionnel)
 require-removable = true                   # refuser les périphériques non amovibles

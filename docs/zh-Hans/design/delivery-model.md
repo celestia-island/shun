@@ -16,8 +16,11 @@ sidecar 携带。解压时逐条目校验清单并流式产出进度事件。
 
 ## Targets
 
-- **install** —— 直接 Windows 注册（用户级 ARP 条目、自拷贝卸载器、开始菜单
-  快捷方式、深链），外加零注册表的便携模式。卸载按清单移除全部痕迹。
+- **install** —— 各平台直接注册：Windows 为每用户 ARP 条目、自拷贝
+  卸载器、开始菜单/桌面快捷方式（带 AUMID 盖章）与可选的 Explorer
+  右键动词；Linux 为每用户 `.desktop` 启动器 + Desktop Actions（含
+  卸载入口）；macOS 为 `.app` 包补全 + Launch Services 注册。便携
+  模式在任何平台都不碰系统状态。卸载按清单清除全部痕迹。
 - **flash** —— 块设备写入与写后校验（镜像烧写）。后端随 evernight
   烧写器落地；trait 接口与设备枚举今天已就绪。
 

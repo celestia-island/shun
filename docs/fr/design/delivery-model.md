@@ -24,10 +24,7 @@ désinstallation), puis enregistre (mode local) ou pose le marqueur portable
 
 ## Targets
 
-- **install** — enregistrement Windows direct (entrée ARP par utilisateur,
-  désinstalleur auto-copiant, raccourci du menu Démarrer, liens profonds)
-  plus un mode portable sans aucun registre. La désinstallation efface toute
-  trace selon le manifeste.
+- **install** — enregistrement direct par plateforme : sous Windows, une entrée ARP par utilisateur, un désinstalleur auto-copié, des raccourcis menu Démarrer/bureau (avec AUMID) et des verbes optionnels du menu contextuel de l'Explorateur ; sous Linux, un lanceur `.desktop` par utilisateur avec des actions de bureau (dont Désinstaller) ; sous macOS, complétion du bundle `.app` plus enregistrement Launch Services. Le mode portable ne touche aucun état système, sur aucune plateforme. La désinstallation supprime toute trace selon le manifeste.
 - **flash** — écriture sur périphérique bloc et vérification après écriture
   (flash d'images). Le backend arrive avec le flasheur evernight ; la surface
   trait et l'énumération des périphériques sont disponibles dès aujourd'hui.

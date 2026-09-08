@@ -16,10 +16,30 @@ main-exe = "bin/shun-demo.exe"             # payload 내 진입점
 [package.metadata.shun.install]            # install 타깃 (기본)
 local = true                               # 등록 설치 (ARP, 제거 프로그램, 바로 가기)
 portable = true                            # 휴대용 모드 (.shun-portable 마커, 레지스트리 미사용)
+desktop-shortcut = "ask"                   # always | never | ask(마법사 체크박스, 기본 선택)
+scope = "ask"                              # user(기본값) | machine | ask
+deep-links = ["shundemo"]                  # 앱이 소유한 URL 스킴(myapp://…)
+
+[[package.metadata.shun.install.verbs]]    # 우클릭 동사(탐색기 동사 / 데스크톱 액션)
+key = "open-data"                          # 안정적인 동사 id
+display = "Open data folder"               # 메뉴 텍스트
+target = "data-folder"                     # data-folder | uninstall | app
+# arguments = "--safe"                     # app 대상만: 추가 CLI 인수
 
 [package.metadata.shun.webview2]           # Windows 전용
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 전용: 압축 해제된 런타임 폴더
+
+[[package.metadata.shun.steps]]            # 순서가 있는 마법사 파이프라인(선택)
+kind = "mode"                              # mode | scope | license | content | install
+
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "Release notes"                    # content 단계는 제목을 가짐…
+markdown = "notes.md"                      # …와 문서, 빌드 시 인라인
+
+[[package.metadata.shun.steps]]
+kind = "install"                           # install 단계는 정확히 하나
 
 [package.metadata.shun.flash]              # flash 타깃 (선택)
 require-removable = true                   # 이동식이 아닌 장치 거부

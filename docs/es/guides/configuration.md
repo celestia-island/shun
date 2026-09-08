@@ -16,10 +16,30 @@ main-exe = "bin/shun-demo.exe"             # punto de entrada dentro del payload
 [package.metadata.shun.install]            # destino install (por defecto)
 local = true                               # instalación registrada (ARP, desinstalador, accesos)
 portable = true                            # modo portable (marcador .shun-portable, sin registro)
+desktop-shortcut = "ask"                   # always | never | ask (casilla del asistente, marcada por defecto)
+scope = "ask"                              # user (por defecto) | machine | ask
+deep-links = ["shundemo"]                  # esquemas de URL propios de la app (myapp://…)
+
+[[package.metadata.shun.install.verbs]]    # verbos del menú contextual (verbos del Explorador / acciones de escritorio)
+key = "open-data"                          # id estable del verbo
+display = "Open data folder"               # texto del menú
+target = "data-folder"                     # data-folder | uninstall | app
+# arguments = "--safe"                     # solo destino app: argumentos CLI extra
 
 [package.metadata.shun.webview2]           # solo Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version: carpeta del runtime extraído
+
+[[package.metadata.shun.steps]]            # canalización ordenada del asistente (opcional)
+kind = "mode"                              # mode | scope | license | content | install
+
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "Release notes"                    # los pasos content llevan un título…
+markdown = "notes.md"                      # …y un documento, incrustado en tiempo de compilación
+
+[[package.metadata.shun.steps]]
+kind = "install"                           # exactamente un paso install
 
 [package.metadata.shun.flash]              # destino flash (opcional)
 require-removable = true                   # rechazar dispositivos no extraíbles
