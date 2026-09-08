@@ -37,7 +37,7 @@ le shell d'exécution :
 - un **flux** — choisir un mode, choisir une cible, diffuser des événements de
   progression réels ;
 - des **targets** enfichables :
-  - `install` — enregistrement façon NSIS (entrée ARP par utilisateur,
+  - `install` — enregistrement Windows direct (entrée ARP par utilisateur,
     désinstalleur auto-copiant, raccourci du menu Démarrer, liens profonds)
     *et* un mode portable sans aucun registre ;
   - `flash` — écriture d'une image sur périphérique bloc avec vérification
@@ -70,7 +70,7 @@ cargo run --example demo_install -- --uninstall       # désinstallation (trace 
 `demo_install` génère le paquet d'installation `ShunDemo.shun` (tar zstd +
 manifeste SHA-256) dans le répertoire courant, le décompresse avec une
 progression diffusée en continu et, en mode local, effectue l'enregistrement
-façon NSIS décrit ci-dessus. Le shell de démo Tauri (`shell/`, construit sur
+directe décrit ci-dessus. Le shell de démo Tauri (`shell/`, construit sur
 [@celestia-island/hikari](https://github.com/celestia-island/hikari)) rend le
 même flux avec une interface complète, en embarquant le payload à la
 construction.

@@ -209,7 +209,7 @@ pub enum Webview2Strategy {
     },
 }
 
-/// Delivery target. `install` performs NSIS-like registration; `flash`
+/// Delivery target. `install` performs direct Windows registration; `flash`
 /// writes images to block devices.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]

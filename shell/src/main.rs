@@ -6,7 +6,7 @@
 //! modes exist, and the payload. The binary embeds the payload at build
 //! time (single-file installer pattern) and drives
 //! `shun::targets::install` through Tauri commands: local mode performs
-//! the NSIS-like registration, portable mode drops the `.shun-portable`
+//! the direct Windows registration, portable mode drops the `.shun-portable`
 //! marker. Progress events stream straight from the flow.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -187,7 +187,7 @@ fn uninstall_demo(state: State<'_, AppState>, mode: String, dir: String) -> Resu
     uninstall(&ctx, &WindowsRegistration).map_err(|e| e.to_string())
 }
 
-/// Automated-install arguments (the NSIS `/S` analog): `--silent` skips the
+/// Automated-install arguments (headless mode): `--silent` skips the
 /// UI and runs the flow headlessly with `--mode=local|portable`,
 /// `--dir=<path>` and an optional `--uninstall`. The host application is
 /// expected to exit cleanly BEFORE invoking the installer with these flags

@@ -20,7 +20,7 @@ mode) or drops the portable marker (portable mode).
 
 ## Targets
 
-- **install** — NSIS-like registration (per-user ARP entry, self-copying
+- **install** — direct Windows registration (per-user ARP entry, self-copying
   uninstaller, start-menu shortcut, deep links) plus a portable mode that
   touches no registry. Uninstall removes every trace per the manifest.
 - **flash** — block-device writes with post-write verification (image

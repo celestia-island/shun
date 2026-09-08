@@ -12,7 +12,7 @@ cargo run --example demo_install -- --uninstall       # 解除安裝（清除全
 ```
 
 `demo_install` 產生安裝套件 `ShunDemo.shun`，以串流進度解壓，並在本機模式下執行
-NSIS 式註冊：使用者級 ARP 項目（設定 → 應用程式）、開始功能表捷徑、自複製解除安裝器。
+直接 Windows 註冊：使用者級 ARP 項目（設定 → 應用程式）、開始功能表捷徑、自複製解除安裝器。
 可攜模式只寫 `.shun-portable` 標記，絕不觸碰登錄檔。
 
 ## 執行 demo 殼

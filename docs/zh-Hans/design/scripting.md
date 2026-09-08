@@ -31,6 +31,49 @@ shun 内置接口将以 duckscript 命令形式注册：`shun_progress`、
 需要在 shun 封装里归一化的坑：duckscript 参数里 Windows 反斜杠是
 转义符（传正斜杠路径）；赋值必须用 `x = 命令 参数` 的输出捕获语法。
 
+## 嵌入式 Python —— 实测记录（2026-09 探针）
+
+以下全部真实跑过两遍：宿主 CPython 3.13.5 一遍，**携带的 embeddable
+运行时**一遍（解包 `python-3.13.5-embed-amd64.zip`，把 PyO3 的
+`pyembed_runner` 示例放在旁边，`python313.dll`/标准库都从携带目录
+加载 —— `sys.prefix` 已确认指向携带目录）：
+
+| 能力 | 结果 |
+| --- | --- |
+| 真实 HTTPS（urllib + TLS） | 通过（本机网络直连 pypi.org 被掐；example.com/腾讯镜像正常） |
+| 流式 SHA-256 + HMAC | 通过 |
+| AES-CTR 往返、RSA-2048 签名/验签 | 通过 —— 经预装进携带运行时的 `cryptography` wheel（`pip --target runtime/Lib/site-packages` + 在 `python313._pth` 启用 `import site`） |
+| 机器码 | MachineGuid（winreg）、MAC（`uuid.getnode`）、C: 卷序列号（ctypes `GetVolumeInformationW`）—— 全通过 |
+| TPM | ctypes 走 `tbs.dll` 的调用路径正确；探针机的 firmware 关闭了 TPM，`Tbsi_Context_Create` 返回 `TBS_E_TPM_NOT_FOUND`（0x8028400F —— 注意不是 0x80284002，那是参数结构传 NULL 导致的 `TBS_E_BAD_PARAMETER`）。调用机制已验证；TPM 启用的机器上同一段代码可读 `TPM_PT_MANUFACTURER` |
+
+实测体积：embeddable zip **10.9 MB** / 解包 **20.4 MB** /
++cryptography wheel **32.4 MB**；PyO3 runner 二进制本身约 0.2 MB。
+带原生 `.pyd` 的第三方 wheel（如 cryptography）原样可用 —— 直接随
+携带运行时一起发行。
+
+为正式接入记录的坑：嵌入式解释器 drop 时不会 finalize —— 跑完脚本
+要显式 flush stdio（见 runner 示例）；`eval` 只吃表达式；对携带运行
+时用 pip 需要 `--target` 加 `._pth` 改动（或改用自带 pip 的
+python-build-standalone 运行时）。
+
+## WebView2 fixed-version 内嵌 —— 实测
+
+问题：安装器能否把 WebView2 引擎本体带在身上，同时驱动自己的 UI 与
+装出去的应用？**机械上可行 —— 已端到端跑通**；代价在体积。
+
+- v151.0.4129.101 x64 fixed-version cab：**307,241,094 字节 ≈ 293 MB**
+  压缩，**661.1 MB 解包**。
+- 演示壳对着解包后的携带运行时运行（`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`
+  —— 它本来就是 `webview2_available` 探测的第一优先级）：UI 正常渲染
+  （离线截图验证），且**全部 6 个渲染进程都来自携带目录**而非系统
+  Evergreen。
+- 结论：可行但沉重。单文件安装器要长大约 300 MB（压缩）；对比
+  `evergreen-installer`（约 127 MB 离线安装器、系统级、需一次提权）。
+  fixed-version 只对离线/强管控环境或严格版本锁定有意义 —— 清单里
+  现成的 `fixed-version` 策略描述的正是这种部署；对什么都没有的
+  机器，egui 降级界面仍是零成本兜底。
+
+
 ## 嵌入式 Python（已调研，可行）
 
 **结论：可以 —— Rust 层面能干净地嵌入一个小型 CPython。** 证明在

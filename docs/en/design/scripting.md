@@ -34,6 +34,55 @@ Gotchas to normalize in the shun wrappers: Windows backslash paths are
 escape characters in duckscript arguments (pass forward-slash paths),
 and assignment is output-capture syntax (`x = cmd args`).
 
+## Embedded Python — measured (probe run 2026-09)
+
+Everything below ran for real, twice: on a host CPython 3.13.5 and on a
+**carried embeddable runtime** (`python-3.13.5-embed-amd64.zip`
+unpacked, with the PyO3 `pyembed_runner` example placed beside it so
+`python313.dll`/stdlib load from the carried folder — `sys.prefix`
+confirmed the carried dir):
+
+| Capability | Result |
+| --- | --- |
+| Real HTTPS (urllib + TLS) | ok (direct pypi.org was network-blocked locally; example.com/tencent mirror fine) |
+| Streaming SHA-256 + HMAC | ok |
+| AES-CTR roundtrip, RSA-2048 sign/verify | ok — via the `cryptography` wheel pre-installed into the carried runtime (`pip --target runtime/Lib/site-packages` + enable `import site` in `python313._pth`) |
+| Machine identity | MachineGuid (winreg), MAC (`uuid.getnode`), C: volume serial (ctypes `GetVolumeInformationW`) — all ok |
+| TPM | `tbs.dll` via ctypes reached correctly; the probe machine's firmware has TPM disabled, so `Tbsi_Context_Create` returns `TBS_E_TPM_NOT_FOUND` (0x8028400F — note: NOT 0x80284002, which is `TBS_E_BAD_PARAMETER` from a NULL params struct). The call path is validated; on TPM-enabled hardware the same code reads `TPM_PT_MANUFACTURER` |
+
+Measured sizes: embeddable zip **10.9 MB** / unpacked **20.4 MB** /
++cryptography wheel **32.4 MB**. The PyO3 runner binary itself is
+~0.2 MB. Third-party wheels with native `.pyd`s (like cryptography)
+work unchanged — ship them inside the carried runtime.
+
+Gotchas recorded for the real integration: the embedded interpreter
+does not finalize on drop — flush stdio explicitly after running
+scripts (see the runner example); `eval` takes expressions only; pip
+against the carried runtime needs `--target` plus the `._pth` tweak
+(or a python-build-standalone runtime, which ships pip).
+
+## WebView2 fixed-version embedding — measured
+
+Question: can the installer carry the WebView2 engine itself, powering
+both its own UI and the deployed app? **Mechanically yes — proven end
+to end**; the cost is the payload.
+
+- v151.0.4129.101 x64 fixed-version cab: **307,241,094 bytes ≈ 293 MB**
+  compressed, **661.1 MB unpacked**.
+- The demo shell ran against the unpacked carried runtime
+  (`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`, already the first probe in
+  `webview2_available`): UI rendered (offline screenshot verified) and
+  **all six renderer processes came from the carried folder**, not the
+  system Evergreen install.
+- Verdict: feasible but heavy. A single-file installer grows by ~300 MB
+  compressed; compare `evergreen-installer` (~127 MB offline installer,
+  system-wide, needs elevation once). Fixed-version makes sense only
+  for air-gapped/locked-down fleets or strict version pinning — the
+  existing `fixed-version` strategy in the manifest describes exactly
+  this deployment; the egui fallback remains the zero-cost floor for
+  machines with nothing at all.
+
+
 ## Embedded Python (researched, feasible)
 
 **Verdict: yes — Rust can embed a small CPython, cleanly.** The proof is

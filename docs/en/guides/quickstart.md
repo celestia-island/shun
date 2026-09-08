@@ -13,7 +13,7 @@ cargo run --example demo_install -- --uninstall       # remove the install (all 
 ```
 
 `demo_install` generates the installer package `ShunDemo.shun`, extracts it
-with streamed progress, and — in local mode — performs NSIS-like
+with streamed progress, and — in local mode — performs direct Windows
 registration: a per-user ARP entry (Settings → Apps), a start-menu
 shortcut, and a self-copying `uninstall.exe`. Portable mode writes a
 `.shun-portable` marker and never touches the registry.

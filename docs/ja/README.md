@@ -35,7 +35,7 @@ shun はデスクトップソフトウェア公開の「配送」側を担いま
   埋め込むかサイドカーとして携帯；
 - **flow** — モードを選択、ターゲットを選択、リアルな進捗イベントをストリーミング；
 - プラグイン可能な **targets**：
-  - `install` — NSIS 風登録（ユーザー単位 ARP エントリー、自己コピー uninstaller、
+  - `install` — 直接 Windows 登録（ユーザー単位 ARP エントリー、自己コピー uninstaller、
     スタートメニューショートカット、ディープリンク）*および* レジストリ非接触の
     ポータブルモード；
   - `flash` — イメージをブロックデバイスに書き込み、検証を実施。
@@ -64,7 +64,7 @@ cargo run --example demo_install -- --uninstall       # アンインストール
 
 `demo_install` はインストーラーパッケージ `ShunDemo.shun`（zstd tar + SHA-256
 マニフェスト）をワーキングディレクトリに生成し、ストリーミング進捗で展開し、
-ローカルモードでは NSIS 風登録を実行します。Tauri デモシェル（`shell/`、
+ローカルモードでは 直接 Windows 登録を実行します。Tauri デモシェル（`shell/`、
 [@celestia-island/hikari](https://github.com/celestia-island/hikari) ベース）が
 同じフローをフル UI で描画し、ビルド時に payload を埋め込みます。
 

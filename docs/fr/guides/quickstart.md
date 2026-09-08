@@ -15,7 +15,7 @@ cargo run --example demo_install -- --uninstall       # désinstallation (trace 
 
 `demo_install` génère le paquet d'installation `ShunDemo.shun`, le décompresse
 avec une progression diffusée en continu et, en mode local, effectue
-l'enregistrement façon NSIS : entrée ARP par utilisateur (Paramètres →
+l'enregistrement Windows direct : entrée ARP par utilisateur (Paramètres →
 Applications), raccourci du menu Démarrer et désinstalleur auto-copiant. Le
 mode portable n'écrit qu'un marqueur `.shun-portable` et ne touche jamais au
 registre.

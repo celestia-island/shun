@@ -55,6 +55,52 @@ fn cpython_embeds_via_pyo3() -> PyResult<()> {
             failure.unwrap_err().value(py).get_type().to_string(),
             PyValueError::new_err(()).get_type(py).to_string()
         );
+
+        // 4. The hermetic network + streaming-hash check: a loopback
+        //    HTTP server (real sockets, real urllib) and hashlib over
+        //    chunked input — the verify-phase building blocks. These run
+        //    identically on a carried embeddable runtime (stdlib only).
+        let ops_globals = pyo3::types::PyDict::new(py);
+        py.run(
+            cr#"
+import hashlib, threading, urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class One(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"delivered-by-shun"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+
+server = HTTPServer(("127.0.0.1", 0), One)
+port = server.server_address[1]
+threading.Thread(target=server.serve_forever, daemon=True).start()
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
+        payload = r.read()
+finally:
+    server.shutdown()
+
+sha = hashlib.sha256()
+for chunk in (b"delivered ", b"by ", b"a shun ", b"flow"):
+    sha.update(chunk)
+__result__ = (payload == b"delivered-by-shun", sha.hexdigest()[:16])
+"#,
+            Some(&ops_globals),
+            Some(&ops_globals),
+        )?;
+        use pyo3::types::PyDictMethods;
+        let (fetched, digest): (bool, String) = ops_globals
+            .get_item("__result__")
+            .expect("result present")
+            .expect("result not none")
+            .extract()?;
+        assert!(fetched);
+        assert_eq!(digest, "f1bb8bf9d1f29d65");
         Ok(())
     })
 }

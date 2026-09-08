@@ -35,7 +35,7 @@ shun은 데스크톱 소프트웨어 배포의 "전달" 절반을 패키징합�
   사이드카로 전달;
 - **flow** — 모드 선택, 대상 선택, 실제 진행률 이벤트 스트리밍;
 - 플러그인 가능한 **targets**:
-  - `install` — NSIS 방식 등록(사용자 단위 ARP 항목, 자가 복사 제거 프로그램, 시작
+  - `install` — 직접 Windows 등록(사용자 단위 ARP 항목, 자가 복사 제거 프로그램, 시작
     메뉴 바로 가기, 딥 링크) *및* 레지스트리 미사용 휴대용 모드;
   - `flash` — 블록 디바이스에 이미지 쓰기 및 사후 검증.
 
@@ -61,7 +61,7 @@ cargo run --example demo_install -- --uninstall       # 제거 (모든 흔적 �
 ```
 
 `demo_install`은 설치 패키지 `ShunDemo.shun`(zstd tar + SHA-256 매니페스트)을
-작업 디렉터리에 생성하고, 스트리밍 진행률로 압축을 해제하며, 로컬 모드에서는 NSIS
+작업 디렉터리에 생성하고, 스트리밍 진행률로 압축을 해제하며, 로컬 모드에서는 직접 Windows
 방식 등록을 수행합니다. Tauri 데모 셸(`shell/`,
 [@celestia-island/hikari](https://github.com/celestia-island/hikari) 기반)이
 동일한 플로우를 전체 UI로 렌더링하며 빌드 시 payload를 내장합니다.

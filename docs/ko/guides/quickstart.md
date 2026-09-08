@@ -13,7 +13,7 @@ cargo run --example demo_install -- --uninstall       # 제거 (모든 흔적 �
 ```
 
 `demo_install`은 설치 패키지 `ShunDemo.shun`을 생성하고, 스트리밍 진행률과 함께
-압축을 해제하며, 로컬 모드에서는 NSIS 방식의 등록을 수행합니다: 사용자 단위 ARP
+압축을 해제하며, 로컬 모드에서는 직접 Windows 등록을 수행합니다: 사용자 단위 ARP
 항목(설정 → 앱), 시작 메뉴 바로 가기, 자가 복사 제거 프로그램. 휴대용 모드는
 `.shun-portable` 마커만 쓰고 레지스트리는 건드리지 않습니다.
 

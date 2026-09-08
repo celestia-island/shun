@@ -3,7 +3,7 @@
 //! shun packages the *delivery* half of shipping desktop software: an
 //! embeddable payload, a declarative flow (choose a mode, choose a target,
 //! stream progress), and pluggable targets — an [`targets::install`] target
-//! that performs NSIS-like registration (ARP, uninstaller, shortcuts, deep
+//! that performs direct Windows registration (ARP, uninstaller, shortcuts, deep
 //! links) plus a portable mode that writes no registry at all, and a
 //! [`targets::flash`] target that writes images to block devices with
 //! post-write verification.

@@ -23,7 +23,7 @@ local) o escribe el marcador portable (modo portable).
 
 ## Targets
 
-- **install** — registro estilo NSIS (entrada ARP por usuario, desinstalador
+- **install** — registro directo de Windows (entrada ARP por usuario, desinstalador
   auto-copiante, acceso directo en el menú Inicio, deep links) más un modo
   portable sin ningún registro. La desinstalación borra todo rastro según el
   manifiesto.

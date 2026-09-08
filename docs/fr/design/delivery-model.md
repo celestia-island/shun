@@ -24,7 +24,7 @@ désinstallation), puis enregistre (mode local) ou pose le marqueur portable
 
 ## Targets
 
-- **install** — enregistrement façon NSIS (entrée ARP par utilisateur,
+- **install** — enregistrement Windows direct (entrée ARP par utilisateur,
   désinstalleur auto-copiant, raccourci du menu Démarrer, liens profonds)
   plus un mode portable sans aucun registre. La désinstallation efface toute
   trace selon le manifeste.
