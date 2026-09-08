@@ -12,6 +12,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod fallback;
+// Offline UI capture (PrintWindow) — Windows-only; the flag is parsed
+// everywhere but ignored where the API does not exist.
+#[cfg(windows)]
 mod screenshot;
 
 use std::path::PathBuf;
@@ -430,8 +433,16 @@ fn main() {
             fallback::FallbackReason::MissingWebview2
         };
         if let Some(path) = screenshot {
-            let title = fallback::window_title(&config);
-            screenshot::schedule_by_title(title, path, screenshot_delay.unwrap_or(2500));
+            #[cfg(windows)]
+            {
+                let title = fallback::window_title(&config);
+                screenshot::schedule_by_title(title, path, screenshot_delay.unwrap_or(2500));
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = path;
+                eprintln!("shun: --screenshot is windows-only; ignoring");
+            }
         }
         fallback::run(
             config,
@@ -454,9 +465,12 @@ fn main() {
             uninstall_demo
         ])
         .setup(move |app| {
+            #[cfg(windows)]
             if let Some(path) = &screenshot {
                 screenshot::schedule(app.handle().clone(), path.clone(), delay);
             }
+            #[cfg(not(windows))]
+            let _ = (app, &screenshot, delay);
             Ok(())
         })
         .run(tauri::generate_context!())
