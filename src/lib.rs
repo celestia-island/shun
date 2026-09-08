@@ -8,22 +8,28 @@
 //! [`targets::flash`] target that writes images to block devices with
 //! post-write verification.
 //!
-//! The runtime shell (a Tauri front-end built on the celestia hikari design
-//! system) and the build CLI land in later iterations; this crate is the
-//! contract they both consume. One config document drives both — see
+//! The runtime shell (`shell/`, a Tauri front-end built on the celestia
+//! hikari design system) and the build CLI both consume this crate; one
+//! config document drives the three of them — see
 //! [`config::ShunConfig`].
 //!
 //! # Status
 //!
-//! Pre-release scaffolding (`0.0.x`): the config schema and flow model are
-//! settling against three real consumers — the WoWSP installer shell,
-//! shittim-chest local, and the evernight image flasher.
+//! `0.1.x`: the config schema, flow model, payload pipeline, and install
+//! target are exercised by three real consumers — the WoWSP installer
+//! shell, shittim-chest local, and the evernight image flasher (which
+//! lands the flash backend's block-device write path). APIs track the
+//! three consumers between minor versions.
 
 pub mod config;
 pub mod error;
 pub mod flow;
 pub mod msix;
 pub mod payload;
+// The online payload source rides the optional `ureq` dependency; without
+// the feature the crate still builds for offline consumers (found by the
+// evernight flasher integrating with default-features = false).
+#[cfg(feature = "online")]
 pub mod payload_online;
 pub mod targets;
 

@@ -88,11 +88,15 @@ including the WebView2 strategy matrix.
 
 ## Status
 
-Pre-release; the crate is settling against three real consumers in the
+`0.1` cut. The crate is settling against three real consumers in the
 celestia ecosystem — the WoWSP installer shell, shittim-chest local, and the
-evernight image flasher. Active development happens on the `dev` branch;
-`master` will receive the initial release once the first delivery flow is
-complete. APIs are unstable until `0.1`.
+evernight image flasher (which lands the flash target's block-device write
+backend). Active development happens on the `dev` branch; `master` carries
+the release history. APIs track the three consumers between minor
+versions — expect additive changes and upstream proposals from their
+integration feedback (e.g. a flash-specific `FlowPhase` variant and a
+`Backend(String)` error kind, both raised by the evernight flasher
+integration).
 
 ## Structure
 
