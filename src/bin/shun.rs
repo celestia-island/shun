@@ -6,6 +6,7 @@
 //! - `shun sign`      — Authenticode / codesign artifacts
 //! - `shun build`     — manifest + payload → single-file installer
 //! - `shun msix`      — pack the payload into a signed-ready .msix
+//! - `shun stage`     — build an app and stage it into its payload
 //! - `shun flash list`— enumerate flash-candidate devices
 
 use std::path::{Path, PathBuf};
@@ -97,6 +98,22 @@ enum CliCommand {
     },
     /// List flash-candidate devices.
     FlashList {},
+    /// Build an application and stage its binary into the payload
+    /// directory declared by its delivery manifest. Everything — the
+    /// cargo package, the bin name, the payload root, the entry path —
+    /// is derived from the manifest; nothing is hardcoded.
+    Stage {
+        /// Delivery manifest: the application's Cargo.toml carrying
+        /// `[package.metadata.shun]`.
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Cargo profile to build with (default `release`).
+        #[arg(long, default_value = "release")]
+        profile: String,
+        /// Skip the cargo build; stage an already-built binary.
+        #[arg(long)]
+        no_build: bool,
+    },
 }
 
 fn main() {
@@ -260,7 +277,10 @@ fn run(command: CliCommand) -> Result<(), String> {
                     .unwrap_or_else(|| PathBuf::from("payload")),
             );
 
-            let logo_png = logo.as_deref().map(logo_png_bytes).transpose()?;
+            let logo_png = logo
+                .as_deref()
+                .map(|path| logo_png_bytes(path, msix.logo_background.as_deref()))
+                .transpose()?;
             let base = out.unwrap_or_else(|| PathBuf::from("dist"));
             std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
             let out_msix = base.join(format!(
@@ -275,11 +295,12 @@ fn run(command: CliCommand) -> Result<(), String> {
                 display_name: &msix.display_name,
                 description: msix.description.as_deref().unwrap_or(""),
                 version: &config.product.version,
-                executable: msix
-                    .executable
-                    .as_deref()
-                    .unwrap_or(Path::new("bin/shun-demo.cmd")),
+                executable: msix.executable.as_deref().ok_or(
+                    "the [msix] table declares no executable — add the payload-relative \
+                     entry point",
+                )?,
                 logo_png: logo_png.as_deref(),
+                logo_background: msix.logo_background.as_deref(),
             };
             shun::msix::build_msix(&payload_dir, &out_msix, &inputs).map_err(|e| e.to_string())?;
 
@@ -308,20 +329,210 @@ fn run(command: CliCommand) -> Result<(), String> {
             }
             Ok(())
         }
+        CliCommand::Stage {
+            manifest,
+            profile,
+            no_build,
+        } => {
+            stage_payload(&manifest, &profile, no_build).map_err(|e| e.to_string())?;
+            Ok(())
+        }
     }
 }
 
-/// Converts any logo image into PNG bytes for the MSIX assets.
-fn logo_png_bytes(logo: &Path) -> Result<Vec<u8>, String> {
+/// `shun stage` — build the declaring application and place its binary
+/// at `payload`/`main-exe`. Derived entirely from the manifest:
+///
+/// - the cargo package name and bin name come from the manifest's own
+///   `[package]` / `[[bin]]` tables;
+/// - the destination comes from `[package.metadata.shun]` `payload` and
+///   `main-exe`;
+/// - the output directory comes from `cargo metadata` (honors
+///   `CARGO_TARGET_DIR` and workspace roots).
+///
+/// DLL sidecars dropped beside the built binary (e.g. WebView2Loader)
+/// travel into the payload too.
+fn stage_payload(manifest: &Path, profile: &str, no_build: bool) -> Result<(), std::io::Error> {
+    let manifest_dir = manifest
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    // 1. Cargo identity of the application: [package] name, first
+    //    [[bin]] name (defaults to the package name).
+    let raw = std::fs::read_to_string(manifest)?;
+    let document: toml::Value =
+        toml::from_str(&raw).map_err(|e| std::io::Error::other(format!("manifest parse: {e}")))?;
+    let package = document
+        .get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| std::io::Error::other("manifest declares no [package] name"))?
+        .to_string();
+    let bin = document
+        .get("bin")
+        .and_then(|bins| bins.as_array())
+        .and_then(|bins| bins.first())
+        .and_then(|bin| bin.get("name"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or(&package)
+        .to_string();
+
+    // 2. Destination from the delivery config.
+    let config = resolve_config(manifest)
+        .map_err(|e| std::io::Error::other(format!("delivery manifest: {e}")))?;
+    let main_exe = config
+        .targets
+        .iter()
+        .find_map(|t| match t {
+            shun::config::TargetConfig::Install(install) => install.main_exe.clone(),
+            _ => None,
+        })
+        .or_else(|| {
+            config
+                .payload
+                .as_ref()
+                .map(|_| PathBuf::from(format_bin(&bin)))
+        })
+        .ok_or_else(|| {
+            std::io::Error::other("manifest declares no main-exe and no install target")
+        })?;
+    let payload_dir = config
+        .payload
+        .as_ref()
+        .map(|payload| manifest_dir.join(payload))
+        .ok_or_else(|| std::io::Error::other("manifest declares no payload directory"))?;
+    let destination = payload_dir.join(&main_exe);
+
+    // 3. Build (unless told not to) and locate the output directory via
+    //    cargo metadata.
+    if !no_build {
+        let status = StdCommand::new("cargo")
+            .args(["build", "--manifest-path"])
+            .arg(manifest)
+            .arg("--profile")
+            .arg(profile)
+            .status()?;
+        if !status.success() {
+            return Err(std::io::Error::other(format!(
+                "cargo build failed (exit {status:?})"
+            )));
+        }
+    }
+    let metadata = StdCommand::new("cargo")
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--manifest-path",
+        ])
+        .arg(manifest)
+        .output()?;
+    if !metadata.status.success() {
+        return Err(std::io::Error::other("cargo metadata failed"));
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout)
+        .map_err(|e| std::io::Error::other(format!("cargo metadata parse: {e}")))?;
+    let target_dir = PathBuf::from(
+        metadata
+            .get("target_directory")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| std::io::Error::other("cargo metadata has no target_directory"))?,
+    );
+    // Profile `dev` writes to `target/debug`; every other profile writes
+    // to `target/<profile>`.
+    let out_dir_name = if profile == "dev" { "debug" } else { profile };
+    let built_bin = target_dir.join(out_dir_name).join(format_bin(&bin));
+
+    if !built_bin.is_file() {
+        return Err(std::io::Error::other(format!(
+            "built binary not found at {} — run without --no-build",
+            built_bin.display()
+        )));
+    }
+
+    // 4. Stage: binary + any DLL sidecars beside it.
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(&built_bin, &destination)?;
+    println!(
+        "staged {} -> {}",
+        built_bin.display(),
+        destination.display()
+    );
+    for entry in std::fs::read_dir(built_bin.parent().unwrap_or(&target_dir))? {
+        let entry = entry?;
+        let path = entry.path();
+        let is_dll = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"));
+        if is_dll {
+            let to = destination
+                .parent()
+                .unwrap_or(&payload_dir)
+                .join(entry.file_name());
+            std::fs::copy(&path, &to)?;
+            println!("staged sidecar {} -> {}", path.display(), to.display());
+        }
+    }
+    Ok(())
+}
+
+/// Platform binary suffix for a cargo bin name.
+#[cfg(windows)]
+fn format_bin(bin: &str) -> String {
+    format!("{bin}.exe")
+}
+
+#[cfg(not(windows))]
+fn format_bin(bin: &str) -> String {
+    bin.to_string()
+}
+
+/// Converts any logo image into PNG bytes for the MSIX assets. When a
+/// plate color is configured, a transparent logo is composited onto it —
+/// Windows plates transparent logos with the default system blue on
+/// surfaces that ignore `BackgroundColor="transparent"` for packaged
+/// desktop apps, so the brand picks the color instead.
+fn logo_png_bytes(logo: &Path, background: Option<&str>) -> Result<Vec<u8>, String> {
     let img = image::open(logo)
         .map_err(|e| format!("cannot open logo: {e}"))?
         .into_rgba8();
+    let img = match background.map(parse_hex_color).transpose()? {
+        Some([r, g, b]) => {
+            let mut plate = image::RgbaImage::from_pixel(
+                img.width(),
+                img.height(),
+                image::Rgba([r, g, b, u8::MAX]),
+            );
+            image::imageops::overlay(&mut plate, &img, 0, 0);
+            plate
+        }
+        None => img,
+    };
     let mut png = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .map_err(|e| format!("logo png encode: {e}"))?;
     Ok(png)
 }
 
+/// Parses a `#RRGGBB` hex color into RGB channels.
+fn parse_hex_color(hex: &str) -> Result<[u8; 3], String> {
+    let hex = hex.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!(
+            "invalid logo background {hex:?}: expected #RRGGBB hex color"
+        ));
+    }
+    let mut channels = [0u8; 3];
+    for (slot, pair) in channels.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let pair = std::str::from_utf8(pair).map_err(|e| e.to_string())?;
+        *slot = u8::from_str_radix(pair, 16).map_err(|e| e.to_string())?;
+    }
+    Ok(channels)
+}
 fn resolve_config(path: &Path) -> Result<ShunConfig, String> {
     if path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml") {
         ShunConfig::from_cargo_manifest(path)
@@ -397,8 +608,11 @@ mod icons {
 }
 
 mod sign {
-    use std::path::{Path, PathBuf};
+    #[cfg(windows)]
+    use std::path::Path;
+    use std::path::PathBuf;
 
+    #[cfg(windows)]
     use super::StdCommand;
     use shun::config::SigningConfig;
 

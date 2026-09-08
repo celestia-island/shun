@@ -68,11 +68,23 @@ ci:
     just clippy
     just test
 
-# Demo: generate ShunDemo.shun and run a local install (ARP + uninstaller).
+# Demo: build the ShunDemo application and stage it into the demo
+# payload (manifest-driven; `shun stage` derives everything from
+# demo-app/Cargo.toml).
+demo-payload:
+    cargo run --quiet -p shun -- stage --manifest demo-app/Cargo.toml
+
+# Demo: the comprehensive one — stage the demo app, build and run the
+# installer shell over it (hikari UI; --fallback forces the egui shell).
+demo ARGS='':
+    just demo-payload
+    cargo run --release -p shun_demo_shell -- {{ARGS}}
+
+# Demo (CLI): generate <Product>.shun and run a local install.
 demo-install ARGS='':
     cargo run --example demo_install -- {{ARGS}}
 
-# Demo: uninstall the demo install.
+# Demo (CLI): uninstall the demo install.
 demo-uninstall ARGS='':
     cargo run --example demo_install -- --uninstall {{ARGS}}
 

@@ -10,7 +10,7 @@ product = "ShunDemo"                       # 預設：套件名稱
 publisher = "celestia-island"              # ARP Publisher 欄位
 logo = "docs/logo.webp"                    # 殼的 logo 資產
 payload = "examples/demo_payload"          # 打包進發行物的目錄
-main-exe = "bin/shun-demo.cmd"             # payload 內進入點
+main-exe = "bin/shun-demo.exe"             # payload 內進入點
 
 [package.metadata.shun.install]            # install target（預設）
 local = true                               # 註冊安裝（ARP、解除安裝器、捷徑）

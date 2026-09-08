@@ -22,10 +22,17 @@ fn main() {
 
     // Delivery manifest resolution: the `shun build` CLI points
     // SHUN_MANIFEST at the target application's manifest; a plain cargo
-    // build of the shell falls back to its own Cargo.toml.
+    // build of the shell falls back to the demo application's manifest —
+    // one source of truth for the comprehensive demo (product identity,
+    // payload, MSIX inputs all live there).
     let manifest_path = std::env::var("SHUN_MANIFEST")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| Path::new(&own_manifest_dir).join("Cargo.toml"));
+        .unwrap_or_else(|_| {
+            Path::new(&own_manifest_dir)
+                .join("..")
+                .join("demo-app")
+                .join("Cargo.toml")
+        });
     let manifest_dir = manifest_path
         .parent()
         .map(|d| d.to_path_buf())

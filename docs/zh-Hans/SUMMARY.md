@@ -14,3 +14,4 @@
 # Design
 
 - [交付模型](./design/delivery-model.md)
+- [安装期脚本化（草稿）](./design/scripting.md)

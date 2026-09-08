@@ -45,7 +45,8 @@ fn sample() -> ShunConfig {
             publisher: "CN=celestia-island".into(),
             display_name: "ShunDemo".into(),
             description: Some("Shun delivery demo".into()),
-            executable: Some("bin/shun-demo.cmd".into()),
+            executable: Some("bin/shun-demo.exe".into()),
+            logo_background: Some("#0F172A".into()),
         }),
         signing: Some(SigningConfig {
             windows: Some(shun::config::WindowsSigningConfig {
@@ -90,4 +91,27 @@ fn install_modes_default_to_enabled() {
     let json = serde_json::to_value(sample()).unwrap();
     assert_eq!(json["targets"][0]["local"], true);
     assert_eq!(json["targets"][0]["portable"], true);
+}
+
+#[test]
+fn cargo_manifest_top_level_main_exe_feeds_the_install_target() {
+    // `[package.metadata.shun] main-exe` + an `[install]` table: the
+    // entry point must survive the merge instead of being dropped.
+    let manifest = std::env::current_dir()
+        .unwrap()
+        .join("demo-app")
+        .join("Cargo.toml");
+    let config = shun::config::ShunConfig::from_cargo_manifest(&manifest).unwrap();
+    let install = config
+        .targets
+        .iter()
+        .find_map(|t| match t {
+            shun::config::TargetConfig::Install(install) => Some(install),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        install.main_exe.as_deref(),
+        Some(std::path::Path::new("bin/shun-demo.exe"))
+    );
 }

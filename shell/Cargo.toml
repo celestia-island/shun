@@ -18,6 +18,10 @@ tauri-build = "^2"
 serde_json = "^1"
 
 [dependencies]
+eframe = "0.32.3"
+egui = "0.32.3"
+image = { version = "0.25.9", default-features = false, features = ["png"] }
+rfd = "0.17.2"
 serde.workspace = true
 serde_json = "^1"
 shun = { path = ".." }
@@ -30,27 +34,16 @@ tauri-plugin-dialog = { version = "^2" }
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
-# ── shun delivery manifest ─────────────────────────────────────────────
-# The demo install flow is generated from this table: product identity
-# defaults to [package], everything here customizes the delivery. See
-# shun::config::ShunConfig::from_cargo_manifest.
-[package.metadata.shun]
-product = "ShunDemo"
-publisher = "celestia-island"
-logo = "docs/logo.webp"
-payload = "../examples/demo_payload"
-main-exe = "bin/shun-demo.cmd"
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Storage_Xps",
+] }
+winreg = "0.56.0"
 
-[package.metadata.shun.install]
-local = true
-portable = true
-
-[package.metadata.shun.msix]
-identity-name = "ShunDemo"
-publisher = "CN=celestia-island"
-display-name = "ShunDemo"
-description = "Shun delivery demo"
-executable = "bin/shun-demo.exe"
-
-[package.metadata.shun.webview2]
-type = "skip"
+# The shell carries no `[package.metadata.shun]` of its own: the delivery
+# manifest it embeds comes from the target application (SHUN_MANIFEST, or
+# the sibling demo-app crate by default — see build.rs). One product, one
+# manifest.

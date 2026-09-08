@@ -1,0 +1,49 @@
+[package]
+name = "shun_demo_app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file = "../LICENSE"
+publish = false # demo payload app for the shun delivery flow, never published
+description = "ShunDemo — the Tauri application delivered by the shun demo flow"
+
+[[bin]]
+name = "shun-demo"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "^2" }
+
+[dependencies]
+tauri = { version = "^2" }
+
+# ── shun delivery manifest ─────────────────────────────────────────────
+# This is the single source of truth for the comprehensive demo: the
+# installer shell reads it (shell/build.rs) and embeds whatever payload it
+# declares, so the demo app, the installer UI and the MSIX package all
+# describe one product. See shun::config::ShunConfig::from_cargo_manifest.
+[package.metadata.shun]
+product = "ShunDemo"
+publisher = "celestia-island"
+logo = "../docs/logo.webp"
+payload = "../examples/demo_payload"
+main-exe = "bin/shun-demo.exe"
+
+[package.metadata.shun.install]
+local = true
+portable = true
+
+[package.metadata.shun.msix]
+identity-name = "ShunDemo"
+publisher = "CN=celestia-island"
+display-name = "ShunDemo"
+description = "Shun delivery demo"
+executable = "bin/shun-demo.exe"
+# Pale pinwheel on a dark plate: Windows would otherwise plate the
+# transparent logo with the default system blue in the App Installer
+# dialog and Start surfaces.
+logo-background = "#0F172A"
+
+[package.metadata.shun.webview2]
+type = "skip"

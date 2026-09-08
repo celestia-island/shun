@@ -11,7 +11,7 @@ product = "ShunDemo"                       # по умолчанию: имя п�
 publisher = "celestia-island"              # поле ARP Publisher
 logo = "docs/logo.webp"                    # ресурс логотипа оболочки
 payload = "examples/demo_payload"          # каталог, упаковываемый в артефакты
-main-exe = "bin/shun-demo.cmd"             # точка входа внутри payload
+main-exe = "bin/shun-demo.exe"             # точка входа внутри payload
 
 [package.metadata.shun.install]            # цель install (по умолчанию)
 local = true                               # регистрируемая установка (ARP, деинсталлятор, ярлыки)

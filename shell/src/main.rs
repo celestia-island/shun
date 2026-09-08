@@ -11,6 +11,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod fallback;
+mod screenshot;
+
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -252,6 +255,40 @@ fn main() {
         return;
     }
 
+    // Offline UI capture: render the UI, save the window content as a
+    // PNG, exit. Works for both renderers (webview and egui) via
+    // PrintWindow — no desktop automation involved. `--screenshot-delay`
+    // overrides the settle time (defaults: 4s webview, 2.5s egui).
+    let screenshot = args.iter().find_map(|arg| {
+        arg.strip_prefix("--screenshot=")
+            .map(std::path::PathBuf::from)
+    });
+    let screenshot_delay: Option<u64> = args.iter().find_map(|arg| {
+        arg.strip_prefix("--screenshot-delay=")
+            .and_then(|v| v.parse().ok())
+    });
+    let delay = screenshot_delay.unwrap_or(4000);
+
+    // UI engine selection: Tauri renders through WebView2 on Windows and
+    // there is no alternative engine inside Tauri — when the runtime is
+    // missing (or the operator forces it with `--fallback`/`--egui`) the
+    // same flow runs through the embedded egui fallback wizard instead.
+    // Same embedded config, same payload: one manifest, two renderers.
+    let manual_fallback = args.iter().any(|a| a == "--fallback" || a == "--egui");
+    if manual_fallback || !webview2_available() {
+        let reason = if manual_fallback {
+            fallback::FallbackReason::ManualOverride
+        } else {
+            fallback::FallbackReason::MissingWebview2
+        };
+        if let Some(path) = screenshot {
+            let title = fallback::window_title(&config);
+            screenshot::schedule_by_title(title, path, screenshot_delay.unwrap_or(2500));
+        }
+        fallback::run(config, payload, reason);
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState { config, payload })
@@ -261,6 +298,49 @@ fn main() {
             start_install,
             uninstall_demo
         ])
+        .setup(move |app| {
+            if let Some(path) = &screenshot {
+                screenshot::schedule(app.handle().clone(), path.clone(), delay);
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running shun demo shell");
+}
+
+/// Detects a usable WebView2 runtime the way the WebView2 loader does:
+/// an explicit `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` (the fixed-version
+/// strategy) wins, then the Evergreen EdgeUpdate registry entries
+/// (per-machine, per-user). `false` means the Tauri window cannot come
+/// up and the egui fallback must take over.
+#[cfg(windows)]
+fn webview2_available() -> bool {
+    if std::env::var_os("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER").is_some() {
+        return true;
+    }
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
+    const CLIENT: &str = r"Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+    let probes = [
+        (
+            HKEY_LOCAL_MACHINE,
+            format!(r"SOFTWARE\WOW6432Node\{CLIENT}"),
+        ),
+        (HKEY_CURRENT_USER, format!(r"SOFTWARE\{CLIENT}")),
+    ];
+    probes.iter().any(|(root, path)| {
+        RegKey::predef(*root)
+            .open_subkey(path)
+            .and_then(|key| key.get_value::<String, _>("pv"))
+            .is_ok_and(|version| !version.is_empty() && version != "0.0.0.0")
+    })
+}
+
+/// WebView2 is a Windows-only concern; other platforms always have their
+/// system webview available and never auto-fall back (`--fallback` still
+/// works manually).
+#[cfg(not(windows))]
+fn webview2_available() -> bool {
+    true
 }

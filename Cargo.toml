@@ -43,6 +43,8 @@ path = "src/bin/shun.rs"
 required-features = ["cli"]
 
 [dev-dependencies]
+duckscript = "0.10.0"
+duckscriptsdk = "0.11.1"
 tempfile = "^3"
 
 [lints]
@@ -50,7 +52,7 @@ workspace = true
 
 [workspace]
 resolver = "2"
-members = ["shell"]
+members = ["shell", "demo-app"]
 
 [workspace.package]
 version = "0.1.0"

@@ -14,3 +14,4 @@
 # Design
 
 - [Delivery Model](./design/delivery-model.md)
+- [Install-time Scripting (draft)](./design/scripting.md)

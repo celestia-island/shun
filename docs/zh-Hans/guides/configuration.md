@@ -10,7 +10,7 @@ product = "ShunDemo"                       # 默认：包名
 publisher = "celestia-island"              # ARP Publisher 字段
 logo = "docs/logo.webp"                    # 壳的 logo 资产
 payload = "examples/demo_payload"          # 打包进发行物的目录
-main-exe = "bin/shun-demo.cmd"             # payload 内入口点
+main-exe = "bin/shun-demo.exe"             # payload 内入口点
 
 [package.metadata.shun.install]            # install target（默认）
 local = true                               # 注册安装（ARP、卸载器、快捷方式）
@@ -35,6 +35,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
 | `install` | table | 双模式全开 | `local` / `portable` 开关 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
+| `msix.logo-background` | 颜色 | `transparent` | 透明 MSIX 图标底下的底板色 |
 | `flash` | table | — | 声明烧写目标 |
 
 ## WebView2 策略

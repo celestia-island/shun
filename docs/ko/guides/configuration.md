@@ -11,7 +11,7 @@ product = "ShunDemo"                       # 기본: 패키지 이름
 publisher = "celestia-island"              # ARP Publisher 필드
 logo = "docs/logo.webp"                    # 셸 로고 애셋
 payload = "examples/demo_payload"          # 아티팩트에 패키징할 디렉터리
-main-exe = "bin/shun-demo.cmd"             # payload 내 진입점
+main-exe = "bin/shun-demo.exe"             # payload 내 진입점
 
 [package.metadata.shun.install]            # install 타깃 (기본)
 local = true                               # 등록 설치 (ARP, 제거 프로그램, 바로 가기)

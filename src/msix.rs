@@ -35,6 +35,11 @@ pub struct MsixInputs<'a> {
     pub executable: &'a Path,
     /// Logo bytes written to `assets/logo.png` (optional).
     pub logo_png: Option<&'a [u8]>,
+    /// Plate color (`#RRGGBB`) the caller flattened under the logo, also
+    /// declared as `BackgroundColor`. `None` keeps `transparent` — Windows
+    /// then plates the logo with the default system blue on surfaces that
+    /// ignore transparency for packaged desktop apps.
+    pub logo_background: Option<&'a str>,
 }
 
 /// Locates the newest `MakeAppx.exe` from the Windows SDK installations.
@@ -102,6 +107,7 @@ pub fn write_manifest(staging: &Path, inputs: &MsixInputs<'_>) -> Result<(), Shu
     } else {
         inputs.description.to_string()
     };
+    let background = inputs.logo_background.unwrap_or("transparent");
     let manifest = format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -125,17 +131,18 @@ pub fn write_manifest(staging: &Path, inputs: &MsixInputs<'_>) -> Result<(), Shu
   </Capabilities>
   <Applications>
     <Application Id="App" Executable="{executable}" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="{display}" Description="{description}" BackgroundColor="transparent" Square150x150Logo="assets/logo.png" Square44x44Logo="assets/logo.png" />
+      <uap:VisualElements DisplayName="{display}" Description="{description}" BackgroundColor="{background}" Square150x150Logo="assets/logo.png" Square44x44Logo="assets/logo.png" />
     </Application>
   </Applications>
 </Package>
 "#,
         name = inputs.identity_name,
         publisher = xml_escape(inputs.publisher),
-        msix_version = &msix_version,
+        msix_version = msix_version,
         display = xml_escape(inputs.display_name),
         publisher_display = xml_escape(inputs.publisher),
         description = xml_escape(&description),
+        background = xml_escape(background),
         executable = inputs.executable.to_string_lossy().replace('\\', "/"),
     );
 

@@ -47,40 +47,53 @@ On Windows, a dual-variant WebView2 strategy covers clean machines: a
 standard artifact that requires the system runtime, and a fully
 self-contained artifact that carries a **fixed-version WebView2 runtime
 privately** — one copy shared by the installer shell and the installed app
-across install and portable modes, no admin, no system writes.
+across install and portable modes, no admin, no system writes. For
+machines where even that is not available, the installer shell embeds an
+**egui fallback UI**: the same flow, the same manifest, no WebView2 at all
+— selected automatically when the runtime is missing (the banner says so)
+or manually via `--fallback`.
 
 ## Example
 
-The demo examples deliver a stand-in application end to end and double as
-an integration check on a real machine:
+One comprehensive demo covers delivery end to end. The payload is a real
+Tauri 2 application (`demo-app/`) with a sample UI, the installer shell
+(`shell/`, built on
+[@celestia-island/hikari](https://github.com/celestia-island/hikari))
+embeds it at build time, and the whole thing is declared by a single
+delivery manifest:
 
 ```bash
-cargo run --example demo_flash                        # enumerate flash-candidate devices
-cargo run --example demo_install                      # generate ShunDemo.shun + local install
-cargo run --example demo_install -- --portable        # portable install (no registry)
-cargo run --example demo_install -- --uninstall       # remove the install (all traces)
+just demo                                               # stage demo app → build → run the installer shell
+just demo -- --fallback                                 # force the offline egui shell (no WebView2)
+cargo run --example demo_flash                          # enumerate flash-candidate devices
+cargo run --example demo_install                        # CLI integration check (generate .shun + local install)
+cargo run --example demo_install -- --portable          # portable install (no registry)
+cargo run --example demo_install -- --uninstall         # remove the install (all traces)
 ```
 
-`demo_install` generates the installer package `ShunDemo.shun` (zstd tar +
-SHA-256 manifest) in the working directory, extracts it with streamed
-progress, and — in local mode — performs the NSIS-like registration
-described above. The Tauri demo shell (`shell/`, built on
-[@celestia-island/hikari](https://github.com/celestia-island/hikari))
-renders the same flow with a full UI, embedding the payload at build time.
-
-The delivery manifest itself lives in the demo crate:
+The delivery manifest lives in the demo application's own `Cargo.toml`
+(the cargo-deb / cargo-wix pattern — the shell resolves it at build time,
+so installer and app describe one product):
 
 ```toml
 [package.metadata.shun]
 product = "ShunDemo"
 publisher = "celestia-island"
+logo = "../docs/logo.webp"
 payload = "../examples/demo_payload"
-main-exe = "bin/shun-demo.cmd"
+main-exe = "bin/shun-demo.exe"
 
 [package.metadata.shun.install]
 local = true
 portable = true
 ```
+
+The payload root keeps small committed data files; the application
+binary is a build product staged into `bin/` by `just demo-payload`
+(never committed). `demo_install` generates the installer package
+`ShunDemo.shun` (zstd tar + SHA-256 manifest) in the working directory,
+extracts it with streamed progress, and — in local mode — performs the
+NSIS-like registration described above.
 
 See [docs/en/guides/configuration.md](./docs/en/guides/configuration.md)
 ([简体中文](./docs/zh-Hans/guides/configuration.md)) for the full reference,
@@ -107,7 +120,8 @@ integration).
 | `src/payload.rs` | Payload pack / manifest / streamed extraction |
 | `src/targets/install.rs` | Install target: registration backends, portable mode |
 | `src/targets/flash.rs` | Flash target: block-device write + verify |
-| `shell/` | Tauri demo shell (hikari UI) over the install flow |
+| `demo-app/` | ShunDemo — the Tauri 2 payload app (sample UI, delivery manifest) |
+| `shell/` | Installer shell: hikari UI (Tauri) + egui offline fallback |
 | `docs/` | Guides and design notes, per locale |
 
 ## Development

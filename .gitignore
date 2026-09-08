@@ -22,3 +22,6 @@ packages/*/pnpm-workspace.yaml
 
 # tauri-build generated capability schemas
 shell/gen/
+
+# staged demo application binaries (built by scripts/stage-demo-payload.sh)
+/examples/demo_payload/bin/

@@ -411,6 +411,15 @@ pub struct MsixConfig {
     /// Payload-relative path of the app executable (full-trust entry).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<PathBuf>,
+    /// Plate color (`#RRGGBB`) flattened under a transparent logo.
+    ///
+    /// Windows plates packaged-desktop logos over the default system blue
+    /// (#0078D7) on every surface that ignores `BackgroundColor=
+    /// "transparent"` — the App Installer dialog among them. An explicit
+    /// color keeps the brand in control: the logo asset is composited
+    /// onto it and the manifest declares it as `BackgroundColor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo_background: Option<String>,
 }
 
 // ── Cargo.toml draft types ──────────────────────────────────────────────
@@ -488,7 +497,14 @@ impl ShunMetadataDraft {
     fn into_config(self, product_name: String, version: String, _base: &Path) -> ShunConfig {
         let mut targets = Vec::new();
         match self.install {
-            Some(install) => targets.push(TargetConfig::Install(install)),
+            Some(mut install) => {
+                // The top-level `main-exe` is the default entry point;
+                // an explicit one inside the `[install]` table wins.
+                if install.main_exe.is_none() {
+                    install.main_exe = self.main_exe.clone().map(PathBuf::from);
+                }
+                targets.push(TargetConfig::Install(install));
+            }
             None => targets.push(TargetConfig::Install(InstallConfig {
                 main_exe: self.main_exe.clone().map(PathBuf::from),
                 ..InstallConfig::default()

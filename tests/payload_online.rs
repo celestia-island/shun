@@ -51,7 +51,7 @@ fn online_payload_streams_into_target() {
         })
         .unwrap();
 
-    for entry in ["README.txt", "bin/shun-demo.cmd", "data/sample.json"] {
+    for entry in ["README.txt", "data/sample.json"] {
         assert!(dest.path().join(entry).exists(), "missing {entry}");
     }
     // Multi-phase progress: network + local delivery both reported.

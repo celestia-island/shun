@@ -11,7 +11,7 @@ product = "ShunDemo"                       # 既定：パッケージ名
 publisher = "celestia-island"              # ARP の Publisher 項目
 logo = "docs/logo.webp"                    # シェルのロゴアセット
 payload = "examples/demo_payload"          # アーティファクトに梱包するディレクトリ
-main-exe = "bin/shun-demo.cmd"             # payload 内のエントリーポイント
+main-exe = "bin/shun-demo.exe"             # payload 内のエントリーポイント
 
 [package.metadata.shun.install]            # install ターゲット（既定）
 local = true                               # 登録インストール（ARP、アンインストーラー、ショートカット）

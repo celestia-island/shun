@@ -1,0 +1,40 @@
+{
+  "productName": "ShunDemo",
+  "version": "0.1.0",
+  "identifier": "world.celestia.shun.demo.app",
+  "build": {
+    "frontendDist": "./ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "ShunDemo",
+        "width": 520,
+        "height": 460,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "visible": true,
+        "decorations": true,
+        "transparent": false,
+        "shadow": true,
+        "minimizable": true,
+        "maximizable": true,
+        "closable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "windows": {
+      "webviewInstallMode": {
+        "type": "skip"
+      }
+    }
+  }
+}
