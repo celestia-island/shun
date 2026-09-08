@@ -101,8 +101,12 @@ including the WebView2 strategy matrix.
 
 ## Status
 
-`0.1` cut. The crate is settling against three real consumers in the
-celestia ecosystem — the WoWSP installer shell, shittim-chest local, and the
+`0.2` cut. The registration surface now spans Windows (per-user and
+machine-wide installs, desktop/start-menu shortcuts with AUMID,
+Explorer context-menu verbs, deep links), Linux (`.desktop` launchers
+with desktop actions), and macOS (`.app` completion + Launch
+Services), behind a declarative wizard pipeline. The crate is settling
+against three real consumers in the celestia ecosystem — the WoWSP installer shell, shittim-chest local, and the
 evernight image flasher (which lands the flash target's block-device write
 backend). Active development happens on the `dev` branch; `master` carries
 the release history. APIs track the three consumers between minor

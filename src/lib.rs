@@ -16,7 +16,7 @@
 //!
 //! # Status
 //!
-//! `0.1.x`: the config schema, flow model, payload pipeline, and install
+//! `0.2.x`: the config schema, flow model, payload pipeline, and install
 //! target are exercised by three real consumers — the WoWSP installer
 //! shell, shittim-chest local, and the evernight image flasher (which
 //! lands the flash backend's block-device write path). APIs track the
