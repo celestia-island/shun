@@ -382,8 +382,6 @@ mod registration {
         use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
 
         let product = "ShunDemo-Test-Inventory";
-        let desktop_before = lnk_set(&user_desktop());
-        let pins_before = taskbar_pins();
 
         // A dedicated entry point so the Applications-key absence check
         // cannot race a parallel test registering verbs for the shared
@@ -392,12 +390,18 @@ mod registration {
             ctx.main_exe = Some("bin/absent-probe.exe".into())
         });
 
-        assert_eq!(
-            lnk_set(&user_desktop()),
-            desktop_before,
-            "desktop shortcuts"
+        // Shared-surface absences are checked by name, not by diffing
+        // directory snapshots: parallel tests legitimately create their
+        // own desktop shortcuts, which would race any before/after set
+        // comparison.
+        assert!(
+            !desktop_lnk(product).exists(),
+            "no desktop shortcut for this product"
         );
-        assert_eq!(taskbar_pins(), pins_before, "taskbar pins");
+        assert!(
+            !taskbar_pins().contains(&format!("{}.lnk", stem(product))),
+            "no taskbar pin for this product"
+        );
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         assert!(

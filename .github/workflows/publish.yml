@@ -38,7 +38,9 @@ jobs:
         id: check-exists
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          if cargo search shun --limit 1 2>/dev/null | grep -q "^shun = \"${VERSION}\""; then
+          # The sparse index is the source of truth; cargo search output
+          # is not reliable for this (rate limits, format drift).
+          if curl -fsSL --retry 3 https://index.crates.io/sh/un/shun               | grep -q "\"vers\":.*\"${VERSION}\""; then
             echo "published=true" >> "$GITHUB_OUTPUT"
             echo "shun ${VERSION} already on crates.io — skipping"
           else
