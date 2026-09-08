@@ -194,7 +194,6 @@ fn start_install(
     // Machine scope needs an elevated token; re-launch this binary under
     // UAC carrying the resolved answers, headlessly.
     ensure_elevated_for(&ctx, &mode, &dir, answers, false)?;
-    let _ = &app;
 
     let payload = state.payload.clone();
     let flow = InstallFlow {
