@@ -25,7 +25,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::{
     Align, Button, Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, Frame,
-    Layout, Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2,
+    Layout, Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2, pos2,
 };
 use shun::config::{ShunConfig, TargetConfig};
 use shun::flow::{Flow, FlowEvent, FlowPhase};
@@ -167,6 +167,38 @@ fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
 }
 
 /// Resolves `shell.theme.mode` (default dark; `system` asks Windows).
+/// Folder badge prefixing the target row — the shittim-chest file-picker
+/// look: a primary-tinted rounded square carrying an outlined folder
+/// glyph (no font dependency, pure painter strokes).
+fn folder_badge(ui: &mut egui::Ui, theme: &Theme, size: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, CornerRadius::same(7), theme.primary_tint());
+    let glyph = rect.shrink(6.5);
+    let body_top = glyph.top() + glyph.height() * 0.30;
+    let stroke = Stroke::new(1.6f32, theme.primary);
+    // Tab: rises from the body's top edge, runs right, folds back down.
+    painter.add(egui::Shape::line(
+        vec![
+            pos2(glyph.left(), body_top),
+            pos2(glyph.left(), glyph.top()),
+            pos2(glyph.left() + glyph.width() * 0.34, glyph.top()),
+            pos2(glyph.left() + glyph.width() * 0.46, body_top),
+        ],
+        stroke,
+    ));
+    painter.rect_stroke(
+        egui::Rect::from_min_max(
+            pos2(glyph.left(), body_top),
+            pos2(glyph.right(), glyph.bottom()),
+        ),
+        CornerRadius::same(2),
+        stroke,
+        egui::StrokeKind::Middle,
+    );
+    response
+}
+
 fn resolve_theme(config: &ShunConfig) -> Theme {
     let shell = config.shell.clone().unwrap_or_default();
     let accent = shell.theme.as_ref().and_then(|theme| theme.accent);
@@ -227,6 +259,7 @@ struct Texts {
     mode_portable_hint: &'static str,
     dir_label: &'static str,
     browse: &'static str,
+    browse_title: &'static str,
     dir_empty: &'static str,
     desktop_shortcut: &'static str,
     hint_local: &'static str,
@@ -275,6 +308,7 @@ const TEXTS_ZH: Texts = Texts {
     mode_portable_hint: "绿色免注册：只写 .shun-portable 标记，数据全部就地存放。",
     dir_label: "安装位置",
     browse: "浏览…",
+    browse_title: "选择安装位置",
     dir_empty: "安装目录不能为空",
     desktop_shortcut: "创建桌面快捷方式",
     hint_local: "登记到系统「应用」列表，可从设置或本界面卸载。",
@@ -323,6 +357,7 @@ const TEXTS_EN: Texts = Texts {
     mode_portable_hint: "Green install: only a .shun-portable marker, data stays local.",
     dir_label: "Install location",
     browse: "Browse…",
+    browse_title: "Choose install location",
     dir_empty: "Install directory cannot be empty",
     desktop_shortcut: "Create a desktop shortcut",
     hint_local: "Registered in system Apps; uninstall from Settings or here.",
@@ -1241,7 +1276,10 @@ impl FallbackApp {
 
         ui.add_space(14.0);
 
-        // Target row: label + input + ghost browse + hint.
+        // Target row: folder badge + input + browse button pinned right.
+        // The native rfd dialog is the desktop shell's picker backend
+        // (an OS window outside the app — cf. the directory-field note
+        // in docs/en/design/delivery-model.md).
         ui.label(
             RichText::new(texts.dir_label)
                 .size(13.0)
@@ -1249,13 +1287,16 @@ impl FallbackApp {
         );
         ui.add_space(6.0);
         ui.horizontal(|ui| {
+            folder_badge(ui, theme, 28.0);
+            let browse_width = 84.0;
+            let gap = ui.spacing().item_spacing.x;
             let input = TextEdit::singleline(&mut self.dir)
-                .desired_width(ui.available_width() - 96.0)
+                .desired_width(ui.available_width() - browse_width - gap)
                 .text_color(theme.text);
             ui.add(input);
             if ui
                 .add_sized(
-                    Vec2::new(84.0, 24.0),
+                    Vec2::new(browse_width, 28.0),
                     Button::new(
                         RichText::new(texts.browse)
                             .size(13.0)
@@ -1267,7 +1308,10 @@ impl FallbackApp {
                 )
                 .clicked()
             {
-                if let Some(picked) = rfd::FileDialog::new().pick_folder() {
+                if let Some(picked) = rfd::FileDialog::new()
+                    .set_title(texts.browse_title)
+                    .pick_folder()
+                {
                     self.dir = picked.to_string_lossy().into_owned();
                 }
             }

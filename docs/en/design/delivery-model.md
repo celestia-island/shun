@@ -38,3 +38,28 @@ prerequisite for its own UI. The delivery manifest chooses the strategy:
 require the system runtime, embed the Evergreen offline installer, or carry
 a fixed-version runtime privately — one copy shared by the shell and the
 installed app across install and portable modes.
+
+## Directory field
+
+The install-target row reads `[folder badge | path input | browse]` —
+badge at the left inside the field, browse pinned at the row's right end
+(the shittim-chest file-picker look), and the hint below.
+
+The browse action is a *picker seam*, not a hardcoded dialog. The field
+is a candidate hikari file-picker component whose backend is selectable:
+
+1. **browser native** — `<input type="file">` / `showDirectoryPicker()`.
+   Fine for content (uploads); unusable for install targets, because the
+   browser deliberately hides absolute paths — a directory handle only
+   exposes its leaf name.
+2. **hikari in-app picker** — a unified modal browser inside the app
+   window (theming, keyboard navigation, remote roots). Future hikari
+   component work.
+3. **app hook** — the host supplies the picker. A Tauri2 app lands here:
+   the dialog plugin opens a real OS window *outside* the webview
+   (Tauri2 has no in-app dialog), which neither of the other backends
+   covers. The shun shell resolves to this backend via the global
+   Tauri API; the egui fallback calls the OS dialog directly (`rfd`).
+
+The auto chain is hook → native → manual typing; the component keeps
+all three addressable so embedders can force one.

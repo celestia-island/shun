@@ -1,5 +1,5 @@
 import { defineComponent, onBeforeUnmount, onMounted, ref } from "vue";
-import { Box, HardDrive, Monitor } from "lucide-vue-next";
+import { Box, FolderOpen, HardDrive, Monitor } from "lucide-vue-next";
 import {
   HAlert,
   HButton,
@@ -224,7 +224,7 @@ export default defineComponent({
 
     async function browse() {
       if (running.value) return;
-      const picked = await openDirectory("选择安装位置");
+      const picked = await openDirectory(t()["dir.picker-title"]);
       if (picked) dir.value = picked;
     }
 
@@ -368,13 +368,18 @@ export default defineComponent({
                 {strings$["dir.label"]}
               </label>
               <div class="installer__row">
-                <input
-                  id="dir-input"
-                  type="text"
-                  spellcheck={false}
-                  v-model={dir.value}
-                  disabled={running.value}
-                />
+                <div class="installer__field">
+                  <span class="installer__field-icon" aria-hidden="true">
+                    <FolderOpen size={18} />
+                  </span>
+                  <input
+                    id="dir-input"
+                    type="text"
+                    spellcheck={false}
+                    v-model={dir.value}
+                    disabled={running.value}
+                  />
+                </div>
                 <HButton variant="ghost" disabled={running.value} onClick={browse}>
                   {strings$["dir.browse"]}
                 </HButton>
