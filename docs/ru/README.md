@@ -2,14 +2,14 @@
 
 <h1 align="center">Shun</h1>
 
-<p align="center"><strong>Рантайм доставки payload на основе потоков — установщики, прожигатели и переносимые режимы</strong></p>
+<p align="center"><strong>Потоковый runtime доставки пейлоадов — установщики, флешеры и портативные режимы</strong></p>
 
 <div align="center">
 
 [![License: SySL-1.0](https://img.shields.io/badge/License-SySL--1.0-blue.svg)](https://sysl.celestia.world)
-[![GitHub](https://img.shields.io/badge/github-celestia--island%2Fshun-blue.svg)](https://github.com/celestia-island/shun)
-[![Checks](https://img.shields.io/github/actions/workflow/status/celestia-island/shun/checks.yml)](https://github.com/celestia-island/shun/actions/workflows/checks.yml)
+[![Crates.io](https://img.shields.io/crates/v/shun)](https://crates.io/crates/shun)
 [![docs.rs](https://docs.rs/shun/badge.svg)](https://docs.rs/shun)
+[![Checks](https://img.shields.io/github/actions/workflow/status/celestia-island/shun/checks.yml)](https://github.com/celestia-island/shun/actions/workflows/checks.yml)
 
 </div>
 
@@ -20,6 +20,7 @@
 [繁體中文](../zh-Hant/README.md) ·
 [日本語](../ja/README.md) ·
 [한국어](../ko/README.md) ·
+[Français](../fr/README.md) ·
 **Русский** ·
 [Español](../es/README.md)
 
@@ -27,100 +28,61 @@
 
 ---
 
-Shun упаковывает «доставляемую» половину выпуска настольного ПО. Один документ
-конфигурации управляет как CLI сборки, так и оболочкой времени исполнения:
+shun упаковывает **доставочную** половину выпуска десктоп-софта. Один
+конфигурационный документ — собственный `Cargo.toml` приложения
+(`[package.metadata.shun]`, паттерн cargo-deb / cargo-wix) — управляет и CLI
+сборки, и runtime-оболочкой:
 
-- **payload** — каталог приложения, упаковываемый один раз, встраиваемый в
-  однофайловый установщик или поставляемый как sidecar;
-- **flow** — выбор режима, выбор цели, трансляция реальных событий прогресса;
+- **пейлоад** пакуется один раз, встраивается в однофайловый установщик или переносится как сайдкар;
+- **поток** — выбрать режим, выбрать цель, стримить реальный прогресс;
 - подключаемые **targets**:
-  - `install` — регистрация в стиле прямой регистрации Windows (запись ARP уровня пользователя,
-    самокопирующий деинсталлятор, ярлык меню «Пуск», deep links) *и* портативный
-    режим без единой записи в реестр;
-  - `flash` — запись образа на блочное устройство с проверкой после записи.
+  - `install` — NSIS-подобная регистрация по платформам: записи ARP в Windows, ярлыки (с AUMID), команды контекстного меню Проводника, глубокие ссылки, на пользователя или на всю машину (самоповышение); лаунчеры `.desktop` в Linux с действиями рабочего стола; достройка `.app` в macOS плюс Launch Services — и портативный режим, нигде не пишущий системного состояния;
+  - `flash` — записать образ на блочное устройство с проверкой после записи.
 
-На Windows двухвариантная стратегия WebView2 покрывает чистые машины:
-стандартный артефакт требует системный рантайм, а полностью автономный артефакт
-**приватно переносит рантайм WebView2 фиксированной версии** — одна копия
-делится оболочкой и установленным приложением в режимах install и portable,
-без прав администратора и без записей в систему.
+Сам мастер — **декларативный конвейер** (`mode | scope | license | content | install`, в любом порядке); панель установки показывает настоящую взвешенную по фазам полосу прогресса и сворачиваемый терминал, протоколирующий каждую файловую операцию — многословность настраивается через `shell.log-level`.
+
+В Windows у оболочки два лица: веб-интерфейс hikari и встроенный **egui-фолбэк**, которому WebView2 вообще не нужен — тот же поток, тот же манифест (`--fallback` принуждает). Рантайм WebView2 фиксированной версии может ехать внутри пейлоада, одна копия делится между оболочкой и установленным приложением.
 
 ## Пример
 
-Одна полная демо-схема покрывает доставку от начала до конца. Полезная
-нагрузка — настоящее приложение Tauri 2 (`demo-app/`, с примером
-интерфейса), оболочка установителя (`shell/`, на базе
-[@celestia-island/hikari](https://github.com/celestia-island/hikari))
-встраивает её при сборке, и всё описывается одним манифестом доставки:
+Одно демо покрывает доставку от начала до конца — настоящий пейлоад Tauri 2 (`demo-app/`), оболочка установки на [@celestia-island/hikari](https://github.com/celestia-island/hikari) (`shell/`), один манифест:
 
 ```bash
-just demo                                               # подготовить демо-приложение → сборка → запуск оболочки
-just demo -- --fallback                                 # принудительно офлайн-оболочка egui (без WebView2)
-cargo run --example demo_flash                        # перечисление флеш-устройств
-cargo run --example demo_install                      # генерирует ShunDemo.shun + локальная установка
-cargo run --example demo_install -- --portable        # портативная установка (без реестра)
-cargo run --example demo_install -- --uninstall       # удаление (все следы убираются)
+just demo                                        # # стейджинг → сборка → запуск оболочки установки
+just demo -- --fallback                          # # принудительный офлайн-шелл egui
+cargo run --example demo_install                 # # сгенерировать пакет .shun + локальная установка
+cargo run --example demo_install -- --portable   # # портативная установка (без системного состояния)
+cargo run --example demo_flash                   # # перечислить флешуемые устройства
 ```
 
-`demo_install` генерирует установочный пакет `ShunDemo.shun` (zstd tar +
-манифест SHA-256) в рабочем каталоге, распаковывает его с потоковым прогрессом
-и — в локальном режиме — выполняет прямую регистрацию Windows. Демо-оболочка
-Tauri (`shell/`, построенная на
-[@celestia-island/hikari](https://github.com/celestia-island/hikari))
-отображает тот же поток с полным интерфейсом, встраивая payload во время
-сборки.
-
-Манифест доставки находится в демо-crate:
-
-```toml
-[package.metadata.shun]
-product = "ShunDemo"
-publisher = "celestia-island"
-payload = "../examples/demo_payload"
-main-exe = "bin/shun-demo.exe"
-
-[package.metadata.shun.install]
-local = true
-portable = true
-```
-
-Полный справочник полей см.
-В корне полезной нагрузки остаются лишь небольшие версионируемые файлы
-данных; двоичный файл приложения — продукт сборки, помещаемый в `bin/`
-командой `just demo-payload` (никогда не версионируется).
-
-[docs/en/guides/configuration.md](./docs/en/guides/configuration.md),
-включая матрицу стратегий WebView2.
+Полный справочник полей:[руководство по конфигурации](./guides/configuration.md)
+([English](../en/guides/configuration.md)).
 
 ## Статус
 
-Пре-релиз; crate стабилизируется против трёх реальных потребителей экосистемы
-celestia — оболочки установщика WoWSP, shittim-chest local и прожигателя образов
-evernight. Активная разработка идёт в ветке `dev`; `master` получит начальный
-коммит релиза после завершения первого потока доставки. API нестабильны до `0.1`.
+Текущий релиз: **0.2.0**. Крейт стабилизируется под трёх реальных потребителей экосистемы celestia — оболочку установки WoWSP, локальный shittim-chest и флешер образов evernight. API следуют за этими потребителями между минорными версиями — ожидайте аддитивных изменений по итогам их интеграционных отзывов.
 
 ## Структура
 
 | Путь | Роль |
 | --- | --- |
 | `src/config.rs` | Схема конфигурации + загрузчик `[package.metadata.shun]` |
-| `src/flow.rs` | Модель потока — события прогресса, отображаемые оболочкой |
-| `src/payload.rs` | Упаковка / манифест / потоковая распаковка payload |
-| `src/targets/install.rs` | Цель install: бэкенды регистрации, портативный режим |
-| `src/targets/flash.rs` | Цель flash: запись на блочное устройство + проверка |
-| `shell/` | Оболочка установителя: UI hikari (Tauri) + офлайн-резерв egui |
-| `docs/` | Руководства и заметки о дизайне, по локалям |
+| `src/flow.rs` | Модель потока — события прогресса и журнала, которые рисует оболочка |
+| `src/payload.rs` | Паковка пейлоада / манифест / потокное извлечение |
+| `src/targets/` | Targets install (регистрация Windows/Linux/macOS) и flash |
+| `demo-app/` | ShunDemo — приложение-пейлоад на Tauri 2 (пример UI, манифест доставки) |
+| `shell/` | Оболочка установки: UI hikari (Tauri) + офлайн-фолбэк egui |
+| `docs/` | Руководства и заметки о дизайне, по языкам |
 
 ## Разработка
 
 ```bash
-just fetch   # подключение общих рецептов celestia-devtools (один раз)
-just ci      # fmt-check + clippy + test
+just fetch   # # подготовить общие рецепты celestia-devtools (однократно)
+just ci      # # fmt-check + clippy + test
 ```
 
-Рабочий процесс: быстрая подготовка в ветке `dev`; `master` получает начальный
-коммит релиза, после чего всё попадает через PR.
+Работа попадает в `master` через squash-merge PR из веток `feat/*` / `fix/*`. Полные конвенции — в [AGENTS.md](../../AGENTS.md).
 
 ## Лицензия
 
-SySL-1.0 — см. [LICENSE](./LICENSE).
+SySL-1.0 — см. [LICENSE](../../LICENSE).
