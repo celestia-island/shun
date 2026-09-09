@@ -104,14 +104,18 @@ impl ShunConfig {
             Some(toml::Value::String(version)) => (package.name, version, package.metadata),
             Some(table) if table.get("workspace").and_then(toml::Value::as_bool) == Some(true) => {
                 // `version.workspace = true` — inherit from the enclosing
-                // workspace root manifest (one level up).
+                // workspace root manifest: walk the ancestor directories
+                // until a Cargo.toml declares `[workspace.package] version`
+                // (members may be nested several levels below the root, and
+                // plain package manifests in between carry no
+                // `[workspace]` table so they are skipped).
                 let inherited = cargo_toml
-                    .parent()
-                    .and_then(Path::parent)
+                    .ancestors()
+                    .skip(1) // the member manifest's own directory
                     .map(|dir| dir.join("Cargo.toml"))
-                    .and_then(|path| std::fs::read_to_string(path).ok())
-                    .and_then(|raw| toml::from_str::<toml::Value>(&raw).ok())
-                    .and_then(|value| {
+                    .filter_map(|path| std::fs::read_to_string(path).ok())
+                    .filter_map(|raw| toml::from_str::<toml::Value>(&raw).ok())
+                    .find_map(|value| {
                         value
                             .get("workspace")?
                             .get("package")?
@@ -1001,6 +1005,47 @@ require-removable = true
             Some(Path::new("bin/shun-demo.cmd"))
         );
         assert!(flash.require_removable);
+    }
+
+    #[test]
+    fn inherits_workspace_version_from_a_nested_member() {
+        // Members may sit several levels below the workspace root, with
+        // plain package manifests in between (the wowsp layout:
+        // <root>/packages/installer-shell).
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        let member = root.join("packages").join("installer-shell");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[workspace]
+resolver = "2"
+members = ["packages/installer-shell"]
+
+[workspace.package]
+version = "1.2.3"
+"#,
+        )
+        .unwrap();
+        let manifest = member.join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "nested-shell"
+version.workspace = true
+edition = "2024"
+
+[package.metadata.shun]
+product = "Nested"
+payload = "payload"
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        assert_eq!(config.product.version, "1.2.3");
     }
 
     #[test]
