@@ -24,7 +24,7 @@ pub fn stamp(lnk: &Path, aumid: &str) -> Result<(), ShunError> {
     };
     use windows::Win32::System::Com::{
         CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemAlloc,
-        CoUninitialize, IPersistFile, STGM_READ,
+        CoUninitialize, IPersistFile, STGM_READWRITE, STGM_SHARE_DENY_NONE,
     };
     use windows::Win32::System::Variant::VT_LPWSTR;
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
@@ -45,7 +45,12 @@ pub fn stamp(lnk: &Path, aumid: &str) -> Result<(), ShunError> {
             let store: IPropertyStore = shell_link.cast().map_err(|e| err("cast store", e))?;
 
             let path = HSTRING::from(lnk.as_os_str());
-            persist.Load(&path, STGM_READ).map_err(|e| err("load", e))?;
+            // Read-write: the shell property store inherits the load mode,
+            // and a read-only load makes SetValue fail with
+            // STG_E_ACCESSDENIED.
+            persist
+                .Load(&path, STGM_READWRITE | STGM_SHARE_DENY_NONE)
+                .map_err(|e| err("load", e))?;
 
             // A VT_LPWSTR PROPVARIANT over a CoTaskMemAlloc'd wide copy of
             // the id; PropVariantClear gives the buffer back.

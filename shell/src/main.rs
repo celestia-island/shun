@@ -420,8 +420,12 @@ fn main() {
     let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Headless entry points: explicit `--silent` runs, and the ARP
+    // `UninstallString` (`...uninstall.exe" /uninstall`) which must
+    // uninstall without opening the wizard.
     let silent = args.iter().any(|a| a == "--silent" || a == "/S");
-    if silent {
+    let uninstalling = args.iter().any(|a| a == "--uninstall" || a == "/uninstall");
+    if silent || uninstalling {
         if let Err(err) = run_headless(&args, &config, &payload) {
             eprintln!("shun: {err}");
             std::process::exit(1);
