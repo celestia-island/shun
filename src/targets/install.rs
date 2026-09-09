@@ -12,7 +12,7 @@ use walkdir::WalkDir;
 
 use crate::config::InstallConfig;
 use crate::error::ShunError;
-use crate::flow::{Flow, FlowEvent};
+use crate::flow::{Flow, FlowEvent, FlowLog};
 use crate::payload::{MANIFEST_PATH, PayloadEntry, PayloadSource};
 
 /// Marker file enabling portable (便捷) mode for a delivered copy.
@@ -314,7 +314,7 @@ impl Flow for InstallFlow<'_> {
         if ctx.portable {
             std::fs::write(ctx.install_dir.join(PORTABLE_MARKER), b"")?;
         } else {
-            self.registration.register(&ctx)?;
+            self.registration.register_logged(&ctx, on_event)?;
         }
 
         on_event(FlowEvent::Completed);
@@ -377,6 +377,20 @@ pub trait Registration {
     /// Register the install: ARP entry, uninstaller, shortcuts.
     fn register(&self, ctx: &InstallContext) -> Result<(), ShunError>;
 
+    /// [`Registration::register`] with an event sink: implementations
+    /// that degrade non-fatally (a security policy denying a desktop
+    /// shortcut, an AUMID stamp) stream [`FlowLog::Warning`] records
+    /// here so wizard terminals can show *why* something is missing.
+    /// The default wraps [`Registration::register`] silently.
+    fn register_logged(
+        &self,
+        ctx: &InstallContext,
+        on_event: &mut dyn FnMut(FlowEvent),
+    ) -> Result<(), ShunError> {
+        let _ = on_event;
+        self.register(ctx)
+    }
+
     /// Remove every trace [`Registration::register`] left behind.
     fn unregister(&self, ctx: &InstallContext) -> Result<(), ShunError>;
 }
@@ -401,6 +415,14 @@ pub struct WindowsRegistration;
 #[cfg(windows)]
 impl Registration for WindowsRegistration {
     fn register(&self, ctx: &InstallContext) -> Result<(), ShunError> {
+        self.register_logged(ctx, &mut |_| {})
+    }
+
+    fn register_logged(
+        &self,
+        ctx: &InstallContext,
+        on_event: &mut dyn FnMut(FlowEvent),
+    ) -> Result<(), ShunError> {
         // Uninstaller: copy this binary next to the payload (skipped when
         // we are already running from the install directory, i.e. when the
         // uninstaller re-registers itself).
@@ -441,7 +463,8 @@ impl Registration for WindowsRegistration {
 
             let programs = start_menu_dir(ctx.scope)?;
             std::fs::create_dir_all(&programs)?;
-            write_shortcut(ctx, &target, &programs.join(format!("{stem}.lnk")))?;
+            let start_menu_link = programs.join(format!("{stem}.lnk"));
+            write_shortcut(ctx, &target, &start_menu_link, on_event)?;
 
             if ctx.desktop_shortcut {
                 // Best-effort: AV/EDR policies commonly deny `.lnk`
@@ -452,14 +475,25 @@ impl Registration for WindowsRegistration {
                     .ok()
                     .map(|d| d.join(format!("{stem}.lnk")))
                 {
-                    if let Err(e) = write_shortcut(ctx, &target, &link) {
-                        eprintln!("shun: desktop shortcut skipped: {e}");
+                    if let Err(e) = write_shortcut(ctx, &target, &link, on_event) {
+                        warn(on_event, "desktop-shortcut-blocked", &e.to_string());
                     }
                 }
             }
 
             register_verbs(ctx, main_exe)?;
             register_deep_links(ctx, main_exe)?;
+
+            // Tell the shell the shortcut surfaces changed — without
+            // this, a freshly written Start-menu .lnk only appears once
+            // Explorer re-indexes on its own schedule.
+            let mut changed = vec![start_menu_link];
+            if ctx.desktop_shortcut {
+                if let Ok(desktop) = desktop_dir(ctx.scope) {
+                    changed.push(desktop.join(format!("{stem}.lnk")));
+                }
+            }
+            notify_shell_change(&changed);
         }
 
         Ok(())
@@ -489,6 +523,17 @@ impl Registration for WindowsRegistration {
             }
         }
         unregister_deep_links(ctx);
+        if ctx.main_exe.is_some() {
+            let stem = shortcut_stem(&ctx.product);
+            let mut changed = Vec::new();
+            if let Ok(programs) = start_menu_dir(ctx.scope) {
+                changed.push(programs.join(format!("{stem}.lnk")));
+            }
+            if let Ok(desktop) = desktop_dir(ctx.scope) {
+                changed.push(desktop.join(format!("{stem}.lnk")));
+            }
+            notify_shell_change(&changed);
+        }
 
         // The uninstaller binary deletes itself (it is usually the process
         // being run) — see `schedule_self_delete`.
@@ -521,18 +566,71 @@ fn start_menu_dir(scope: InstallScope) -> Result<PathBuf, ShunError> {
         .map_err(|_| ShunError::Config(format!("%{variable}% is not set ({which})")))
 }
 
+/// Streams one non-fatal degradation as a warning record (stderr too —
+/// headless consoles see it inline).
+#[cfg(windows)]
+fn warn(on_event: &mut dyn FnMut(FlowEvent), code: &str, detail: &str) {
+    eprintln!("shun: {code}: {detail}");
+    on_event(FlowEvent::Log {
+        record: FlowLog::Warning {
+            code: code.to_string(),
+            detail: detail.to_string(),
+        },
+    });
+}
+
+/// Notifies the shell that shortcut surfaces changed
+/// (`SHChangeNotify`): per-item updates for the `.lnk` files plus one
+/// association-change flush, so the Start menu, desktop, and icon
+/// caches refresh immediately instead of on Explorer's own schedule —
+/// the standard installer finisher.
+#[cfg(windows)]
+fn notify_shell_change(paths: &[PathBuf]) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::{
+        SHCNE_ASSOCCHANGED, SHCNE_UPDATEITEM, SHCNF_PATH, SHChangeNotify,
+    };
+
+    unsafe {
+        for path in paths {
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            SHChangeNotify(
+                SHCNE_UPDATEITEM as i32,
+                SHCNF_PATH,
+                wide.as_ptr().cast(),
+                std::ptr::null(),
+            );
+        }
+        SHChangeNotify(
+            SHCNE_ASSOCCHANGED as i32,
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+    }
+}
+
 /// Creates a `.lnk` via mslnk, then stamps the AUMID on top through the
 /// Shell property store (enhancement-only: a stamping failure never
 /// blocks the install).
 #[cfg(windows)]
-fn write_shortcut(ctx: &InstallContext, target: &Path, link: &Path) -> Result<(), ShunError> {
+fn write_shortcut(
+    ctx: &InstallContext,
+    target: &Path,
+    link: &Path,
+    on_event: &mut dyn FnMut(FlowEvent),
+) -> Result<(), ShunError> {
     mslnk::ShellLink::new(target)
         .map_err(|e| ShunError::Config(format!("shortcut creation failed: {e}")))?
         .create_lnk(link)
         .map_err(|e| ShunError::Config(format!("shortcut creation failed: {e}")))?;
     if let Some(aumid) = &ctx.aumid {
         if let Err(e) = crate::targets::aumid::stamp(link, aumid) {
-            eprintln!("shun: AUMID stamping skipped for {}: {e}", link.display());
+            warn(
+                on_event,
+                "aumid-stamp-blocked",
+                &format!("{}: {e}", link.display()),
+            );
         }
     }
     Ok(())
