@@ -33,6 +33,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # ordered wizard pipeline (optional)
 kind = "mode"                              # mode | scope | license | content | install
+align = "center"                           # per-step override: center | start (default from kind)
 
 [[package.metadata.shun.steps]]
 kind = "content"
@@ -121,6 +122,7 @@ document) configures the runtime shell:
 ```toml
 [shell]
 timeline = "left"          # top (horizontal rail) | left (vertical rail)
+log-level = "all"          # all (default) | files | scripts | off
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

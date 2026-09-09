@@ -30,6 +30,18 @@ target = "data-folder"                     # data-folder | uninstall | app
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 专用：解压后的运行时目录
 
+[[package.metadata.shun.steps]]            # 有序向导管线（可选）
+kind = "mode"                              # mode | scope | license | content | install
+align = "center"                           # 按步骤覆盖：center | start（默认由 kind 决定）
+
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "发布说明"                          # content 步骤带有标题…
+markdown = "notes.md"                      # …与文档，构建期内联
+
+[[package.metadata.shun.steps]]
+kind = "install"                           # 恰好一个 install 步骤
+
 [package.metadata.shun.flash]              # flash target（可选）
 require-removable = true                   # 拒绝非可移动设备
 ```
@@ -63,6 +75,7 @@ require-removable = true                   # 拒绝非可移动设备
 ```toml
 [shell]
 timeline = "left"          # top（顶部横排）| left（左侧竖排）
+log-level = "all"          # all（默认）| files | scripts | off
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

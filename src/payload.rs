@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::error::ShunError;
-use crate::flow::{FlowEvent, FlowPhase};
+use crate::flow::{FlowEvent, FlowLog, FlowPhase};
 
 /// Manifest entry name inside the payload archive.
 pub const MANIFEST_PATH: &str = "shun-manifest.json";
@@ -231,13 +231,25 @@ impl ArchivePayload {
         }
 
         *done += entry.size;
+        let step = format!(
+            "{} {}",
+            if reused { "Reusing" } else { "Extracting" },
+            entry.path.display()
+        );
+        on_event(FlowEvent::Log {
+            record: if reused {
+                FlowLog::FileReuse {
+                    path: entry.path.clone(),
+                }
+            } else {
+                FlowLog::FileWrite {
+                    path: entry.path.clone(),
+                }
+            },
+        });
         on_event(FlowEvent::Progress {
             phase: FlowPhase::Extract,
-            step: format!(
-                "{} {}",
-                if reused { "Reusing" } else { "Extracting" },
-                entry.path.display()
-            ),
+            step,
             percent: Some((*done * 100 / total).min(100) as u8),
         });
         Ok(reused)

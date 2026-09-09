@@ -32,6 +32,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # 순서가 있는 마법사 파이프라인(선택)
 kind = "mode"                              # mode | scope | license | content | install
+align = "center"                           # 단계별 재정의: center | start(기본은 kind에 따름)
 
 [[package.metadata.shun.steps]]
 kind = "content"
@@ -53,6 +54,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 ```toml
 [shell]
 timeline = "left"          # top (상단 가로) | left (좌측 세로)
+log-level = "all"          # all(기본값) | files | scripts | off
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

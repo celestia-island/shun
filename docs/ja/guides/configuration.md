@@ -32,6 +32,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # 順序付きウィザードパイプライン（任意）
 kind = "mode"                              # mode | scope | license | content | install
+align = "center"                           # ステップ単位の上書き：center | start（既定は kind 次第）
 
 [[package.metadata.shun.steps]]
 kind = "content"
@@ -53,6 +54,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 ```toml
 [shell]
 timeline = "left"          # top（上部の横並び）| left（左側の縦並び）
+log-level = "all"          # all（既定）| files | scripts | off
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

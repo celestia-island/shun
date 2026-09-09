@@ -20,6 +20,13 @@ export type Locale = (typeof LOCALES)[number];
 type Strings = Record<string, string>;
 
 const en: Strings = {
+  "log.title": "Log",
+  "log.expand": "Expand log ▾",
+  "log.collapse": "Collapse log ▴",
+  "log.write": "write",
+  "log.reuse": "reuse",
+  "log.script-begin": "running script",
+  "install.running": "Installing…",
   "step.mode": "Delivery mode",
   "step.license": "License",
   "step.install": "Install",
@@ -51,6 +58,13 @@ const en: Strings = {
 };
 
 const zhHans: Strings = {
+  "log.title": "日志",
+  "log.expand": "展开日志 ▾",
+  "log.collapse": "收起日志 ▴",
+  "log.write": "写入",
+  "log.reuse": "复用",
+  "log.script-begin": "正在执行脚本",
+  "install.running": "正在安装…",
   "step.mode": "交付方式",
   "step.license": "许可协议",
   "step.install": "安装",
@@ -82,6 +96,13 @@ const zhHans: Strings = {
 };
 
 const zhHant: Strings = {
+  "log.title": "日誌",
+  "log.expand": "展開日誌 ▾",
+  "log.collapse": "收起日誌 ▴",
+  "log.write": "寫入",
+  "log.reuse": "複用",
+  "log.script-begin": "正在執行腳本",
+  "install.running": "正在安裝…",
   "step.mode": "交付方式",
   "step.license": "授權條款",
   "step.install": "安裝",
@@ -113,6 +134,13 @@ const zhHant: Strings = {
 };
 
 const ja: Strings = {
+  "log.title": "ログ",
+  "log.expand": "ログを展開 ▾",
+  "log.collapse": "ログを折りたたむ ▴",
+  "log.write": "書き込み",
+  "log.reuse": "再利用",
+  "log.script-begin": "スクリプトを実行中",
+  "install.running": "インストール中…",
   "step.mode": "配布形式",
   "step.license": "ライセンス",
   "step.install": "インストール",
@@ -144,6 +172,13 @@ const ja: Strings = {
 };
 
 const ko: Strings = {
+  "log.title": "로그",
+  "log.expand": "로그 펼치기 ▾",
+  "log.collapse": "로그 접기 ▴",
+  "log.write": "쓰기",
+  "log.reuse": "재사용",
+  "log.script-begin": "스크립트 실행 중",
+  "install.running": "설치 중…",
   "step.mode": "배포 방식",
   "step.license": "라이선스",
   "step.install": "설치",
@@ -175,6 +210,13 @@ const ko: Strings = {
 };
 
 const fr: Strings = {
+  "log.title": "Journal",
+  "log.expand": "Déplier le journal ▾",
+  "log.collapse": "Replier le journal ▴",
+  "log.write": "écriture",
+  "log.reuse": "réutilisation",
+  "log.script-begin": "exécution du script",
+  "install.running": "Installation…",
   "step.mode": "Mode de livraison",
   "step.license": "Licence",
   "step.install": "Installation",
@@ -206,6 +248,13 @@ const fr: Strings = {
 };
 
 const ru: Strings = {
+  "log.title": "Журнал",
+  "log.expand": "Развернуть журнал ▾",
+  "log.collapse": "Свернуть журнал ▴",
+  "log.write": "запись",
+  "log.reuse": "повторное использование",
+  "log.script-begin": "выполнение скрипта",
+  "install.running": "Установка…",
   "step.mode": "Способ доставки",
   "step.license": "Лицензия",
   "step.install": "Установка",
@@ -237,6 +286,13 @@ const ru: Strings = {
 };
 
 const es: Strings = {
+  "log.title": "Registro",
+  "log.expand": "Desplegar registro ▾",
+  "log.collapse": "Plegar registro ▴",
+  "log.write": "escritura",
+  "log.reuse": "reutilización",
+  "log.script-begin": "ejecutando script",
+  "install.running": "Instalando…",
   "step.mode": "Modo de entrega",
   "step.license": "Licencia",
   "step.install": "Instalación",

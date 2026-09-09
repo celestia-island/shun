@@ -6,6 +6,8 @@
 //! entry against the manifest (verify). Events carry their phase so the UI
 //! can render one bar per active phase.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 /// The delivery phase a progress event belongs to. Phases may overlap —
@@ -26,6 +28,52 @@ pub enum FlowPhase {
     Register,
 }
 
+/// A terminal log record: what the flow actually did, one line at a
+/// time. The installer's collapsible output pane (and headless
+/// consoles) render these; verbosity is filtered at consumption, the
+/// flow always emits everything.
+///
+/// Two families, matching the two log sources: **file operations**
+/// from the payload pipeline (every write, every adopted identical
+/// copy), and **script activity** — one line per completed instruction
+/// of a mounted runner script (`justfile`-style duckscript), plus the
+/// begin marker and streamed output of a Python-VM script (complex
+/// tasks). The runners land as their own integration; the event
+/// surface is final.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "log", rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum FlowLog {
+    /// A payload file was written to disk.
+    FileWrite { path: PathBuf },
+
+    /// An identical payload file already existed and was adopted
+    /// instead of rewritten.
+    FileReuse { path: PathBuf },
+
+    /// A mounted script began running; `name` carries the bare script
+    /// name (no path, no extension).
+    ScriptBegin { name: String },
+
+    /// One line of a running script's output (stdout/stderr).
+    ScriptLine { name: String, line: String },
+
+    /// One instruction of a runner script completed; `command` is the
+    /// instruction's own spelling.
+    CommandDone { command: String },
+}
+
+impl FlowLog {
+    /// Whether this record belongs to the script family (as opposed to
+    /// the file-operation family) — the verbosity filter buckets on it.
+    pub fn is_script(&self) -> bool {
+        matches!(
+            self,
+            FlowLog::ScriptBegin { .. } | FlowLog::ScriptLine { .. } | FlowLog::CommandDone { .. }
+        )
+    }
+}
+
 /// Events a delivery flow emits; the shell renders these directly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
@@ -43,6 +91,9 @@ pub enum FlowEvent {
         /// Completion percentage, `None` while indeterminate.
         percent: Option<u8>,
     },
+
+    /// A terminal log line — the flow's actual activity stream.
+    Log { record: FlowLog },
 
     /// The payload landed at its target.
     Completed,

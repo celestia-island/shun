@@ -25,7 +25,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::{
     Align, Button, Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, Frame,
-    Layout, Margin, RichText, ScrollArea, Sense, Stroke, TextEdit, TextureHandle, Vec2,
+    Layout, Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2,
 };
 use shun::config::{ShunConfig, TargetConfig};
 use shun::flow::{Flow, FlowEvent, FlowPhase};
@@ -73,18 +73,18 @@ enum Outcome {
 // from_white_alpha (230/153/115 ≈ 90%/60%/45%).
 
 #[derive(Copy, Clone)]
-struct Theme {
-    background: Color32,
-    surface: Color32,
-    border: Color32,
-    text: Color32,
-    text_secondary: Color32,
-    text_tertiary: Color32,
-    primary: Color32,
-    on_primary: Color32,
-    success: Color32,
-    error: Color32,
-    warning: Color32,
+pub(crate) struct Theme {
+    pub(crate) background: Color32,
+    pub(crate) surface: Color32,
+    pub(crate) border: Color32,
+    pub(crate) text: Color32,
+    pub(crate) text_secondary: Color32,
+    pub(crate) text_tertiary: Color32,
+    pub(crate) primary: Color32,
+    pub(crate) on_primary: Color32,
+    pub(crate) success: Color32,
+    pub(crate) error: Color32,
+    pub(crate) warning: Color32,
 }
 
 impl Theme {
@@ -130,6 +130,16 @@ impl Theme {
     /// Accent-tinted fill (a selection card at ~14% over the surface).
     fn primary_tint(&self) -> Color32 {
         mix(self.surface, self.primary, 0.14)
+    }
+
+    /// Terminal pane background (a shade between page and surface).
+    pub(crate) fn terminal_bg(&self) -> Color32 {
+        mix(self.background, self.surface, 0.6)
+    }
+
+    /// Terminal plain-echo foreground.
+    pub(crate) fn terminal_fg(&self) -> Color32 {
+        self.text_secondary
     }
 
     /// Warning banner fill (warning at ~12% over the background).
@@ -225,7 +235,6 @@ struct Texts {
     uninstall: &'static str,
     installing: &'static str,
     uninstalling: &'static str,
-    preparing: &'static str,
     done_title: &'static str,
     done_uninstall: &'static str,
     failed: &'static str,
@@ -233,8 +242,12 @@ struct Texts {
     finish: &'static str,
     retry: &'static str,
     log: &'static str,
-    phase_download: &'static str,
-    phase_extract: &'static str,
+    log_expand: &'static str,
+    log_collapse: &'static str,
+    log_write: &'static str,
+    log_reuse: &'static str,
+    script_begin: &'static str,
+    installing_percent: &'static str,
 }
 
 const TEXTS_ZH: Texts = Texts {
@@ -268,7 +281,6 @@ const TEXTS_ZH: Texts = Texts {
     uninstall: "卸载",
     installing: "正在安装…",
     uninstalling: "正在卸载…",
-    preparing: "正在准备安装…",
     done_title: "安装完成",
     done_uninstall: "卸载完成",
     failed: "失败",
@@ -276,8 +288,12 @@ const TEXTS_ZH: Texts = Texts {
     finish: "完成",
     retry: "重试",
     log: "事件日志",
-    phase_download: "下载",
-    phase_extract: "解压",
+    log_expand: "展开日志 ▾",
+    log_collapse: "收起日志 ▴",
+    log_write: "写入",
+    log_reuse: "复用",
+    script_begin: "正在执行脚本",
+    installing_percent: "正在安装…",
 };
 
 const TEXTS_EN: Texts = Texts {
@@ -311,7 +327,6 @@ const TEXTS_EN: Texts = Texts {
     uninstall: "Uninstall",
     installing: "Installing…",
     uninstalling: "Uninstalling…",
-    preparing: "Preparing install…",
     done_title: "Install complete",
     done_uninstall: "Uninstall complete",
     failed: "failed",
@@ -319,8 +334,12 @@ const TEXTS_EN: Texts = Texts {
     finish: "Finish",
     retry: "Retry",
     log: "Events",
-    phase_download: "Download",
-    phase_extract: "Extract",
+    log_expand: "Expand log ▾",
+    log_collapse: "Collapse log ▴",
+    log_write: "write",
+    log_reuse: "reuse",
+    script_begin: "running script",
+    installing_percent: "Installing…",
 };
 
 /// Registers a system CJK font as a glyph fallback so the Chinese UI
@@ -454,12 +473,18 @@ struct FallbackApp {
     license_accepted: bool,
     /// Current progress step + percent (`None` while indeterminate).
     progress: Option<(String, Option<u8>)>,
+    /// Overall run completion 0-100 (phase-weighted), `None` before the
+    /// flow reports anything.
+    overall: Option<u8>,
+    /// The collapsible install-output terminal.
+    terminal: crate::terminal::Terminal,
+    /// Configured terminal verbosity (`shell.log-level`).
+    log_level: shun::config::LogVerbosity,
     /// Delivery phases already finished (the checklist ticks them off).
     phases_done: Vec<FlowPhase>,
     phase_active: Option<FlowPhase>,
     /// What the running worker is doing; `true` = uninstalling.
     uninstalling: Option<bool>,
-    log: Vec<String>,
     outcome: Option<Outcome>,
     entry: Option<PathBuf>,
     receiver: Receiver<WorkerMsg>,
@@ -495,10 +520,12 @@ impl FallbackApp {
             step: 0,
             license_accepted: false,
             progress: None,
+            overall: None,
+            terminal: crate::terminal::Terminal::new(true),
+            log_level: shell.log_level.unwrap_or(shun::config::LogVerbosity::All),
             phases_done: Vec::new(),
             phase_active: None,
             uninstalling: None,
-            log: Vec::new(),
             outcome: None,
             entry: None,
             receiver,
@@ -569,7 +596,8 @@ impl FallbackApp {
         self.progress = None;
         self.phases_done.clear();
         self.phase_active = None;
-        self.log.clear();
+        self.terminal.clear();
+        self.overall = None;
         self.uninstalling = Some(uninstalling);
         self.entry = install_ctx
             .main_exe
@@ -623,9 +651,10 @@ impl FallbackApp {
                         Outcome::UninstallOk => {
                             self.push_log(self.texts.done_uninstall.to_string())
                         }
-                        Outcome::Failed(err) => {
-                            self.push_log(format!("× {} {err}", self.texts.failed))
-                        }
+                        Outcome::Failed(err) => self.terminal.push(
+                            crate::terminal::LineKind::Error,
+                            format!("× {} {err}", self.texts.failed),
+                        ),
                     }
                     self.outcome = Some(outcome);
                     self.stage = Stage::Finished;
@@ -636,7 +665,11 @@ impl FallbackApp {
 
     fn apply_event(&mut self, event: FlowEvent) {
         match event {
-            FlowEvent::Started => self.push_log("» started".into()),
+            FlowEvent::Started => {
+                self.overall = Some(0);
+                self.terminal
+                    .push(crate::terminal::LineKind::Step, "» started".into())
+            }
             FlowEvent::Progress {
                 phase,
                 step,
@@ -657,21 +690,73 @@ impl FallbackApp {
                         }
                     }
                 }
+                // Overall completion is phase-weighted: download maps to
+                // the first tenth, extraction to the following 85%; the
+                // trailing registration is instant and `Completed` caps
+                // the bar.
+                if let Some(percent) = percent {
+                    let weighted = match phase {
+                        FlowPhase::Download => (percent as u16) / 10,
+                        FlowPhase::Extract | FlowPhase::Verify => 10 + (percent as u16) * 85 / 100,
+                        _ => self.overall.map(u16::from).unwrap_or(0),
+                    };
+                    let overall = weighted.max(self.overall.map(u16::from).unwrap_or(0));
+                    self.overall = Some(u8::try_from(overall).unwrap_or(100));
+                }
                 self.progress = Some((step, percent));
             }
-            FlowEvent::Completed => self.push_log("√ completed".into()),
-            FlowEvent::Failed { message } => self.push_log(format!("× {message}")),
+            FlowEvent::Log { record } => self.push_flow_log(record),
+            FlowEvent::Completed => {
+                self.overall = Some(100);
+                self.push_log("√ completed".into())
+            }
+            FlowEvent::Failed { message } => self
+                .terminal
+                .push(crate::terminal::LineKind::Error, format!("× {message}")),
             // FlowEvent is #[non_exhaustive] — future events stay readable.
             _ => self.push_log("· event".into()),
         }
     }
 
-    fn push_log(&mut self, line: String) {
-        self.log.push(line);
-        let len = self.log.len();
-        if len > 400 {
-            self.log.drain(0..len - 400);
+    /// Renders one structured flow log record into the terminal, i18n'd,
+    /// honoring the configured verbosity (`shell.log-level`).
+    fn push_flow_log(&mut self, record: shun::flow::FlowLog) {
+        use shun::config::LogVerbosity;
+        use shun::flow::FlowLog;
+
+        let scripts = record.is_script();
+        match self.log_level {
+            LogVerbosity::Off => return,
+            LogVerbosity::Files if scripts => return,
+            LogVerbosity::Scripts if !scripts => return,
+            _ => {}
         }
+        match record {
+            FlowLog::FileWrite { path } => {
+                let prefix = self.texts.log_write;
+                self.push_log(format!("{prefix} {}", path.display()));
+            }
+            FlowLog::FileReuse { path } => {
+                let prefix = self.texts.log_reuse;
+                self.push_log(format!("{prefix} {}", path.display()));
+            }
+            FlowLog::ScriptBegin { name } => {
+                let prefix = self.texts.script_begin;
+                self.push_log(format!("{prefix} {name}"));
+            }
+            FlowLog::ScriptLine { line, .. } => {
+                self.terminal.push(crate::terminal::LineKind::Echo, line);
+            }
+            FlowLog::CommandDone { command } => {
+                self.push_log(format!("✓ {command}"));
+            }
+            // FlowLog is #[non_exhaustive] — future records still render.
+            _ => {}
+        }
+    }
+
+    fn push_log(&mut self, line: String) {
+        self.terminal.push(crate::terminal::LineKind::Ok, line);
     }
 
     fn hint(&self) -> &'static str {
@@ -1209,84 +1294,43 @@ impl FallbackApp {
         let theme = &self.theme;
         let uninstalling = self.uninstalling == Some(true);
 
+        // Headline + real overall progress. Uninstalling has no payload
+        // phases to weigh, so it stays indeterminate (spinner); an
+        // install renders the weighted bar with its live percent.
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(if uninstalling {
+                self.texts.uninstalling
+            } else {
+                self.texts.installing_percent
+            })
+            .strong()
+            .size(16.0)
+            .color(theme.text),
+        );
+        ui.add_space(12.0);
         if uninstalling {
-            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new().size(20.0));
-                ui.label(
-                    RichText::new(self.texts.uninstalling)
-                        .strong()
-                        .size(16.0)
-                        .color(theme.text),
-                );
+                ui.add(egui::Spinner::new().size(18.0));
             });
         } else {
+            let percent = self.overall.unwrap_or(0);
+            let bar = egui::ProgressBar::new(f32::from(percent) / 100.0)
+                .show_percentage()
+                .fill(theme.primary)
+                .corner_radius(CornerRadius::same(8));
+            ui.add(bar.desired_width(ui.available_width()).desired_height(16.0));
+        }
+        // The live step under the bar — the one thing actually happening.
+        if let Some((step, _)) = &self.progress {
             ui.add_space(8.0);
             ui.label(
-                RichText::new(self.texts.preparing)
-                    .strong()
-                    .size(16.0)
-                    .color(theme.text),
+                RichText::new(step.as_str())
+                    .size(12.0)
+                    .color(theme.text_tertiary),
             );
-            ui.add_space(14.0);
-
-            // Per-phase rows, download/extract first (the phases the
-            // webview UI renders), each with an indeterminate spinner and
-            // the live step text.
-            for phase in [FlowPhase::Download, FlowPhase::Extract] {
-                let done = self.phases_done.contains(&phase);
-                let active = self.phase_active == Some(phase);
-                let label = match phase {
-                    FlowPhase::Download => self.texts.phase_download,
-                    _ => self.texts.phase_extract,
-                };
-                let row_step = if active {
-                    self.progress.as_ref().map(|(step, _)| step.clone())
-                } else {
-                    None
-                };
-                Frame::default()
-                    .fill(theme.surface)
-                    .stroke(Stroke::new(1.0f32, theme.border))
-                    .inner_margin(Margin::same(12))
-                    .corner_radius(CornerRadius::same(10))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            if done {
-                                ui.label(RichText::new("√").color(theme.success).size(16.0));
-                            } else if active {
-                                ui.add(egui::Spinner::new().size(18.0));
-                            } else {
-                                ui.label(RichText::new("○").color(theme.text_tertiary));
-                            }
-                            ui.label(RichText::new(label).strong().size(14.0).color(
-                                if active || done {
-                                    theme.text
-                                } else {
-                                    theme.text_tertiary
-                                },
-                            ));
-                            if let Some(step) = row_step {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if let Some((_, Some(percent))) = &self.progress {
-                                        ui.label(
-                                            RichText::new(format!("{percent}%"))
-                                                .size(12.0)
-                                                .color(theme.primary),
-                                        );
-                                        ui.add_space(8.0);
-                                    }
-                                    ui.label(
-                                        RichText::new(step).size(12.0).color(theme.text_secondary),
-                                    );
-                                });
-                            }
-                        });
-                    });
-                ui.add_space(8.0);
-            }
         }
+        ui.add_space(12.0);
 
         self.log_view(ui);
     }
@@ -1347,34 +1391,29 @@ impl FallbackApp {
     }
 
     fn log_view(&mut self, ui: &mut egui::Ui) {
+        use shun::config::LogVerbosity;
+        if self.log_level == LogVerbosity::Off {
+            return;
+        }
         let theme = &self.theme;
-        ui.add_space(12.0);
-        ui.label(
-            RichText::new(self.texts.log)
-                .size(12.0)
-                .color(theme.text_tertiary),
+        self.terminal.render(
+            ui,
+            theme,
+            self.texts.log,
+            self.texts.log_expand,
+            self.texts.log_collapse,
         );
-        ui.add_space(2.0);
-        Frame::default()
-            .fill(mix(theme.background, theme.surface, 0.5))
-            .stroke(Stroke::new(1.0f32, theme.border))
-            .inner_margin(Margin::same(8))
-            .corner_radius(CornerRadius::same(8))
-            .show(ui, |ui| {
-                ui.set_min_height(ui.available_height());
-                ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for line in &self.log {
-                            ui.label(RichText::new(line).size(11.5).color(theme.text_tertiary));
-                        }
-                    });
-            });
     }
 
     /// The installer footer: live flow step on the left, nav buttons on
     /// the right (primary action far right, like the webview footer).
     fn footer(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+        // While a flow runs there are no actions to take — the pane
+        // carries the live step and progress, and the footer (its
+        // buttons in particular) stays out of the way.
+        if self.stage == Stage::Running {
+            return;
+        }
         let theme = self.theme;
         ui.separator();
         ui.add_space(4.0);
@@ -1567,11 +1606,51 @@ impl eframe::App for FallbackApp {
                 }
                 self.banner(ui);
                 ui.add_space(12.0);
-                match self.stage {
-                    Stage::Configure => self.configure_view(ui),
-                    Stage::Running => self.running_view(ui),
-                    Stage::Finished => self.finished_view(ui),
-                }
+                // Every pane centers its content block — horizontally
+                // always, vertically too (content panes that read as
+                // documents keep their start-aligned text inside the
+                // block; the running pane centers its bar). A fixed max
+                // width keeps wizard content off the window edges.
+                let align = self
+                    .steps
+                    .get(self.step)
+                    .map(|step| step.align)
+                    .unwrap_or(shun::config::StepAlign::Center);
+                let pane = egui::Layout {
+                    main_wrap: false,
+                    main_dir: egui::Direction::TopDown,
+                    cross_align: egui::Align::Center,
+                    main_align: match self.stage {
+                        Stage::Running => egui::Align::Min,
+                        _ => egui::Align::Center,
+                    },
+                    main_justify: false,
+                    cross_justify: false,
+                };
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width().min(560.0), ui.available_height()),
+                    pane,
+                    |ui| {
+                        // The inner column fixes the text alignment;
+                        // the outer layout centers the block.
+                        let text_align = if self.stage == Stage::Configure {
+                            match align {
+                                shun::config::StepAlign::Center => egui::Align::Center,
+                                shun::config::StepAlign::Start => egui::Align::LEFT,
+                            }
+                        } else {
+                            egui::Align::Center
+                        };
+                        ui.with_layout(egui::Layout::top_down(text_align), |ui| {
+                            ui.set_width(ui.available_width().min(560.0));
+                            match self.stage {
+                                Stage::Configure => self.configure_view(ui),
+                                Stage::Running => self.running_view(ui),
+                                Stage::Finished => self.finished_view(ui),
+                            }
+                        });
+                    },
+                );
             });
     }
 }

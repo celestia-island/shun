@@ -12,6 +12,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod fallback;
+// The collapsible install-output terminal (same-origin with the hikari
+// web terminal component).
+mod terminal;
 // Offline UI capture (PrintWindow) — Windows-only; the flag is parsed
 // everywhere but ignored where the API does not exist.
 #[cfg(windows)]
@@ -89,6 +92,8 @@ struct ShellView {
     theme: Option<shun::config::ThemeConfig>,
     /// Configured UI language, `None` = follow the system.
     language: Option<String>,
+    /// Terminal log verbosity for the install pane.
+    log_level: shun::config::LogVerbosity,
     /// Whether a flash target is declared (the UI shows it as pending).
     flash: bool,
 }
@@ -125,6 +130,7 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
         timeline: shell.timeline,
         theme: shell.theme,
         language: shell.language,
+        log_level: shell.log_level.unwrap_or_default(),
         flash,
     }
 }
@@ -341,8 +347,17 @@ fn run_headless(
         registration: &WindowsRegistration,
         ctx,
     };
-    flow.run(&mut |event| println!("{event:?}"))
-        .map_err(|e| e.to_string())?;
+    flow.run(&mut |event| match &event {
+        // Structured logs render as terminal lines; the remaining events
+        // keep their compact debug form.
+        FlowEvent::Log { record } => {
+            if let Some(line) = headless_log_line(record) {
+                println!("{line}");
+            }
+        }
+        _ => println!("{event:?}"),
+    })
+    .map_err(|e| e.to_string())?;
     println!("shun: install complete");
     Ok(())
 }
@@ -383,6 +398,21 @@ fn bootstrap_fixed_webview2(config: &ShunConfig, payload: &ArchivePayload) {
 /// The resolved wizard pipeline, embedded at build time (markdown
 /// bodies inlined).
 const SHUN_STEPS_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json"));
+
+/// Renders one structured log record for a headless console (English —
+/// the console has no locale negotiation).
+fn headless_log_line(record: &shun::flow::FlowLog) -> Option<String> {
+    use shun::flow::FlowLog;
+    let line = match record {
+        FlowLog::FileWrite { path } => format!("write {}", path.display()),
+        FlowLog::FileReuse { path } => format!("reuse {}", path.display()),
+        FlowLog::ScriptBegin { name } => format!("» running script {name}"),
+        FlowLog::ScriptLine { line, .. } => format!("  {line}"),
+        FlowLog::CommandDone { command } => format!("✓ {command}"),
+        _ => return None,
+    };
+    Some(line)
+}
 
 fn main() {
     let config: ShunConfig =

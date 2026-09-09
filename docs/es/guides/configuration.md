@@ -32,6 +32,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # canalización ordenada del asistente (opcional)
 kind = "mode"                              # mode | scope | license | content | install
+align = "center"                           # anulación por paso: center | start (por kind por defecto)
 
 [[package.metadata.shun.steps]]
 kind = "content"
@@ -53,6 +54,7 @@ configura el shell de ejecución:
 ```toml
 [shell]
 timeline = "left"          # top (riel horizontal arriba) | left (riel vertical a la izquierda)
+log-level = "all"          # all (por defecto) | files | scripts | off
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

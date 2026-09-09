@@ -28,6 +28,7 @@ fn sample() -> ShunConfig {
                 accent: Some([34, 211, 238]),
             }),
             language: Some("zh-Hans".into()),
+            log_level: Some(shun::config::LogVerbosity::Scripts),
         }),
         source: Some(SourceConfig::Online {
             url: "https://example.test/ShunDemo.shun".into(),

@@ -32,8 +32,12 @@ fn pack_extract_roundtrip_verifies_and_reports_progress() {
         assert_eq!(original, landed);
     }
 
-    // Progress streamed and finished at 100%.
-    assert!(matches!(events.first(), Some(FlowEvent::Progress { .. })));
+    // Progress streamed and finished at 100% — the very first event may
+    // now be the first file's log record, which is equally fine.
+    assert!(matches!(
+        events.first(),
+        Some(FlowEvent::Progress { .. } | FlowEvent::Log { .. })
+    ));
     let last = events.last().unwrap();
     assert!(matches!(
         last,
@@ -42,6 +46,32 @@ fn pack_extract_roundtrip_verifies_and_reports_progress() {
             ..
         }
     ));
+
+    // Every staged file logged a terminal record — one write per entry,
+    // and each record precedes its progress tick.
+    let writes: Vec<&shun::flow::FlowLog> = events
+        .iter()
+        .filter_map(|e| match e {
+            FlowEvent::Log { record } => Some(record),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        writes.len(),
+        fixture_count,
+        "one terminal line per payload file"
+    );
+    assert!(
+        writes
+            .iter()
+            .all(|record| matches!(record, shun::flow::FlowLog::FileWrite { .. }))
+    );
+    // Each log record is immediately followed by its progress tick.
+    let first_log = events
+        .iter()
+        .position(|e| matches!(e, FlowEvent::Log { .. }))
+        .unwrap();
+    assert!(matches!(events[first_log + 1], FlowEvent::Progress { .. }));
 }
 
 #[test]
