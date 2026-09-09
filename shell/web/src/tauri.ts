@@ -40,6 +40,23 @@ export async function listen<T>(event: string, handler: (payload: T) => void): P
   await listen(event, (e) => handler(e.payload as T));
 }
 
+/**
+ * Pick a directory for the install-target field.
+ *
+ * This is the picker seam the wizard's directory row sits on — the
+ * field component is a candidate hikari file picker, whose backends
+ * are (a) the browser-native picker, (b) a hikari in-app picker, and
+ * (c) a host-supplied hook. Here the auto chain resolves to:
+ *
+ *   1. custom hook — the Tauri2 dialog plugin. The OS window it opens
+ *      lives outside the webview (Tauri2 has no in-app dialog), so it
+ *      counts as the app hook backend rather than the browser one;
+ *   2. browser native is deliberately skipped for install targets:
+ *      `showDirectoryPicker()` resolves to an opaque handle whose only
+ *      readable property is the leaf name — no absolute path, so there
+ *      is nothing truthful to put in the field;
+ *   3. none — null, and the user types the path by hand.
+ */
 export async function openDirectory(title: string): Promise<string | null> {
   const open = tauri()?.dialog?.open;
   if (!open) return null;
