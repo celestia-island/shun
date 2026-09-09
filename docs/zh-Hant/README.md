@@ -59,7 +59,7 @@ cargo run --example demo_flash                   # # 列舉可燒寫裝置
 
 ## 狀態
 
-當前發布：**0.2.0**。crate 正面向 celestia 生態的三個真實消費者打磨——WoWSP 安裝器殼、shittim-chest 本地版、evernight 映像燒寫器。API 在次要版本間跟隨這三個消費者——預期來自其整合回饋的增量變更。
+當前發布：**0.2.1**。crate 正面向 celestia 生態的三個真實消費者打磨——WoWSP 安裝器殼、shittim-chest 本地版、evernight 映像燒寫器。API 在次要版本間跟隨這三個消費者——預期來自其整合回饋的增量變更。
 
 ## 結構
 

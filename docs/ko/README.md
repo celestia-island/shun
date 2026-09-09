@@ -59,7 +59,7 @@ cargo run --example demo_flash                   # # 플래시 후보 디바이�
 
 ## 상태
 
-현재 릴리스: **0.2.0**. crate는 celestia 생태계의 세 실제 소비자 — WoWSP 설치 셸, shittim-chest 로컬, evernight 이미지 플래셔 — 에 맞춰 안정화 중입니다. API는 마이너 버전 사이에서 이 세 소비자를 따릅니다 — 통합 피드백에 따른 추가 변경을 예상.
+현재 릴리스: **0.2.1**. crate는 celestia 생태계의 세 실제 소비자 — WoWSP 설치 셸, shittim-chest 로컬, evernight 이미지 플래셔 — 에 맞춰 안정화 중입니다. API는 마이너 버전 사이에서 이 세 소비자를 따릅니다 — 통합 피드백에 따른 추가 변경을 예상.
 
 ## 구조
 

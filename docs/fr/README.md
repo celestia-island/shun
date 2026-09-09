@@ -60,7 +60,7 @@ Référence complète des champs :[guide de configuration](./guides/configuratio
 
 ## Statut
 
-Version actuelle : **0.2.0**. La crate se stabilise face à trois consommateurs réels de l'écosystème celestia — le shell d'installation WoWSP, shittim-chest local, et le flasheur d'images evernight. Les API suivent ces trois consommateurs entre versions mineures — attendez-vous à des changements additifs issus de leurs retours d'intégration.
+Version actuelle : **0.2.1**. La crate se stabilise face à trois consommateurs réels de l'écosystème celestia — le shell d'installation WoWSP, shittim-chest local, et le flasheur d'images evernight. Les API suivent ces trois consommateurs entre versions mineures — attendez-vous à des changements additifs issus de leurs retours d'intégration.
 
 ## Structure
 

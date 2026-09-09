@@ -68,7 +68,7 @@ cargo run --example demo_flash                   # 枚举可烧写设备
 
 ## 状态
 
-当前发布：**0.2.0**。crate 正面向 celestia 生态的三个真实消费者打磨——
+当前发布：**0.2.1**。crate 正面向 celestia 生态的三个真实消费者打磨——
 WoWSP 安装器壳、shittim-chest 本地版、evernight 镜像烧写器。API 在次要
 版本间跟随这三个消费者——预期来自其集成反馈的增量变更。
 

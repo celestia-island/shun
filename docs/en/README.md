@@ -79,7 +79,7 @@ Full field reference: the
 
 ## Status
 
-Current release: **0.2.0**. The crate settles against three real
+Current release: **0.2.1**. The crate settles against three real
 consumers in the celestia ecosystem — the WoWSP installer shell,
 shittim-chest local, and the evernight image flasher. APIs track the
 three consumers between minor versions — expect additive changes from
