@@ -668,6 +668,7 @@ mod registration {
     fn degradations_stream_warning_records() {
         let product = "ShunDemo-Test-Warn";
         let mut events: Vec<shun::flow::FlowEvent> = Vec::new();
+        let start_menu_held;
         {
             let mut context = ctx(
                 product,
@@ -684,6 +685,7 @@ mod registration {
                 ctx: context.clone(),
             };
             flow.run(&mut |event| events.push(event)).unwrap();
+            start_menu_held = start_menu_lnk(product).exists();
             uninstall(&context, &WindowsRegistration).unwrap();
         }
 
@@ -718,8 +720,9 @@ mod registration {
             ),
             None => {}
         }
-        // Whatever the machine policy, the registration itself held.
-        assert!(start_menu_lnk(product).exists() || !desktop_accepts_lnk());
+        // Whatever the machine policy, the registration itself held —
+        // captured before the uninstall (which removes the link).
+        assert!(start_menu_held);
     }
 
     /// Deep-link schemes register as per-user protocol handlers (the
