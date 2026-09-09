@@ -61,6 +61,14 @@ pub enum FlowLog {
     /// One instruction of a runner script completed; `command` is the
     /// instruction's own spelling.
     CommandDone { command: String },
+
+    /// A non-fatal degradation the user should see (a security policy
+    /// denied the desktop shortcut, the AUMID stamp, ...). Warnings
+    /// bypass the file/script family filter — only `off` hides them.
+    /// `code` is a stable identifier shells map to localized text
+    /// (`desktop-shortcut-blocked`, `aumid-stamp-blocked`, ...);
+    /// `detail` carries the raw error for the fallback.
+    Warning { code: String, detail: String },
 }
 
 impl FlowLog {

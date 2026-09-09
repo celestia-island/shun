@@ -248,6 +248,8 @@ struct Texts {
     log_reuse: &'static str,
     script_begin: &'static str,
     installing_percent: &'static str,
+    warn_desktop_blocked: &'static str,
+    warn_aumid_blocked: &'static str,
 }
 
 const TEXTS_ZH: Texts = Texts {
@@ -294,6 +296,8 @@ const TEXTS_ZH: Texts = Texts {
     log_reuse: "复用",
     script_begin: "正在执行脚本",
     installing_percent: "正在安装…",
+    warn_desktop_blocked: "桌面快捷方式被系统策略拦截（安全软件拒绝了 .lnk 写入）；开始菜单快捷方式与卸载注册不受影响",
+    warn_aumid_blocked: "任务栏标识（AUMID）写入被系统策略拦截；手动固定的归组可能受影响",
 };
 
 const TEXTS_EN: Texts = Texts {
@@ -340,6 +344,8 @@ const TEXTS_EN: Texts = Texts {
     log_reuse: "reuse",
     script_begin: "running script",
     installing_percent: "Installing…",
+    warn_desktop_blocked: "Desktop shortcut blocked by system policy (security software denied the .lnk write); the Start-menu shortcut and uninstall registration are unaffected",
+    warn_aumid_blocked: "Taskbar identity (AUMID) stamp blocked by system policy; manual pin grouping may be affected",
 };
 
 /// Registers a system CJK font as a glyph fallback so the Chinese UI
@@ -730,6 +736,17 @@ impl FallbackApp {
             LogVerbosity::Files if scripts => return,
             LogVerbosity::Scripts if !scripts => return,
             _ => {}
+        }
+        // Warnings bypass the family filter: only `off` hides them.
+        if let FlowLog::Warning { code, detail } = &record {
+            let text = match code.as_str() {
+                "desktop-shortcut-blocked" => self.texts.warn_desktop_blocked,
+                "aumid-stamp-blocked" => self.texts.warn_aumid_blocked,
+                _ => detail.as_str(),
+            };
+            self.terminal
+                .push(crate::terminal::LineKind::Error, format!("⚠ {text}"));
+            return;
         }
         match record {
             FlowLog::FileWrite { path } => {

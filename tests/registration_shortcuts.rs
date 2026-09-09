@@ -98,6 +98,23 @@ mod registration {
         ok
     }
 
+    /// Tri-state AUMID probe. Security software may allow the `.lnk`
+    /// file itself while denying the `IPropertyStore` write (0x80030005)
+    /// — the exact split CI runners exhibit — so the stamp capability
+    /// must be probed separately from the desktop policy. `None` means
+    /// the probe could not even stage a `.lnk` (COM-less session, the
+    /// stamp path never runs); assert nothing then.
+    fn aumid_stamp_result() -> Option<bool> {
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = dir.path().join("aumid-probe.lnk");
+        let exe = std::env::current_exe().unwrap();
+        mslnk::ShellLink::new(&exe)
+            .ok()?
+            .create_lnk(&scratch)
+            .ok()?;
+        Some(shun::targets::aumid::stamp(&scratch, "celestia-island.ShunProbe").is_ok())
+    }
+
     fn stem(product: &str) -> String {
         shun::targets::install::shortcut_stem(product)
     }
@@ -640,6 +657,69 @@ mod registration {
         );
         assert!(!link.exists());
         drop(guard);
+    }
+
+    /// Degradations surface as warning records: on machines whose
+    /// security policy denies desktop `.lnk` creation (or AUMID stamps),
+    /// the install still succeeds and the wizard terminal explains why
+    /// the shortcut is missing. On unrestricted machines the same
+    /// install produces no warnings — both outcomes assert.
+    #[test]
+    fn degradations_stream_warning_records() {
+        let product = "ShunDemo-Test-Warn";
+        let mut events: Vec<shun::flow::FlowEvent> = Vec::new();
+        {
+            let mut context = ctx(
+                product,
+                tempfile::tempdir().unwrap().keep().join(product),
+                false,
+            );
+            context.desktop_shortcut = true;
+            context.aumid = Some("celestia-island.Warn".into());
+
+            let payload = demo_payload();
+            let flow = InstallFlow {
+                payload: &payload,
+                registration: &WindowsRegistration,
+                ctx: context.clone(),
+            };
+            flow.run(&mut |event| events.push(event)).unwrap();
+            uninstall(&context, &WindowsRegistration).unwrap();
+        }
+
+        let warnings: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                shun::flow::FlowEvent::Log {
+                    record: shun::flow::FlowLog::Warning { code, .. },
+                } => Some(code.as_str()),
+                _ => None,
+            })
+            .collect();
+        if desktop_accepts_lnk() {
+            assert!(
+                !warnings.contains(&"desktop-shortcut-blocked"),
+                "desktop writes are allowed here, yet warned: {warnings:?}"
+            );
+        } else {
+            assert!(
+                warnings.contains(&"desktop-shortcut-blocked"),
+                "the desktop denial must explain itself: {warnings:?}"
+            );
+        }
+        match aumid_stamp_result() {
+            Some(true) => assert!(
+                !warnings.contains(&"aumid-stamp-blocked"),
+                "AUMID stamps land here, yet warned: {warnings:?}"
+            ),
+            Some(false) => assert!(
+                warnings.contains(&"aumid-stamp-blocked"),
+                "the AUMID denial must explain itself: {warnings:?}"
+            ),
+            None => {}
+        }
+        // Whatever the machine policy, the registration itself held.
+        assert!(start_menu_lnk(product).exists() || !desktop_accepts_lnk());
     }
 
     /// Deep-link schemes register as per-user protocol handlers (the

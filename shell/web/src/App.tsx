@@ -55,11 +55,14 @@ interface FlowLogRecord {
     | "file-reuse"
     | "script-begin"
     | "script-line"
-    | "command-done";
+    | "command-done"
+    | "warning";
   path?: string;
   name?: string;
   line?: string;
   command?: string;
+  code?: string;
+  detail?: string;
 }
 
 interface ProgressEvent {
@@ -236,11 +239,25 @@ export default defineComponent({
         honoring `shell.log-level`. */
     function pushLog(record: FlowLogRecord) {
       const strings$ = t();
+      if (logLevel.value === "off") return;
+      // Warnings bypass the family filter: only `off` hides them.
+      if (record.type === "warning") {
+        const text =
+          record.code === "desktop-shortcut-blocked"
+            ? strings$["warn.desktop-blocked"]
+            : record.code === "aumid-stamp-blocked"
+              ? strings$["warn.aumid-blocked"]
+              : (record.detail ?? "");
+        termLines.value = [
+          ...termLines.value.slice(-1999),
+          { kind: "error" as const, text: `⚠ ${text}` },
+        ];
+        return;
+      }
       const script =
         record.type === "script-begin" ||
         record.type === "script-line" ||
         record.type === "command-done";
-      if (logLevel.value === "off") return;
       if (logLevel.value === "files" && script) return;
       if (logLevel.value === "scripts" && !script) return;
       const line = (() => {
