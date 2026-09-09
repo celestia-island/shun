@@ -12,7 +12,11 @@ use walkdir::WalkDir;
 
 use crate::config::InstallConfig;
 use crate::error::ShunError;
-use crate::flow::{Flow, FlowEvent, FlowLog};
+use crate::flow::{Flow, FlowEvent};
+// Only the Windows registration streams warning records; the import
+// would be unused (and fatal under -D warnings) on other targets.
+#[cfg(windows)]
+use crate::flow::FlowLog;
 use crate::payload::{MANIFEST_PATH, PayloadEntry, PayloadSource};
 
 /// Marker file enabling portable (便捷) mode for a delivered copy.
