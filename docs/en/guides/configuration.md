@@ -16,6 +16,7 @@ main-exe = "bin/shun-demo.exe"             # payload-relative entry point
 [package.metadata.shun.install]            # install target (default)
 local = true                               # registered install (ARP, uninstaller, shortcuts)
 portable = true                            # portable mode (.shun-portable marker, no registry)
+portable-marker = ".shun-portable"          # marker file name for portable copies (override when the app detects its own)
 desktop-shortcut = "ask"                   # always | never | ask (wizard checkbox, default checked)
 deep-links = ["shundemo"]                  # URL schemes the app owns (myapp://...)
 aumid = "celestia-island.ShunDemo"         # default: generated from publisher + product
@@ -56,7 +57,7 @@ require-removable = true                   # refuse non-removable devices
 | `logo` | path | — | Shell logo asset (relative to the manifest) |
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
-| `install` | table | both modes on | `local` / `portable` switches, `desktop-shortcut` policy, `verbs`, `deep-links`, `aumid`, `icon` |
+| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` policy, `verbs`, `deep-links`, `aumid`, `icon` |
 | `webview2` | table | `skip` | Windows runtime strategy |
 | `msix.logo-background` | color | `transparent` | Plate flattened under a transparent MSIX logo |
 | `flash` | table | — | Declares the flash target |

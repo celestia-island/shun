@@ -148,6 +148,7 @@ fn bundle_for(install_dir: &Path, main_exe: &Path) -> Option<PathBuf> {
         install_dir: install_dir.to_path_buf(),
         main_exe: Some(main_exe.to_path_buf()),
         portable: false,
+        portable_marker: crate::targets::install::PORTABLE_MARKER.to_string(),
         scope: crate::targets::install::InstallScope::User,
         desktop_shortcut: false,
         verbs: Vec::new(),

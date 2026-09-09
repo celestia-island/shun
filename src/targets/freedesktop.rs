@@ -229,6 +229,7 @@ mod tests {
             install_dir: PathBuf::from("/opt/shundemo"),
             main_exe: Some(PathBuf::from("bin/shun-demo")),
             portable: false,
+            portable_marker: crate::targets::install::PORTABLE_MARKER.to_string(),
             scope: crate::targets::install::InstallScope::User,
             desktop_shortcut: false,
             verbs: vec![

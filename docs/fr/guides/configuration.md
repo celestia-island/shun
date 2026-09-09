@@ -16,6 +16,7 @@ main-exe = "bin/shun-demo.exe"             # point d'entrée dans le payload
 [package.metadata.shun.install]            # cible install (défaut)
 local = true                               # installation enregistrée (ARP, désinstalleur, raccourcis)
 portable = true                            # mode portable (marqueur .shun-portable, sans registre)
+portable-marker = ".shun-portable"          # nom du fichier marqueur écrit pour les copies portables (à redéfinir si l'application détecte le sien)
 desktop-shortcut = "ask"                   # always | never | ask (case de l'assistant, cochée par défaut)
 scope = "ask"                              # user (par défaut) | machine | ask
 deep-links = ["shundemo"]                  # schémas d'URL détenus par l'app (myapp://…)

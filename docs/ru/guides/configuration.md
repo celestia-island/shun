@@ -16,6 +16,7 @@ main-exe = "bin/shun-demo.exe"             # точка входа внутри 
 [package.metadata.shun.install]            # цель install (по умолчанию)
 local = true                               # регистрируемая установка (ARP, деинсталлятор, ярлыки)
 portable = true                            # портативный режим (маркер .shun-portable, без реестра)
+portable-marker = ".shun-portable"          # имя файла-маркера для переносимых копий (переопределите, если приложение ищет свой)
 desktop-shortcut = "ask"                   # always | never | ask (флажок мастера, по умолчанию включён)
 scope = "ask"                              # user (по умолчанию) | machine | ask
 deep-links = ["shundemo"]                  # принадлежащие приложению схемы URL (myapp://…)
