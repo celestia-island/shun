@@ -138,6 +138,10 @@ pub struct InstallContext {
     /// all data stays beside the executable.
     pub portable: bool,
 
+    /// Marker file name written into the install directory for portable
+    /// copies (config `portable-marker`, default `.shun-portable`).
+    pub portable_marker: String,
+
     /// Where the install lands (per-user default; machine-wide writes
     /// HKLM and all-users surfaces and needs elevation).
     pub scope: InstallScope,
@@ -177,6 +181,7 @@ impl InstallContext {
             install_dir,
             main_exe: None,
             portable,
+            portable_marker: PORTABLE_MARKER.to_string(),
             scope: InstallScope::User,
             desktop_shortcut: false,
             verbs: Vec::new(),
@@ -210,6 +215,10 @@ impl InstallContext {
                 }
             }
         };
+        self.portable_marker = install
+            .portable_marker
+            .clone()
+            .unwrap_or_else(|| PORTABLE_MARKER.to_string());
         self.verbs = install.verbs.iter().map(VerbSpec::from).collect();
         self.deep_links = install
             .deep_links
@@ -316,7 +325,7 @@ impl Flow for InstallFlow<'_> {
         ctx.estimated_size_kb = u32::try_from(total_bytes / 1024).unwrap_or(u32::MAX);
 
         if ctx.portable {
-            std::fs::write(ctx.install_dir.join(PORTABLE_MARKER), b"")?;
+            std::fs::write(ctx.install_dir.join(&ctx.portable_marker), b"")?;
         } else {
             self.registration.register_logged(&ctx, on_event)?;
         }
@@ -344,7 +353,7 @@ pub fn uninstall(ctx: &InstallContext, registration: &dyn Registration) -> Resul
         remove_empty_dirs_below(&ctx.install_dir);
     }
 
-    let _ = std::fs::remove_file(ctx.install_dir.join(PORTABLE_MARKER));
+    let _ = std::fs::remove_file(ctx.install_dir.join(&ctx.portable_marker));
 
     let uninstaller = ctx.install_dir.join(UNINSTALLER_NAME);
     if uninstaller.exists() {
@@ -889,6 +898,16 @@ mod tests {
         assert_eq!(ctx.aumid.as_deref(), Some("explicit.aumid"));
         assert_eq!(ctx.verbs.len(), 1);
         assert_eq!(ctx.verbs[0].target, VerbTarget::DataFolder);
+
+        // The portable marker defaults to the shun convention and can be
+        // pointed at a product's own marker name.
+        assert_eq!(ctx.portable_marker, PORTABLE_MARKER);
+        install.portable_marker = Some(".portable".into());
+        ctx.apply_config(&install, WizardAnswers::defaults());
+        assert_eq!(ctx.portable_marker, ".portable");
+        install.portable_marker = None;
+        ctx.apply_config(&install, WizardAnswers::defaults());
+        assert_eq!(ctx.portable_marker, PORTABLE_MARKER);
 
         install.desktop_shortcut = DesktopShortcutPolicy::Always;
         ctx.apply_config(&install, WizardAnswers::defaults());

@@ -377,6 +377,13 @@ pub struct InstallConfig {
     #[serde(default = "default_true")]
     pub portable: bool,
 
+    /// Portable-mode marker file name written into the install directory
+    /// (default: `.shun-portable`). Products whose runtime detects an
+    /// existing marker name (e.g. wowsp's `.portable`) point this at that
+    /// name so the delivered copy follows the product's own convention.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_marker: Option<String>,
+
     /// Payload-relative path of the app entry point the shortcut targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub main_exe: Option<PathBuf>,
@@ -424,6 +431,7 @@ impl Default for InstallConfig {
         Self {
             local: true,
             portable: true,
+            portable_marker: None,
             main_exe: None,
             desktop_shortcut: DesktopShortcutPolicy::Ask,
             scope: ScopePolicy::User,

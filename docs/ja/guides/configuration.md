@@ -16,6 +16,7 @@ main-exe = "bin/shun-demo.exe"             # payload 内のエントリーポイ
 [package.metadata.shun.install]            # install ターゲット（既定）
 local = true                               # 登録インストール（ARP、アンインストーラー、ショートカット）
 portable = true                            # ポータブルモード（.shun-portable マーカー、レジストリ不使用）
+portable-marker = ".shun-portable"          # ポータブルコピーに書かれるマーカーファイル名（アプリが独自のマーカーを検出するなら上書き）
 desktop-shortcut = "ask"                   # always | never | ask（ウィザードのチェックボックス、既定でオン）
 scope = "ask"                              # user（既定）| machine | ask
 deep-links = ["shundemo"]                  # アプリが保有する URL スキーム（myapp://…）

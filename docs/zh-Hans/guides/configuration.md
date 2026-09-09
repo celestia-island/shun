@@ -15,6 +15,7 @@ main-exe = "bin/shun-demo.exe"             # payload 内入口点
 [package.metadata.shun.install]            # install target（默认）
 local = true                               # 注册安装（ARP、卸载器、快捷方式）
 portable = true                            # 便携模式（.shun-portable 标记，零注册表）
+portable-marker = ".shun-portable"          # 便携副本写入的标记文件名（应用检测自有标记时可覆盖）
 desktop-shortcut = "ask"                   # always | never | ask（向导复选框，默认勾选）
 deep-links = ["shundemo"]                  # 应用持有的 URL scheme（myapp://…）
 aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生成
@@ -55,7 +56,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `logo` | path | — | 壳的 logo 资产（相对清单文件） |
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
-| `install` | table | 双模式全开 | `local` / `portable` 开关 |
+| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
 | `msix.logo-background` | 颜色 | `transparent` | 透明 MSIX 图标底下的底板色 |
 | `flash` | table | — | 声明烧写目标 |
