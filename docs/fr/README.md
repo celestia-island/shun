@@ -2,14 +2,14 @@
 
 <h1 align="center">Shun</h1>
 
-<p align="center"><strong>Runtime de livraison de payload piloté par flux — installateurs, graveurs et modes portables</strong></p>
+<p align="center"><strong>Runtime de livraison de payloads pilotée par flux — installateurs, flasheurs et modes portables</strong></p>
 
 <div align="center">
 
 [![License: SySL-1.0](https://img.shields.io/badge/License-SySL--1.0-blue.svg)](https://sysl.celestia.world)
-[![GitHub](https://img.shields.io/badge/github-celestia--island%2Fshun-blue.svg)](https://github.com/celestia-island/shun)
-[![Checks](https://img.shields.io/github/actions/workflow/status/celestia-island/shun/checks.yml)](https://github.com/celestia-island/shun/actions/workflows/checks.yml)
+[![Crates.io](https://img.shields.io/crates/v/shun)](https://crates.io/crates/shun)
 [![docs.rs](https://docs.rs/shun/badge.svg)](https://docs.rs/shun)
+[![Checks](https://img.shields.io/github/actions/workflow/status/celestia-island/shun/checks.yml)](https://github.com/celestia-island/shun/actions/workflows/checks.yml)
 
 </div>
 
@@ -28,104 +28,61 @@
 
 ---
 
-Shun prend en charge la moitié « livraison » de la publication de logiciels de
-bureau. Un document de configuration pilote à la fois le CLI de construction et
-le shell d'exécution :
+Shun empaquette la moitié **livraison** de la distribution de logiciels de bureau. Un seul
+document de configuration — le `Cargo.toml` de l'application elle-même
+(`[package.metadata.shun]`, le pattern cargo-deb / cargo-wix) — pilote à la fois le CLI de
+build et le shell d'exécution :
 
-- un **payload** — le répertoire applicatif empaqueté une fois, incrusté dans
-  un installeur mono-fichier ou transporté en sidecar ;
-- un **flux** — choisir un mode, choisir une cible, diffuser des événements de
-  progression réels ;
-- des **targets** enfichables :
-  - `install` — enregistrement Windows direct (entrée ARP par utilisateur,
-    désinstalleur auto-copiant, raccourci du menu Démarrer, liens profonds)
-    *et* un mode portable sans aucun registre ;
-  - `flash` — écriture d'une image sur périphérique bloc avec vérification
-    après écriture.
+- un **payload** empaqueté une fois, intégré dans un installateur monofichier ou porté en sidecar ;
+- un **flux** — choisir un mode, choisir une cible, diffuser la progression réelle ;
+- des **targets** pluggables :
+  - `install` — enregistrement façon NSIS, par plateforme : entrées ARP Windows, raccourcis (avec AUMID), verbes du menu contextuel de l'Explorateur, liens profonds, par utilisateur ou machine (auto-élévation) ; lanceurs `.desktop` Linux avec actions de bureau ; complétion `.app` macOS plus Launch Services — et un mode portable qui n'écrit aucun état système nulle part ;
+  - `flash` — écrire une image sur un périphérique bloc avec vérification après écriture.
 
-Sur Windows, une stratégie WebView2 à double variante couvre les machines
-vierges : un artefact standard qui exige le runtime système, et un artefact
-entièrement autonome qui transporte **un runtime WebView2 à version fixe en
-privé** — une copie partagée par le shell et l'application installée, à travers
-les modes installation et portable, sans admin, sans écriture système.
+L'assistant lui-même est un **pipeline déclaratif** (`mode | scope | license | content | install`, ordre libre) ; son volet d'installation affiche une vraie barre de progression pondérée par phase et un terminal repliable qui journalise chaque opération de fichier — verbosité configurable via `shell.log-level`.
+
+Sous Windows, le shell a deux visages : une interface WebView hikari et un **fallback egui** embarqué qui n'a pas du tout besoin de WebView2 — même flux, même manifeste (`--fallback` le force). Un runtime WebView2 à version fixe peut voyager dans le payload, une copie partagée par le shell et l'application installée.
 
 ## Exemple
 
-Une démo complète couvre la livraison de bout en bout. La charge utile
-est une véritable application Tauri 2 (`demo-app/`, avec interface
-d'exemple), le shell d'installation (`shell/`, basé sur
-[@celestia-island/hikari](https://github.com/celestia-island/hikari))
-l'intègre à la compilation, et l'ensemble est déclaré par un seul
-manifeste de livraison :
+Une démo couvre la livraison de bout en bout — un vrai payload Tauri 2 (`demo-app/`), un shell d'installation construit sur [@celestia-island/hikari](https://github.com/celestia-island/hikari) (`shell/`), un manifeste :
 
 ```bash
-just demo                                               # préparer l'app démo → compiler → lancer le shell
-just demo -- --fallback                                 # forcer le shell egui hors ligne (sans WebView2)
-cargo run --example demo_flash                        # énumérer les périphériques flashables
-cargo run --example demo_install                      # génère ShunDemo.shun + installation locale
-cargo run --example demo_install -- --portable        # installation portable (sans registre)
-cargo run --example demo_install -- --uninstall       # désinstallation (trace effacée)
+just demo                                        # # staging → build → lancer le shell d'installation
+just demo -- --fallback                          # # forcer le shell egui hors ligne
+cargo run --example demo_install                 # # générer un paquet .shun + installation locale
+cargo run --example demo_install -- --portable   # # installation portable (aucun état système)
+cargo run --example demo_flash                   # # énumérer les périphériques flashables
 ```
 
-`demo_install` génère le paquet d'installation `ShunDemo.shun` (tar zstd +
-manifeste SHA-256) dans le répertoire courant, le décompresse avec une
-progression diffusée en continu et, en mode local, effectue l'enregistrement
-directe décrit ci-dessus. Le shell de démo Tauri (`shell/`, construit sur
-[@celestia-island/hikari](https://github.com/celestia-island/hikari)) rend le
-même flux avec une interface complète, en embarquant le payload à la
-construction.
-
-Le manifeste de livraison lui-même se trouve dans le crate de démo :
-
-```toml
-[package.metadata.shun]
-product = "ShunDemo"
-publisher = "celestia-island"
-payload = "../examples/demo_payload"
-main-exe = "bin/shun-demo.exe"
-
-[package.metadata.shun.install]
-local = true
-portable = true
-```
-
-La racine de la charge utile ne conserve que de petits fichiers de données
-versionnés ; le binaire de l'application est un produit de compilation placé
-dans `bin/` par `just demo-payload` (jamais versionné).
-
-Voir [docs/en/guides/configuration.md](./docs/en/guides/configuration.md)
-pour la référence complète, y compris la matrice de stratégies WebView2.
+Référence complète des champs :[guide de configuration](./guides/configuration.md)
+([English](../en/guides/configuration.md)).
 
 ## Statut
 
-Pré-publication ; le crate se stabilise face à trois consommateurs réels de
-l'écosystème celestia — le shell d'installation WoWSP, shittim-chest local, et
-le graveur d'images evernight. Le développement actif se fait sur la branche
-`dev` ; `master` recevra le commit de publication initiale une fois le premier
-flux de livraison terminé. Les API sont instables jusqu'à `0.1`.
+Version actuelle : **0.2.0**. La crate se stabilise face à trois consommateurs réels de l'écosystème celestia — le shell d'installation WoWSP, shittim-chest local, et le flasheur d'images evernight. Les API suivent ces trois consommateurs entre versions mineures — attendez-vous à des changements additifs issus de leurs retours d'intégration.
 
 ## Structure
 
 | Chemin | Rôle |
 | --- | --- |
 | `src/config.rs` | Schéma de configuration + chargeur `[package.metadata.shun]` |
-| `src/flow.rs` | Modèle de flux — événements de progression rendus par le shell |
-| `src/payload.rs` | Empaquetage / manifeste / extraction en flux du payload |
-| `src/targets/install.rs` | Cible d'installation : backends d'enregistrement, mode portable |
-| `src/targets/flash.rs` | Cible flash : écriture bloc + vérification |
-| `shell/` | Shell d'installation : UI hikari (Tauri) + repli egui hors ligne |
-| `docs/` | Guides et notes de conception, par locale |
+| `src/flow.rs` | Modèle de flux — événements de progression et de journal rendus par le shell |
+| `src/payload.rs` | Empaquetage du payload / manifeste / extraction en flux |
+| `src/targets/` | Targets install (enregistrement Windows/Linux/macOS) et flash |
+| `demo-app/` | ShunDemo — l'app payload Tauri 2 (UI d'exemple, manifeste de livraison) |
+| `shell/` | Shell d'installation : UI hikari (Tauri) + fallback egui hors ligne |
+| `docs/` | Guides et notes de conception, par langue |
 
 ## Développement
 
 ```bash
-just fetch   # stage des recettes celestia-devtools partagées (une fois)
-just ci      # fmt-check + clippy + test
+just fetch   # # préparer les recettes celestia-devtools partagées (une fois)
+just ci      # # fmt-check + clippy + test
 ```
 
-Workflow : la préparation rapide se fait sur `dev` ; `master` reçoit le commit
-de publication initiale, après quoi tout passe par des PR.
+Le travail arrive sur `master` via des PR squash-mergeées depuis des branches `feat/*` / `fix/*`. Conventions complètes dans [AGENTS.md](../../AGENTS.md).
 
 ## Licence
 
-SySL-1.0 — voir [LICENSE](./LICENSE).
+SySL-1.0 — voir [LICENSE](../../LICENSE).
