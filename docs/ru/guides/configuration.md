@@ -32,6 +32,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # упорядоченный конвейер мастера (опционально)
 kind = "mode"                              # mode | scope | license | content | install
+align = "center"                           # переопределение шага: center | start (по умолчанию от kind)
 
 [[package.metadata.shun.steps]]
 kind = "content"
@@ -53,6 +54,7 @@ require-removable = true                   # отказывать несъёмн
 ```toml
 [shell]
 timeline = "left"          # top (горизонтальная лента) | left (вертикальная слева)
+log-level = "all"          # all (по умолчанию) | files | scripts | off
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

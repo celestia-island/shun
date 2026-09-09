@@ -61,11 +61,13 @@ fn main() {
         );
     }
     for step in &config.steps.clone().unwrap_or_default() {
-        if let shun::config::StepConfig::Content { markdown, .. } = step {
-            println!(
-                "cargo:rerun-if-changed={}",
-                manifest_dir.join(markdown).display()
-            );
+        if step.kind == shun::config::StepKind::Content {
+            if let Some(markdown) = &step.markdown {
+                println!(
+                    "cargo:rerun-if-changed={}",
+                    manifest_dir.join(markdown).display()
+                );
+            }
         }
     }
     std::fs::write(

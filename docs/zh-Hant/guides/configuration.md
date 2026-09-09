@@ -31,6 +31,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # 有序的精靈管線（可選）
 kind = "mode"                              # mode | scope | license | content | install
+align = "center"                           # 按步驟覆寫：center | start（預設由 kind 決定）
 
 [[package.metadata.shun.steps]]
 kind = "content"
@@ -51,6 +52,7 @@ require-removable = true                   # 拒絕非可移除裝置
 ```toml
 [shell]
 timeline = "left"          # top（頂部橫排）| left（左側直排）
+log-level = "all"          # all（預設）| files | scripts | off
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

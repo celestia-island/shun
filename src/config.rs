@@ -202,12 +202,22 @@ impl ShunConfig {
                         "declare one of `steps` or `custom-steps`, not both",
                     ));
                 }
-                let installs = steps
-                    .iter()
-                    .filter(|s| matches!(s, StepConfig::Install))
-                    .count();
+                let installs = steps.iter().filter(|s| s.kind == StepKind::Install).count();
                 match installs {
-                    1 => steps.clone(),
+                    1 => {
+                        // Content steps must declare both a title and a
+                        // document before anything resolves.
+                        for step in steps {
+                            if step.kind == StepKind::Content
+                                && (step.title.is_none() || step.markdown.is_none())
+                            {
+                                return Err(config_error(
+                                    "content steps need both `title` and `markdown`",
+                                ));
+                            }
+                        }
+                        steps.clone()
+                    }
                     0 => {
                         return Err(config_error(
                             "the `steps` pipeline must contain one `install` step",
@@ -223,7 +233,7 @@ impl ShunConfig {
             }
             None => {
                 // Default pipeline with legacy injections.
-                let mut steps = vec![StepConfig::Mode];
+                let mut steps = vec![bare_step(StepKind::Mode)];
                 steps.extend(
                     self.custom_steps
                         .iter()
@@ -231,7 +241,7 @@ impl ShunConfig {
                         .map(custom_to_step),
                 );
                 if self.license.is_some() || !self.license_locales.is_empty() {
-                    steps.push(StepConfig::License);
+                    steps.push(bare_step(StepKind::License));
                     steps.extend(
                         self.custom_steps
                             .iter()
@@ -239,7 +249,7 @@ impl ShunConfig {
                             .map(custom_to_step),
                     );
                 }
-                steps.push(StepConfig::Install);
+                steps.push(bare_step(StepKind::Install));
                 steps.extend(
                     self.custom_steps
                         .iter()
@@ -263,42 +273,39 @@ impl ShunConfig {
         pipeline
             .into_iter()
             .map(|step| {
-                Ok(match &step {
-                    StepConfig::Mode => ResolvedStep {
-                        kind: StepKind::Mode,
-                        title: String::new(),
-                        body: None,
-                    },
-                    StepConfig::Scope => ResolvedStep {
-                        kind: StepKind::Scope,
-                        title: String::new(),
-                        body: None,
-                    },
-                    StepConfig::License => ResolvedStep {
-                        kind: StepKind::License,
-                        title: String::new(),
-                        body: license_body()?,
-                    },
-                    StepConfig::Content { title, markdown } => ResolvedStep {
-                        kind: StepKind::Content,
-                        title: title.clone(),
-                        body: Some(read_markdown(markdown, "content step")?),
-                    },
-                    StepConfig::Install => ResolvedStep {
-                        kind: StepKind::Install,
-                        title: String::new(),
-                        body: None,
-                    },
+                let markdown = match (step.kind, step.markdown.as_deref()) {
+                    (StepKind::License, _) => license_body()?,
+                    (StepKind::Content, Some(markdown)) => {
+                        Some(read_markdown(markdown, "content step")?)
+                    }
+                    _ => None,
+                };
+                Ok(ResolvedStep {
+                    align: step.align.unwrap_or_else(|| step.kind.default_align()),
+                    kind: step.kind,
+                    title: step.title.unwrap_or_default(),
+                    body: markdown,
                 })
             })
             .collect()
     }
 }
 
+fn bare_step(kind: StepKind) -> StepConfig {
+    StepConfig {
+        kind,
+        align: None,
+        title: None,
+        markdown: None,
+    }
+}
+
 fn custom_to_step(custom: &CustomStepConfig) -> StepConfig {
-    StepConfig::Content {
-        title: custom.title.clone(),
-        markdown: custom.markdown.clone(),
+    StepConfig {
+        kind: StepKind::Content,
+        align: None,
+        title: Some(custom.title.clone()),
+        markdown: Some(custom.markdown.clone()),
     }
 }
 
@@ -506,6 +513,28 @@ pub struct ShellUiConfig {
     /// (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`, `ru`, `es`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+
+    /// Terminal log verbosity of the install pane: everything (the
+    /// default), one family only (`files` or `scripts`), or `off` for
+    /// no output pane at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_level: Option<LogVerbosity>,
+}
+
+/// What the install pane's terminal shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum LogVerbosity {
+    /// File operations and script activity (default).
+    #[default]
+    All,
+    /// Only file operations (copy/reuse lines); scripts stay silent.
+    Files,
+    /// Only script activity (begin markers, script output, instruction
+    /// lines); file operations stay silent.
+    Scripts,
+    /// No terminal pane at all.
+    Off,
 }
 
 /// Step indicator placement.
@@ -577,33 +606,48 @@ pub struct CustomStepConfig {
 
 /// One wizard step in the declarative pipeline. Steps render in
 /// declaration order; the pipeline must contain exactly one `install`
-/// step (the delivery run itself).
+/// step (the delivery run itself). Panes center their content by
+/// default (`align = "start"` opts a step into left-aligned text —
+/// agreements and documents; the vertical axis stays centered).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum StepConfig {
-    /// Delivery-mode + directory selection; the `ask` policies
-    /// (desktop shortcut, install scope) surface as toggles inside it.
-    Mode,
+#[serde(rename_all = "kebab-case")]
+pub struct StepConfig {
+    /// Which pane renders this step.
+    pub kind: StepKind,
 
-    /// A standalone user/machine install-scope choice. Asks when the
-    /// install target's scope policy is `ask`; renders as a notice
-    /// otherwise. Machine scope elevates (UAC) before the install runs.
-    Scope,
+    /// Content alignment override; the default comes from the kind
+    /// (license/content align start, everything else centers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<StepAlign>,
 
-    /// The license agreement pane (content from `license` /
-    /// `license-locales`, resolved at embed time).
-    License,
+    /// Timeline label (content steps).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 
-    /// A custom markdown content pane.
-    Content {
-        /// Step label on the timeline.
-        title: String,
-        /// Markdown document, relative to the config source.
-        markdown: String,
-    },
+    /// Markdown document relative to the config source (content steps).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markdown: Option<String>,
+}
 
-    /// The delivery run itself (extraction progress). Exactly one.
-    Install,
+/// Content alignment of a wizard pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StepAlign {
+    /// Centered on both axes (the default).
+    Center,
+    /// Left-aligned text in a centered block; vertically centered —
+    /// agreements and documents.
+    Start,
+}
+
+impl StepKind {
+    /// The default content alignment for this kind of pane.
+    pub fn default_align(&self) -> StepAlign {
+        match self {
+            StepKind::License | StepKind::Content => StepAlign::Start,
+            _ => StepAlign::Center,
+        }
+    }
 }
 
 /// A wizard step with its content resolved for embedding: markdown
@@ -614,6 +658,8 @@ pub enum StepConfig {
 pub struct ResolvedStep {
     /// Which pane renders this step.
     pub kind: StepKind,
+    /// Content alignment (explicit override or the kind's default).
+    pub align: StepAlign,
     /// Timeline label.
     pub title: String,
     /// Inlined markdown body (`None` for non-content steps).
@@ -634,18 +680,6 @@ pub enum StepKind {
     Content,
     /// The delivery run.
     Install,
-}
-
-impl From<&StepConfig> for StepKind {
-    fn from(step: &StepConfig) -> Self {
-        match step {
-            StepConfig::Mode => Self::Mode,
-            StepConfig::Scope => Self::Scope,
-            StepConfig::License => Self::License,
-            StepConfig::Content { .. } => Self::Content,
-            StepConfig::Install => Self::Install,
-        }
-    }
 }
 
 /// Who decides the install scope (per-user vs machine-wide).
@@ -1159,21 +1193,41 @@ kind = "install"
         let dir = tempfile::tempdir().unwrap();
         let mut config = sample();
 
+        let bare = |kind| StepConfig {
+            kind,
+            align: None,
+            title: None,
+            markdown: None,
+        };
+
         // No install step.
-        config.steps = Some(vec![StepConfig::Mode]);
+        config.steps = Some(vec![bare(StepKind::Mode)]);
         assert!(config.resolve_steps(dir.path(), None).is_err());
 
         // Two install steps.
         config.steps = Some(vec![
-            StepConfig::Mode,
-            StepConfig::Install,
-            StepConfig::Install,
+            bare(StepKind::Mode),
+            bare(StepKind::Install),
+            bare(StepKind::Install),
+        ]);
+        assert!(config.resolve_steps(dir.path(), None).is_err());
+
+        // Content steps must declare title + markdown.
+        config.steps = Some(vec![
+            bare(StepKind::Mode),
+            StepConfig {
+                kind: StepKind::Content,
+                align: None,
+                title: None,
+                markdown: None,
+            },
+            bare(StepKind::Install),
         ]);
         assert!(config.resolve_steps(dir.path(), None).is_err());
 
         // The legacy custom-steps injection stays working alongside no
         // declared pipeline, but not with one.
-        config.steps = Some(vec![StepConfig::Mode, StepConfig::Install]);
+        config.steps = Some(vec![bare(StepKind::Mode), bare(StepKind::Install)]);
         config.custom_steps = vec![CustomStepConfig {
             key: "extra".into(),
             after: "mode".into(),
@@ -1213,6 +1267,69 @@ kind = "install"
                 StepKind::Content
             ]
         );
+    }
+
+    #[test]
+    fn step_alignment_overrides_and_log_level_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("why.md"),
+            "# why
+",
+        )
+        .unwrap();
+        let config_path = dir.path().join("shun.toml");
+        std::fs::write(
+            &config_path,
+            concat!(
+                "product = \"App\"
+
+",
+                "[shell]
+",
+                "log-level = \"scripts\"
+
+",
+                "[[steps]]
+",
+                "kind = \"license\"
+",
+                "align = \"center\"
+
+",
+                "[[steps]]
+",
+                "kind = \"mode\"
+
+",
+                "[[steps]]
+",
+                "kind = \"content\"
+",
+                "title = \"Notes\"
+",
+                "markdown = \"why.md\"
+
+",
+                "[[steps]]
+",
+                "kind = \"install\"
+",
+            ),
+        )
+        .unwrap();
+        let config = ShunConfig::from_path(&config_path).unwrap();
+        assert_eq!(
+            config.shell.as_ref().unwrap().log_level,
+            Some(LogVerbosity::Scripts)
+        );
+
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        // Explicit override wins over the kind default…
+        assert_eq!(steps[0].align, StepAlign::Center);
+        // …otherwise kinds pick: documents start, choices center.
+        assert_eq!(steps[1].align, StepAlign::Center);
+        assert_eq!(steps[2].align, StepAlign::Start);
     }
 
     #[test]
