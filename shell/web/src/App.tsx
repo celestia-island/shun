@@ -87,7 +87,7 @@ export default defineComponent({
     const product = ref<ProductIdentity>({ name: "ShunDemo", version: "" });
     const modes = ref<Mode[]>(["local", "portable"]);
     const timeline = ref<"top" | "left">("top");
-    const themeMode = ref<"system" | "light" | "dark">("dark");
+    const themeMode = ref<"system" | "light" | "dark">("system");
     const themeAccent = ref<[number, number, number] | null>(null);
     const locale = ref<Locale>("en");
     const mode = ref<Mode>("local");
@@ -157,7 +157,7 @@ export default defineComponent({
           product.value = view.product;
           modes.value = view.modes;
           timeline.value = view.timeline ?? "top";
-          themeMode.value = view.theme?.mode ?? "dark";
+          themeMode.value = view.theme?.mode ?? "system";
           themeAccent.value = view.theme?.accent ?? null;
           locale.value = resolveLocale(view.language);
           applyTheme();
