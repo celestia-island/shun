@@ -47,6 +47,14 @@ interface ShellView {
   language?: string;
   log_level?: LogLevel;
   flash: boolean;
+  attachments: AttachmentView[];
+}
+
+interface AttachmentView {
+  key: string;
+  title: string;
+  included: boolean;
+  size?: number;
 }
 
 interface FlowLogRecord {
@@ -104,6 +112,12 @@ export default defineComponent({
     const failMessage = ref("");
     const flowStep = ref("");
     const installed = ref(false);
+
+    // Optional attachments: declared ones not bundled in this build offer a
+    // post-install download on the done pane.
+    const attachments = ref<AttachmentView[]>([]);
+    const downloaded = ref<Set<string>>(new Set());
+    const downloading = ref<string | null>(null);
 
     // Multi-phase progress: one entry per phase seen, updated by phase.
     const phases = ref<Record<string, { percent: number | null; step: string }>>({});
@@ -170,6 +184,7 @@ export default defineComponent({
             mode.value = view.modes[0] ?? "local";
           }
           logLevel.value = view.log_level ?? "all";
+          attachments.value = view.attachments;
           return refreshDefaults();
         })
         .catch((err) => {
@@ -301,6 +316,24 @@ export default defineComponent({
         failMessage.value = String(err);
       } finally {
         running.value = false;
+      }
+    }
+
+    async function fetchAttachment(attachment: AttachmentView) {
+      if (downloading.value || downloaded.value.has(attachment.key)) return;
+      downloading.value = attachment.key;
+      flowStep.value = attachment.title;
+      try {
+        await invoke("download_attachment", {
+          key: attachment.key,
+          dir: dir.value.trim(),
+        });
+        downloaded.value.add(attachment.key);
+        showNote(`✔ ${attachment.title}`);
+      } catch (err) {
+        showNote(String(err), "err");
+      } finally {
+        downloading.value = null;
       }
     }
 
@@ -445,6 +478,22 @@ export default defineComponent({
                 ? strings$["hint.portable"]
                 : strings$["hint.local"]}
             </p>
+            {attachments.value
+              .filter((a) => !a.included && !downloaded.value.has(a.key))
+              .map((a) => (
+                <HButton
+                  variant="ghost"
+                  size="sm"
+                  disabled={downloading.value != null}
+                  onClick={() => fetchAttachment(a)}
+                >
+                  {downloading.value === a.key
+                    ? "…"
+                    : a.size
+                      ? `${a.title} (${Math.round(a.size / 1024 / 1024)} MB)`
+                      : a.title}
+                </HButton>
+              ))}
           </section>
         );
 

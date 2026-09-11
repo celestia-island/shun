@@ -13,6 +13,13 @@ logo = "docs/logo.webp"                    # 셸 로고 애셋
 payload = "examples/demo_payload"          # 아티팩트에 패키징할 디렉터리
 main-exe = "bin/shun-demo.exe"             # payload 내 진입점
 
+[[package.metadata.shun.attachments]]
+key = "models"
+title = "2D/3D model pack"
+dest = "models"
+[package.metadata.shun.attachments.online]
+url = "https://example.test/models.shun"   # 선택 첨부 리소스(라이트 버전은 설치 시 다운로드)
+
 [package.metadata.shun.install]            # install 타깃 (기본)
 local = true                               # 등록 설치 (ARP, 제거 프로그램, 바로 가기)
 portable = true                            # 휴대용 모드 (.shun-portable 마커, 레지스트리 미사용)

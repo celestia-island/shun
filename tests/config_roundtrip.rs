@@ -33,6 +33,15 @@ fn sample() -> ShunConfig {
         source: Some(SourceConfig::Online {
             url: "https://example.test/ShunDemo.shun".into(),
         }),
+        attachments: vec![shun::config::AttachmentConfig {
+            key: "models".into(),
+            title: "2D/3D model pack".into(),
+            dest: "models".into(),
+            size: Some(123),
+            online: shun::config::AttachmentOnlineConfig {
+                url: "https://example.test/models.shun".into(),
+            },
+        }],
         license: Some("docs/LICENSE.md".into()),
         license_locales: BTreeMap::from([("zh-Hans".into(), "docs/LICENSE.zh.md".into())]),
         custom_steps: vec![CustomStepConfig {

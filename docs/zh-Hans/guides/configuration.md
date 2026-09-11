@@ -12,6 +12,13 @@ logo = "docs/logo.webp"                    # 壳的 logo 资产
 payload = "examples/demo_payload"          # 打包进发行物的目录
 main-exe = "bin/shun-demo.exe"             # payload 内入口点
 
+[[package.metadata.shun.attachments]]
+key = "models"
+title = "2D/3D model pack"
+dest = "models"
+[package.metadata.shun.attachments.online]
+url = "https://example.test/models.shun"   # 可选附件资源（精简版在安装时下载）
+
 [package.metadata.shun.install]            # install target（默认）
 local = true                               # 注册安装（ARP、卸载器、快捷方式）
 portable = true                            # 便携模式（.shun-portable 标记，零注册表）
@@ -57,6 +64,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
 | `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名 |
+| `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
 | `msix.logo-background` | 颜色 | `transparent` | 透明 MSIX 图标底下的底板色 |
 | `flash` | table | — | 声明烧写目标 |
