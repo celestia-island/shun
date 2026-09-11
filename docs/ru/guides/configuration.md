@@ -63,6 +63,7 @@ require-removable = true                   # отказывать несъёмн
 [shell]
 timeline = "left"          # top (горизонтальная лента) | left (вертикальная слева)
 log-level = "all"          # all (по умолчанию) | files | scripts | off
+log-order = "newest"      # newest (по умолчанию, свежие сверху) | oldest (добавление в конец)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

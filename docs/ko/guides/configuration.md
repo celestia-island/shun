@@ -63,6 +63,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 [shell]
 timeline = "left"          # top (상단 가로) | left (좌측 세로)
 log-level = "all"          # all(기본값) | files | scripts | off
+log-order = "newest"      # newest(기본값, 최신이 위) | oldest(끝에 추가)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

@@ -132,6 +132,7 @@ document) configures the runtime shell:
 [shell]
 timeline = "left"          # top (horizontal rail) | left (vertical rail)
 log-level = "all"          # all (default) | files | scripts | off
+log-order = "newest"    # newest (default, latest on top) | oldest (append at tail)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

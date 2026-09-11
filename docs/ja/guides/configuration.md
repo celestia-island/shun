@@ -63,6 +63,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 [shell]
 timeline = "left"          # top（上部の横並び）| left（左側の縦並び）
 log-level = "all"          # all（既定）| files | scripts | off
+log-order = "newest"      # newest（既定、最新が上）| oldest（末尾に追加）
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]

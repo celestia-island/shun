@@ -538,6 +538,22 @@ pub struct ShellUiConfig {
     /// no output pane at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_level: Option<LogVerbosity>,
+
+    /// Install-log line ordering: `newest` (the default — latest line on
+    /// top, Docker-Desktop style) or `oldest` (append at the tail).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_order: Option<LogOrder>,
+}
+
+/// The install pane's log line ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum LogOrder {
+    /// Latest line on top (the default).
+    #[default]
+    Newest,
+    /// Append at the tail, classic terminal order.
+    Oldest,
 }
 
 /// What the install pane's terminal shows.

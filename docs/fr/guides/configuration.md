@@ -63,6 +63,7 @@ configure le shell d'exécution :
 [shell]
 timeline = "left"          # top (rail horizontal) | left (rail vertical à gauche)
 log-level = "all"          # all (par défaut) | files | scripts | off
+log-order = "newest"      # newest (défaut, dernier en haut) | oldest (ajout à la fin)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]
