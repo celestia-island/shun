@@ -41,15 +41,18 @@ pub fn resolve(config: &ShunConfig, payload: &ArchivePayload) -> Vec<ResolvedAtt
         .collect()
 }
 
-/// Streams the attachment's online archive into `install_dir`. The archive
-/// is a packed shun payload whose entries carry the attachment's dest
-/// prefix, so extraction lands the files exactly where full builds place
-/// them, and every entry is verified against the archive's own manifest.
+/// Streams the attachment's online archive into `<install_dir>/<dest>`.
+/// The archive's payload root IS the dest content — pack the attachment
+/// directory directly (`shun pack models/ models.shun`), no staging
+/// prefix needed — and every entry is verified against the archive's own
+/// manifest, so extraction lands the files exactly where full builds
+/// place them.
 #[cfg(feature = "online")]
 pub fn download(
     attachment: &AttachmentConfig,
     install_dir: &Path,
     on_event: &mut dyn FnMut(FlowEvent),
 ) -> Result<(), ShunError> {
-    OnlinePayload::new(attachment.online.url.clone()).extract(install_dir, on_event)
+    let dest = install_dir.join(&attachment.dest);
+    OnlinePayload::new(attachment.online.url.clone()).extract(&dest, on_event)
 }
