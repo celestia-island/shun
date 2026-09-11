@@ -165,6 +165,15 @@ impl ArchivePayload {
         Ok(Self { entries, files })
     }
 
+    /// Whether any carried entry sits under `prefix` — the shipped-pack
+    /// check behind optional attachments (a full build carries the dest
+    /// subtree, a lite build does not).
+    pub fn has_prefix(&self, prefix: &Path) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.path.starts_with(prefix))
+    }
+
     /// Extracts only the entries under `prefix`, preserving their archive
     /// paths under `dest`. The single-copy bootstrap path: a shell carrying
     /// a fixed-version WebView2 runtime inside its payload stages just

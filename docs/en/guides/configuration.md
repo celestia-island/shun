@@ -13,6 +13,13 @@ logo = "docs/logo.webp"                    # shell logo asset
 payload = "examples/demo_payload"          # directory packed into artifacts
 main-exe = "bin/shun-demo.exe"             # payload-relative entry point
 
+[[package.metadata.shun.attachments]]
+key = "models"
+title = "2D/3D model pack"
+dest = "models"
+[package.metadata.shun.attachments.online]
+url = "https://example.test/models.shun"   # optional companion resource (lite builds download it at install time)
+
 [package.metadata.shun.install]            # install target (default)
 local = true                               # registered install (ARP, uninstaller, shortcuts)
 portable = true                            # portable mode (.shun-portable marker, no registry)
@@ -58,6 +65,7 @@ require-removable = true                   # refuse non-removable devices
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
 | `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` policy, `verbs`, `deep-links`, `aumid`, `icon` |
+| `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `webview2` | table | `skip` | Windows runtime strategy |
 | `msix.logo-background` | color | `transparent` | Plate flattened under a transparent MSIX logo |
 | `flash` | table | — | Declares the flash target |

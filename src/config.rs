@@ -50,6 +50,13 @@ pub struct ShunConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceConfig>,
 
+    /// Optional companion resources (asset packs) declared beside the
+    /// payload. Full builds carry them inside the payload under their dest
+    /// prefix; lite builds embed only the declarations, and the shell
+    /// offers the download (see [`crate::attachments`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentConfig>,
+
     /// MSIX packaging (Windows): identity, publisher and display strings
     /// for generating the AppxManifest and a signed-free deployment story
     /// (Store distribution signs the package for you).
@@ -598,6 +605,43 @@ pub enum SourceConfig {
     },
 }
 
+/// Where an optional attachment is fetched from at install time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AttachmentOnlineConfig {
+    /// Release URL of the packed attachment archive (`*.shun`, entries
+    /// carrying the attachment's dest prefix).
+    pub url: String,
+}
+
+/// An optional companion resource (an asset pack) declared beside the
+/// payload. Full builds carry the attachment inside the payload under its
+/// dest prefix; lite builds embed only this declaration, and the shell
+/// offers [`crate::attachments::download`] as the way to fetch it instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AttachmentConfig {
+    /// Stable key the shell's download command addresses.
+    pub key: String,
+
+    /// Display string for the shell's download affordance.
+    pub title: String,
+
+    /// Payload- and archive-relative directory the attachment occupies
+    /// (`models`, `assets/voices`, ...). Used to detect whether the
+    /// embedded payload already carries the attachment and as the contract
+    /// for the online archive's entry layout.
+    pub dest: PathBuf,
+
+    /// Display size of the unpacked attachment (UI hint; the online
+    /// archive's own manifest carries the authoritative verification data).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+
+    /// Where to fetch the attachment when it is not bundled.
+    pub online: AttachmentOnlineConfig,
+}
+
 /// A custom content step injected into the wizard, rendered as markdown.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -838,6 +882,10 @@ struct ShunMetadataDraft {
     /// `[package.metadata.shun.source]` — embedded (default) or online.
     #[serde(default)]
     source: Option<SourceConfig>,
+    /// `[[package.metadata.shun.attachments]]` — optional companion
+    /// resources (asset packs) with an online source for lite builds.
+    #[serde(default)]
+    attachments: Option<Vec<AttachmentConfig>>,
     /// License document (markdown), relative to the manifest.
     #[serde(default)]
     license: Option<String>,
@@ -891,6 +939,7 @@ impl ShunMetadataDraft {
             targets,
             shell: self.shell,
             source: self.source,
+            attachments: self.attachments.unwrap_or_default(),
             license: self.license.map(PathBuf::from),
             license_locales: self
                 .license_locales
@@ -928,6 +977,7 @@ mod tests {
             ],
             shell: None,
             source: None,
+            attachments: Vec::new(),
             license: None,
             license_locales: BTreeMap::new(),
             custom_steps: Vec::new(),
@@ -1005,6 +1055,42 @@ require-removable = true
             Some(Path::new("bin/shun-demo.cmd"))
         );
         assert!(flash.require_removable);
+    }
+
+    #[test]
+    fn attachments_parse_from_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "attach-demo"
+version = "0.1.0"
+
+[package.metadata.shun]
+product = "AttachDemo"
+payload = "payload"
+
+[[package.metadata.shun.attachments]]
+key = "models"
+title = "2D/3D model pack"
+dest = "models"
+size = 123
+[package.metadata.shun.attachments.online]
+url = "https://example.test/models.shun"
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        assert_eq!(config.attachments.len(), 1);
+        let attachment = &config.attachments[0];
+        assert_eq!(attachment.key, "models");
+        assert_eq!(attachment.title, "2D/3D model pack");
+        assert_eq!(attachment.dest, Path::new("models"));
+        assert_eq!(attachment.size, Some(123));
+        assert_eq!(attachment.online.url, "https://example.test/models.shun");
     }
 
     #[test]

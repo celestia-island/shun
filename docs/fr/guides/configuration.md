@@ -13,6 +13,13 @@ logo = "docs/logo.webp"                    # ressource logo du shell
 payload = "examples/demo_payload"          # répertoire empaqueté
 main-exe = "bin/shun-demo.exe"             # point d'entrée dans le payload
 
+[[package.metadata.shun.attachments]]
+key = "models"
+title = "2D/3D model pack"
+dest = "models"
+[package.metadata.shun.attachments.online]
+url = "https://example.test/models.shun"   # ressource jointe optionnelle (téléchargée à l'installation par les builds lite)
+
 [package.metadata.shun.install]            # cible install (défaut)
 local = true                               # installation enregistrée (ARP, désinstalleur, raccourcis)
 portable = true                            # mode portable (marqueur .shun-portable, sans registre)

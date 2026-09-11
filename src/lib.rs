@@ -32,6 +32,10 @@ pub mod payload;
 // evernight flasher integrating with default-features = false).
 #[cfg(feature = "online")]
 pub mod payload_online;
+// Optional attachments (asset packs fetched at install time) download
+// through the online pipeline, so they share the feature gate.
+#[cfg(feature = "online")]
+pub mod attachments;
 pub mod targets;
 
 pub use error::ShunError;

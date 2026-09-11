@@ -13,6 +13,13 @@ logo = "docs/logo.webp"                    # ресурс логотипа об�
 payload = "examples/demo_payload"          # каталог, упаковываемый в артефакты
 main-exe = "bin/shun-demo.exe"             # точка входа внутри payload
 
+[[package.metadata.shun.attachments]]
+key = "models"
+title = "2D/3D model pack"
+dest = "models"
+[package.metadata.shun.attachments.online]
+url = "https://example.test/models.shun"   # необязательное вложение (в lite-сборке скачивается при установке)
+
 [package.metadata.shun.install]            # цель install (по умолчанию)
 local = true                               # регистрируемая установка (ARP, деинсталлятор, ярлыки)
 portable = true                            # портативный режим (маркер .shun-portable, без реестра)

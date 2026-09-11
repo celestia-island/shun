@@ -20,7 +20,7 @@ mod terminal;
 #[cfg(windows)]
 mod screenshot;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use shun::config::{ShunConfig, TargetConfig};
@@ -96,6 +96,17 @@ struct ShellView {
     log_level: shun::config::LogVerbosity,
     /// Whether a flash target is declared (the UI shows it as pending).
     flash: bool,
+    /// Optional attachments resolved against the payload: entries marked
+    /// `included` shipped inside the payload, the rest offer a download.
+    attachments: Vec<AttachmentView>,
+}
+
+#[derive(Serialize)]
+struct AttachmentView {
+    key: String,
+    title: String,
+    included: bool,
+    size: Option<u64>,
 }
 
 #[tauri::command]
@@ -132,6 +143,15 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
         language: shell.language,
         log_level: shell.log_level.unwrap_or_default(),
         flash,
+        attachments: shun::attachments::resolve(&state.config, &state.payload)
+            .into_iter()
+            .map(|a| AttachmentView {
+                key: a.config.key,
+                title: a.config.title,
+                included: a.included,
+                size: a.config.size,
+            })
+            .collect(),
     }
 }
 
@@ -224,6 +244,33 @@ fn uninstall_demo(state: State<'_, AppState>, mode: String, dir: String) -> Resu
     let ctx = state.install_context(&mode, &dir, answers)?;
     ensure_elevated_for(&ctx, &mode, &dir, answers, true)?;
     uninstall(&ctx, &WindowsRegistration).map_err(|e| e.to_string())
+}
+
+/// Streams a declared (and not already bundled) attachment into the
+/// install directory, streaming progress through `install-progress`.
+#[tauri::command]
+fn download_attachment(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    key: String,
+    dir: String,
+) -> Result<(), String> {
+    let resolved = shun::attachments::resolve(&state.config, &state.payload);
+    let attachment = resolved
+        .iter()
+        .find(|a| a.config.key == key)
+        .ok_or_else(|| format!("未知附件：{key}"))?;
+    if attachment.included {
+        return Ok(());
+    }
+    let dir = dir.trim().trim_end_matches('\\').to_string();
+    if dir.is_empty() {
+        return Err("安装目录不能为空".into());
+    }
+    shun::attachments::download(&attachment.config, Path::new(&dir), &mut |event| {
+        emit_progress(&app, &event)
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// When the resolved install scope is machine-wide and the current
@@ -496,7 +543,8 @@ fn main() {
             get_config,
             default_dir,
             start_install,
-            uninstall_demo
+            uninstall_demo,
+            download_attachment
         ])
         .setup(move |app| {
             #[cfg(windows)]

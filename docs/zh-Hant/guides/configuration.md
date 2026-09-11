@@ -12,6 +12,13 @@ logo = "docs/logo.webp"                    # 殼的 logo 資產
 payload = "examples/demo_payload"          # 打包進發行物的目錄
 main-exe = "bin/shun-demo.exe"             # payload 內進入點
 
+[[package.metadata.shun.attachments]]
+key = "models"
+title = "2D/3D model pack"
+dest = "models"
+[package.metadata.shun.attachments.online]
+url = "https://example.test/models.shun"   # 可選附件資源（精簡版在安裝時下載）
+
 [package.metadata.shun.install]            # install target（預設）
 local = true                               # 註冊安裝（ARP、解除安裝器、捷徑）
 portable = true                            # 可攜模式（.shun-portable 標記，零登錄檔）
