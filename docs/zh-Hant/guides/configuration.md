@@ -61,6 +61,7 @@ require-removable = true                   # 拒絕非可移除裝置
 [shell]
 timeline = "left"          # top（頂部橫排）| left（左側直排）
 log-level = "all"          # all（預設）| files | scripts | off
+log-order = "newest"      # newest（預設，最新在頂）| oldest（追加在尾部）
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
 
 [shell.theme]
