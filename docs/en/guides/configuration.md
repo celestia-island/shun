@@ -40,6 +40,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version only: extracted runtime folder
 
 [[package.metadata.shun.steps]]            # ordered wizard pipeline (optional)
+columns = 2             # optional mode-grid columns; defaults to one column per mode
 kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # per-step override: center | start (default from kind)
 

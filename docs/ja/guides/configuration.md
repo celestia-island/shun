@@ -39,6 +39,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version 専用：展開済みランタイムフォルダー
 
 [[package.metadata.shun.steps]]            # 順序付きウィザードパイプライン（任意）
+columns = 2              # 任意：モードグリッドの列数（既定はモードごとに 1 列）
 kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # ステップ単位の上書き：center | start（既定は kind 次第）
 

@@ -38,6 +38,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version 專用：解壓後的執行時目錄
 
 [[package.metadata.shun.steps]]            # 有序的精靈管線（可選）
+columns = 2              # 可選：模式網格欄數；預設每個模式一欄
 kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # 按步驟覆寫：center | start（預設由 kind 決定）
 

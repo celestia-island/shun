@@ -39,6 +39,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version: carpeta del runtime extraído
 
 [[package.metadata.shun.steps]]            # canalización ordenada del asistente (opcional)
+columns = 2              # columnas de la cuadrícula de modos (por defecto: una por modo)
 kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # anulación por paso: center | start (por kind por defecto)
 

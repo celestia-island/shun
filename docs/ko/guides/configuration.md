@@ -39,6 +39,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version 전용: 압축 해제된 런타임 폴더
 
 [[package.metadata.shun.steps]]            # 순서가 있는 마법사 파이프라인(선택)
+columns = 2              # 선택: 모드 그리드 열 수 (기본은 모드별 1열)
 kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # 단계별 재정의: center | start(기본은 kind에 따름)
 
