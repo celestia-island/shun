@@ -36,6 +36,8 @@ pub mod payload_online;
 // through the online pipeline, so they share the feature gate.
 #[cfg(feature = "online")]
 pub mod attachments;
+#[cfg(feature = "online")]
+pub mod license_sysl;
 pub mod targets;
 
 pub use error::ShunError;
