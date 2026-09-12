@@ -57,6 +57,11 @@ pub struct ShunConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentConfig>,
 
+    /// Bundle the Synthetic Source License (plus official translations)
+    /// from its own repository instead of vendoring license files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license_sysl: Option<LicenseSyslConfig>,
+
     /// MSIX packaging (Windows): identity, publisher and display strings
     /// for generating the AppxManifest and a signed-free deployment story
     /// (Store distribution signs the package for you).
@@ -630,6 +635,28 @@ pub struct AttachmentOnlineConfig {
     pub url: String,
 }
 
+/// The Synthetic Source License fetched from its official repository —
+/// one declaration bundles the license text for every requested locale,
+/// so wizards can show the agreement in the user's language without
+/// vendoring the translations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct LicenseSyslConfig {
+    /// GitHub repo carrying the license (default `celestia-island/sysl`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+
+    /// Branch or tag the documents live on (default `main`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+
+    /// Locales to bundle, mapped onto the sysl repo's i18n directories
+    /// (`zh-Hans` → `zhs`, `zh-Hant` → `zht`, `ja`/`ko`/`fr`/`ru`/`es`/
+    /// `de`/`pt`/`ar` direct). The root English text is always bundled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locales: Vec<String>,
+}
+
 /// An optional companion resource (an asset pack) declared beside the
 /// payload. Full builds carry the attachment inside the payload under its
 /// dest prefix; lite builds embed only this declaration, and the shell
@@ -902,6 +929,10 @@ struct ShunMetadataDraft {
     /// resources (asset packs) with an online source for lite builds.
     #[serde(default)]
     attachments: Option<Vec<AttachmentConfig>>,
+    /// `[package.metadata.shun.license-sysl]` — bundle the SySL license
+    /// and its official translations from the upstream repository.
+    #[serde(default)]
+    license_sysl: Option<LicenseSyslConfig>,
     /// License document (markdown), relative to the manifest.
     #[serde(default)]
     license: Option<String>,
@@ -956,6 +987,7 @@ impl ShunMetadataDraft {
             shell: self.shell,
             source: self.source,
             attachments: self.attachments.unwrap_or_default(),
+            license_sysl: self.license_sysl,
             license: self.license.map(PathBuf::from),
             license_locales: self
                 .license_locales
@@ -994,6 +1026,7 @@ mod tests {
             shell: None,
             source: None,
             attachments: Vec::new(),
+            license_sysl: None,
             license: None,
             license_locales: BTreeMap::new(),
             custom_steps: Vec::new(),

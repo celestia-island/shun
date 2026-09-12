@@ -29,9 +29,15 @@ fn sample() -> ShunConfig {
             }),
             language: Some("zh-Hans".into()),
             log_level: Some(shun::config::LogVerbosity::Scripts),
+            log_order: None,
         }),
         source: Some(SourceConfig::Online {
             url: "https://example.test/ShunDemo.shun".into(),
+        }),
+        license_sysl: Some(shun::config::LicenseSyslConfig {
+            repo: None,
+            branch: Some("main".into()),
+            locales: vec!["zh-Hans".into(), "ja".into()],
         }),
         attachments: vec![shun::config::AttachmentConfig {
             key: "models".into(),
