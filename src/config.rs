@@ -296,11 +296,24 @@ impl ShunConfig {
                     }
                     _ => None,
                 };
+                let columns = match step.kind {
+                    StepKind::Mode => match step.columns {
+                        Some(n @ 2..=4) => Some(n),
+                        Some(other) => {
+                            return Err(config_error(&format!(
+                                "mode step columns must be 2..=4, got {other}"
+                            )));
+                        }
+                        None => None,
+                    },
+                    _ => None,
+                };
                 Ok(ResolvedStep {
                     align: step.align.unwrap_or_else(|| step.kind.default_align()),
                     kind: step.kind,
                     title: step.title.unwrap_or_default(),
                     body: markdown,
+                    columns,
                 })
             })
             .collect()
@@ -313,6 +326,7 @@ fn bare_step(kind: StepKind) -> StepConfig {
         align: None,
         title: None,
         markdown: None,
+        columns: None,
     }
 }
 
@@ -322,6 +336,7 @@ fn custom_to_step(custom: &CustomStepConfig) -> StepConfig {
         align: None,
         title: Some(custom.title.clone()),
         markdown: Some(custom.markdown.clone()),
+        columns: None,
     }
 }
 
@@ -726,6 +741,12 @@ pub struct StepConfig {
     /// Markdown document relative to the config source (content steps).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub markdown: Option<String>,
+
+    /// Columns of the mode-selection grid (`mode` steps). Unspecified =
+    /// one column per declared mode, so two modes split the row evenly
+    /// instead of leaving empty slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<u8>,
 }
 
 /// Content alignment of a wizard pane.
@@ -763,6 +784,8 @@ pub struct ResolvedStep {
     pub title: String,
     /// Inlined markdown body (`None` for non-content steps).
     pub body: Option<String>,
+    /// Mode-grid columns (`mode` steps; `None` = one column per mode).
+    pub columns: Option<u8>,
 }
 
 /// The rendered pane behind a resolved step.
@@ -1386,6 +1409,7 @@ kind = "install"
             align: None,
             title: None,
             markdown: None,
+            columns: None,
         };
 
         // No install step.
@@ -1408,6 +1432,7 @@ kind = "install"
                 align: None,
                 title: None,
                 markdown: None,
+                columns: None,
             },
             bare(StepKind::Install),
         ]);

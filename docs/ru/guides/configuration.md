@@ -39,6 +39,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version: распакованная папка рантайма
 
 [[package.metadata.shun.steps]]            # упорядоченный конвейер мастера (опционально)
+columns = 2              # число колонок сетки режимов (по умолчанию — по одной на режим)
 kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # переопределение шага: center | start (по умолчанию от kind)
 

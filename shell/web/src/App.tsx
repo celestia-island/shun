@@ -48,6 +48,7 @@ interface ShellView {
   log_level?: LogLevel;
   flash: boolean;
   attachments: AttachmentView[];
+  steps: { kind: string; columns?: number | null }[];
 }
 
 interface AttachmentView {
@@ -116,6 +117,7 @@ export default defineComponent({
     // Optional attachments: declared ones not bundled in this build offer a
     // post-install download on the done pane.
     const attachments = ref<AttachmentView[]>([]);
+    const steps = ref<{ kind: string; columns?: number | null }[]>([]);
     const downloaded = ref<Set<string>>(new Set());
     const downloading = ref<string | null>(null);
 
@@ -185,6 +187,7 @@ export default defineComponent({
           }
           logLevel.value = view.log_level ?? "all";
           attachments.value = view.attachments;
+          steps.value = view.steps;
           return refreshDefaults();
         })
         .catch((err) => {
@@ -365,6 +368,8 @@ export default defineComponent({
 
     return () => {
       const strings$ = t();
+      const modeStep = steps.value.find((s) => s.kind === "mode");
+      const modeColumns = (modeStep as { columns?: number } | undefined)?.columns ?? modes.value.length;
       const modeItems = modes.value.map((id) => ({
         id,
         title: strings$[`mode.${id}.title`],
@@ -389,7 +394,7 @@ export default defineComponent({
             <HSelectionGrid
               items={modeItems}
               selectedId={mode.value}
-              columns={2}
+              columns={(modeColumns as 2 | 3 | 4) ?? 2}
               onSelect={(item: { id?: string | number | boolean }) => {
                 if (item.id === "local" || item.id === "portable") {
                   void selectMode(item.id);
