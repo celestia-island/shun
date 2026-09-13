@@ -24,6 +24,7 @@ local = true                               # 注册安装（ARP、卸载器、�
 portable = true                            # 便携模式（.shun-portable 标记，零注册表）
 portable-marker = ".shun-portable"          # 便携副本写入的标记文件名（应用检测自有标记时可覆盖）
 desktop-shortcut = "ask"                   # always | never | ask（向导复选框，默认勾选）
+start-menu-shortcut = "always"             # always | never | ask（默认 always，向导只询问桌面那份）
 deep-links = ["shundemo"]                  # 应用持有的 URL scheme（myapp://…）
 aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生成
 icon = "assets/icon.png"                   # 载荷内启动器图标（Linux 的 Icon=）
@@ -64,7 +65,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `logo` | path | — | 壳的 logo 资产（相对清单文件） |
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
-| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名 |
+| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` 策略 |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
 | `msix.logo-background` | 颜色 | `transparent` | 透明 MSIX 图标底下的底板色 |

@@ -151,6 +151,7 @@ fn bundle_for(install_dir: &Path, main_exe: &Path) -> Option<PathBuf> {
         portable_marker: crate::targets::install::PORTABLE_MARKER.to_string(),
         scope: crate::targets::install::InstallScope::User,
         desktop_shortcut: false,
+        start_menu_shortcut: false,
         verbs: Vec::new(),
         deep_links: Vec::new(),
         aumid: None,

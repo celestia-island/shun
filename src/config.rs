@@ -425,6 +425,13 @@ pub struct InstallConfig {
     #[serde(default)]
     pub desktop_shortcut: DesktopShortcutPolicy,
 
+    /// Start-menu-shortcut policy for local mode. Same values as
+    /// `desktop-shortcut`; the default is `always` — standard installs
+    /// have always carried the start-menu launcher, only the desktop
+    /// convenience copy is asked about.
+    #[serde(default = "start_menu_shortcut_default")]
+    pub start_menu_shortcut: ShortcutPolicy,
+
     /// Install scope: per-user (the default, no elevation anywhere) or
     /// machine-wide (Windows: HKLM, all-users shortcuts; the shell
     /// self-elevates), or a wizard question.
@@ -465,6 +472,7 @@ impl Default for InstallConfig {
             portable_marker: None,
             main_exe: None,
             desktop_shortcut: DesktopShortcutPolicy::Ask,
+            start_menu_shortcut: DesktopShortcutPolicy::Always,
             scope: ScopePolicy::User,
             verbs: Vec::new(),
             deep_links: Vec::new(),
@@ -486,6 +494,10 @@ pub enum DesktopShortcutPolicy {
     /// Never create it.
     Never,
 }
+
+/// The shortcut-creation policy — shared by the desktop and start-menu
+/// launchers (the same `always` / `never` / `ask` values).
+pub type ShortcutPolicy = DesktopShortcutPolicy;
 
 /// One context-menu verb offered on the app's launchers. The `target`
 /// tag picks what the verb invokes; `key` and `display` are shared by
@@ -533,6 +545,10 @@ pub struct FlashConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn start_menu_shortcut_default() -> DesktopShortcutPolicy {
+    DesktopShortcutPolicy::Always
 }
 
 /// Runtime shell UI knobs.
@@ -1222,6 +1238,7 @@ main-exe = "bin/shun-demo.exe"
 
 [package.metadata.shun.install]
 desktop-shortcut = "always"
+start-menu-shortcut = "never"
 aumid = "celestia-island.ShunDemo"
 icon = "assets/icon.png"
 deep-links = ["shundemo"]
@@ -1245,6 +1262,7 @@ arguments = "--safe"
             panic!("expected an install target");
         };
         assert_eq!(install.desktop_shortcut, DesktopShortcutPolicy::Always);
+        assert_eq!(install.start_menu_shortcut, DesktopShortcutPolicy::Never);
         assert_eq!(install.aumid.as_deref(), Some("celestia-island.ShunDemo"));
         assert_eq!(install.icon.as_deref(), Some(Path::new("assets/icon.png")));
         assert_eq!(install.deep_links, vec!["shundemo".to_string()]);
@@ -1283,6 +1301,11 @@ arguments = "--safe"
         assert_eq!(config.targets.len(), 1);
         assert!(
             matches!(&config.targets[0], TargetConfig::Install(install) if install.local && install.portable)
+        );
+        // The start-menu shortcut stays on by default (backward
+        // compatible); only the desktop one defaults to `ask`.
+        assert!(
+            matches!(&config.targets[0], TargetConfig::Install(install) if install.start_menu_shortcut == DesktopShortcutPolicy::Always)
         );
     }
 

@@ -25,6 +25,7 @@ local = true                               # 登録インストール（ARP、�
 portable = true                            # ポータブルモード（.shun-portable マーカー、レジストリ不使用）
 portable-marker = ".shun-portable"          # ポータブルコピーに書かれるマーカーファイル名（アプリが独自のマーカーを検出するなら上書き）
 desktop-shortcut = "ask"                   # always | never | ask（ウィザードのチェックボックス、既定でオン）
+start-menu-shortcut = "always"             # always | never | ask（既定は always、尋ねられるのはデスクトップの方）
 scope = "ask"                              # user（既定）| machine | ask
 deep-links = ["shundemo"]                  # アプリが保有する URL スキーム（myapp://…）
 

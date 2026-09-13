@@ -216,6 +216,7 @@ fn start_install(
     }
     let answers = shun::targets::install::WizardAnswers {
         desktop_shortcut: desktop.unwrap_or(true),
+        start_menu_shortcut: true,
         machine: machine.unwrap_or(false),
     };
     let ctx = state.install_context(&mode, &dir, answers)?;
@@ -371,6 +372,7 @@ fn run_headless(
     });
     let answers = shun::targets::install::WizardAnswers {
         desktop_shortcut: desktop.unwrap_or(true),
+        start_menu_shortcut: true,
         machine: machine.unwrap_or(false),
     };
     if let Some(install) = config.targets.iter().find_map(|t| match t {

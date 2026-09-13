@@ -599,6 +599,7 @@ impl FallbackApp {
             install,
             shun::targets::install::WizardAnswers {
                 desktop_shortcut: self.desktop_shortcut,
+                start_menu_shortcut: true,
                 machine: self.machine,
             },
         );
@@ -625,6 +626,7 @@ impl FallbackApp {
             self.dir.trim(),
             shun::targets::install::WizardAnswers {
                 desktop_shortcut: self.desktop_shortcut,
+                start_menu_shortcut: true,
                 machine: self.machine,
             },
             uninstalling,

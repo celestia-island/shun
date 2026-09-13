@@ -25,6 +25,7 @@ local = true                               # installation enregistrée (ARP, dé
 portable = true                            # mode portable (marqueur .shun-portable, sans registre)
 portable-marker = ".shun-portable"          # nom du fichier marqueur écrit pour les copies portables (à redéfinir si l'application détecte le sien)
 desktop-shortcut = "ask"                   # always | never | ask (case de l'assistant, cochée par défaut)
+start-menu-shortcut = "always"             # always | never | ask (par défaut : always — la demande concerne le raccourci du bureau)
 scope = "ask"                              # user (par défaut) | machine | ask
 deep-links = ["shundemo"]                  # schémas d'URL détenus par l'app (myapp://…)
 

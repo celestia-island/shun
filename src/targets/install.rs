@@ -72,16 +72,19 @@ pub enum InstallScope {
 pub struct WizardAnswers {
     /// The desktop-shortcut checkbox (`ask` policy; default checked).
     pub desktop_shortcut: bool,
+    /// The start-menu-shortcut checkbox (`ask` policy; default checked).
+    pub start_menu_shortcut: bool,
     /// The machine-scope choice (`ask` policy; default per-user).
     pub machine: bool,
 }
 
 impl WizardAnswers {
-    /// The default-checked answers (headless runs): desktop shortcut on,
-    /// per-user scope.
+    /// The default-checked answers (headless runs): desktop and
+    /// start-menu shortcuts on, per-user scope.
     pub fn defaults() -> Self {
         Self {
             desktop_shortcut: true,
+            start_menu_shortcut: true,
             machine: false,
         }
     }
@@ -149,6 +152,9 @@ pub struct InstallContext {
     /// Create a desktop shortcut beside the start-menu one (local mode).
     pub desktop_shortcut: bool,
 
+    /// Create the start-menu launcher (local mode).
+    pub start_menu_shortcut: bool,
+
     /// Context-menu verbs to register (local mode).
     pub verbs: Vec<VerbSpec>,
 
@@ -171,7 +177,8 @@ pub struct InstallContext {
 impl InstallContext {
     /// A context with the identity fields set and every registration
     /// knob at its no-op default (no desktop shortcut, no verbs, no
-    /// icon; the flow fills `estimated_size_kb`). Chain
+    /// icon; the start-menu launcher is on — the historical behavior for
+    /// hand-built contexts; the flow fills `estimated_size_kb`). Chain
     /// [`Self::apply_config`] to resolve the config-declared knobs.
     pub fn new(product: String, version: String, install_dir: PathBuf, portable: bool) -> Self {
         Self {
@@ -184,6 +191,7 @@ impl InstallContext {
             portable_marker: PORTABLE_MARKER.to_string(),
             scope: InstallScope::User,
             desktop_shortcut: false,
+            start_menu_shortcut: true,
             verbs: Vec::new(),
             deep_links: Vec::new(),
             aumid: None,
@@ -193,16 +201,21 @@ impl InstallContext {
     }
 
     /// Applies the install-target configuration knobs onto a context:
-    /// the desktop-shortcut and install-scope policies resolved against
-    /// the wizard answers (`ask` consults them; headless runs pass
-    /// [`WizardAnswers::defaults`]), the context-menu verbs, the
-    /// deep-link schemes, the AUMID, and the launcher icon.
+    /// the desktop- and start-menu-shortcut and install-scope policies
+    /// resolved against the wizard answers (`ask` consults them;
+    /// headless runs pass [`WizardAnswers::defaults`]), the context-menu
+    /// verbs, the deep-link schemes, the AUMID, and the launcher icon.
     pub fn apply_config(&mut self, install: &InstallConfig, answers: WizardAnswers) {
         use crate::config::{DesktopShortcutPolicy, ScopePolicy};
         self.desktop_shortcut = match install.desktop_shortcut {
             DesktopShortcutPolicy::Always => true,
             DesktopShortcutPolicy::Never => false,
             DesktopShortcutPolicy::Ask => answers.desktop_shortcut,
+        };
+        self.start_menu_shortcut = match install.start_menu_shortcut {
+            DesktopShortcutPolicy::Always => true,
+            DesktopShortcutPolicy::Never => false,
+            DesktopShortcutPolicy::Ask => answers.start_menu_shortcut,
         };
         self.scope = match install.scope {
             ScopePolicy::User => InstallScope::User,
@@ -466,18 +479,23 @@ impl Registration for WindowsRegistration {
         key.set_value("NoRepair", &1u32)?;
         key.set_value("EstimatedSize", &ctx.estimated_size_kb)?;
 
-        // Shortcuts: always the start-menu one, plus the desktop one when
-        // the context resolved `desktop-shortcut`. Both carry the AUMID
-        // (taskbar grouping / pinning identity). Machine scope writes the
+        // Shortcuts: the start-menu one when the context resolved
+        // `start-menu-shortcut`, plus the desktop one when the context
+        // resolved `desktop-shortcut`. Both carry the AUMID (taskbar
+        // grouping / pinning identity). Machine scope writes the
         // all-users Start Menu and the public desktop.
         if let Some(main_exe) = &ctx.main_exe {
             let target = ctx.install_dir.join(main_exe);
             let stem = shortcut_stem(&ctx.product);
 
-            let programs = start_menu_dir(ctx.scope)?;
-            std::fs::create_dir_all(&programs)?;
-            let start_menu_link = programs.join(format!("{stem}.lnk"));
-            write_shortcut(ctx, &target, &start_menu_link, on_event)?;
+            let mut start_menu_link = None;
+            if ctx.start_menu_shortcut {
+                let programs = start_menu_dir(ctx.scope)?;
+                std::fs::create_dir_all(&programs)?;
+                let link = programs.join(format!("{stem}.lnk"));
+                write_shortcut(ctx, &target, &link, on_event)?;
+                start_menu_link = Some(link);
+            }
 
             if ctx.desktop_shortcut {
                 // Best-effort: AV/EDR policies commonly deny `.lnk`
@@ -500,7 +518,10 @@ impl Registration for WindowsRegistration {
             // Tell the shell the shortcut surfaces changed — without
             // this, a freshly written Start-menu .lnk only appears once
             // Explorer re-indexes on its own schedule.
-            let mut changed = vec![start_menu_link];
+            let mut changed = Vec::new();
+            if let Some(link) = start_menu_link {
+                changed.push(link);
+            }
             if ctx.desktop_shortcut {
                 if let Ok(desktop) = desktop_dir(ctx.scope) {
                     changed.push(desktop.join(format!("{stem}.lnk")));
@@ -880,6 +901,7 @@ mod tests {
 
         let mut install = InstallConfig {
             desktop_shortcut: DesktopShortcutPolicy::Never,
+            start_menu_shortcut: DesktopShortcutPolicy::Never,
             aumid: Some("explicit.aumid".into()),
             verbs: vec![VerbConfig::DataFolder {
                 key: "open-data".into(),
@@ -891,10 +913,15 @@ mod tests {
             &install,
             WizardAnswers {
                 desktop_shortcut: true,
+                start_menu_shortcut: true,
                 machine: false,
             },
         );
         assert!(!ctx.desktop_shortcut, "never wins over the wizard answer");
+        assert!(
+            !ctx.start_menu_shortcut,
+            "never wins over the wizard answer"
+        );
         assert_eq!(ctx.aumid.as_deref(), Some("explicit.aumid"));
         assert_eq!(ctx.verbs.len(), 1);
         assert_eq!(ctx.verbs[0].target, VerbTarget::DataFolder);
@@ -918,10 +945,47 @@ mod tests {
             &install,
             WizardAnswers {
                 desktop_shortcut: false,
+                start_menu_shortcut: false,
                 machine: false,
             },
         );
         assert!(!ctx.desktop_shortcut, "ask follows the wizard answer");
+
+        // The start-menu shortcut mirrors the desktop one: always wins,
+        // ask follows the wizard answer.
+        install.start_menu_shortcut = DesktopShortcutPolicy::Always;
+        ctx.apply_config(
+            &install,
+            WizardAnswers {
+                desktop_shortcut: false,
+                start_menu_shortcut: false,
+                machine: false,
+            },
+        );
+        assert!(
+            ctx.start_menu_shortcut,
+            "always wins over the wizard answer"
+        );
+
+        install.start_menu_shortcut = DesktopShortcutPolicy::Ask;
+        ctx.apply_config(
+            &install,
+            WizardAnswers {
+                desktop_shortcut: false,
+                start_menu_shortcut: true,
+                machine: false,
+            },
+        );
+        assert!(ctx.start_menu_shortcut, "ask follows the wizard answer");
+        ctx.apply_config(
+            &install,
+            WizardAnswers {
+                desktop_shortcut: false,
+                start_menu_shortcut: false,
+                machine: false,
+            },
+        );
+        assert!(!ctx.start_menu_shortcut, "ask follows the wizard answer");
 
         // Without an explicit AUMID the default is generated from the
         // identity.
@@ -930,6 +994,7 @@ mod tests {
             &install,
             WizardAnswers {
                 desktop_shortcut: true,
+                start_menu_shortcut: true,
                 machine: false,
             },
         );
@@ -941,6 +1006,7 @@ mod tests {
             &install,
             WizardAnswers {
                 desktop_shortcut: true,
+                start_menu_shortcut: true,
                 machine: false,
             },
         );

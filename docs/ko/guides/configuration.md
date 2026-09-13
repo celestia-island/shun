@@ -25,6 +25,7 @@ local = true                               # 등록 설치 (ARP, 제거 프로�
 portable = true                            # 휴대용 모드 (.shun-portable 마커, 레지스트리 미사용)
 portable-marker = ".shun-portable"          # 휴대용 복사본에 기록되는 마커 파일 이름 (앱이 자체 마커를 감지하면 재정의)
 desktop-shortcut = "ask"                   # always | never | ask(마법사 체크박스, 기본 선택)
+start-menu-shortcut = "always"             # always | never | ask(기본값 always, 묻는 것은 데스크톱 쪽)
 scope = "ask"                              # user(기본값) | machine | ask
 deep-links = ["shundemo"]                  # 앱이 소유한 URL 스킴(myapp://…)
 

@@ -24,6 +24,7 @@ local = true                               # 註冊安裝（ARP、解除安裝�
 portable = true                            # 可攜模式（.shun-portable 標記，零登錄檔）
 portable-marker = ".shun-portable"          # 可攜副本寫入的標記檔名（應用程式偵測自有標記時可覆寫）
 desktop-shortcut = "ask"                   # always | never | ask（精靈核取方塊，預設勾選）
+start-menu-shortcut = "always"             # always | never | ask（預設 always，精靈只詢問桌面那份）
 scope = "ask"                              # user（預設）| machine | ask
 deep-links = ["shundemo"]                  # 應用程式持有的 URL scheme（myapp://…）
 
