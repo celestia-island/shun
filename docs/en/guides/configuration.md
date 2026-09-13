@@ -25,6 +25,7 @@ local = true                               # registered install (ARP, uninstalle
 portable = true                            # portable mode (.shun-portable marker, no registry)
 portable-marker = ".shun-portable"          # marker file name for portable copies (override when the app detects its own)
 desktop-shortcut = "ask"                   # always | never | ask (wizard checkbox, default checked)
+start-menu-shortcut = "always"             # always | never | ask (default: always — the desktop one is the asked-about convenience)
 deep-links = ["shundemo"]                  # URL schemes the app owns (myapp://...)
 aumid = "celestia-island.ShunDemo"         # default: generated from publisher + product
 icon = "assets/icon.png"                   # payload-relative launcher icon (Linux Icon=)
@@ -65,7 +66,7 @@ require-removable = true                   # refuse non-removable devices
 | `logo` | path | — | Shell logo asset (relative to the manifest) |
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
-| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` policy, `verbs`, `deep-links`, `aumid`, `icon` |
+| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` policies, `verbs`, `deep-links`, `aumid`, `icon` |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `webview2` | table | `skip` | Windows runtime strategy |
 | `msix.logo-background` | color | `transparent` | Plate flattened under a transparent MSIX logo |

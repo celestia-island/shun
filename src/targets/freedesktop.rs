@@ -232,6 +232,7 @@ mod tests {
             portable_marker: crate::targets::install::PORTABLE_MARKER.to_string(),
             scope: crate::targets::install::InstallScope::User,
             desktop_shortcut: false,
+            start_menu_shortcut: false,
             verbs: vec![
                 VerbSpec {
                     key: "open-data".into(),

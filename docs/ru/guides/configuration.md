@@ -25,6 +25,7 @@ local = true                               # регистрируемая уст
 portable = true                            # портативный режим (маркер .shun-portable, без реестра)
 portable-marker = ".shun-portable"          # имя файла-маркера для переносимых копий (переопределите, если приложение ищет свой)
 desktop-shortcut = "ask"                   # always | never | ask (флажок мастера, по умолчанию включён)
+start-menu-shortcut = "always"             # always | never | ask (по умолчанию always — спрашивают про ярлык на рабочем столе)
 scope = "ask"                              # user (по умолчанию) | machine | ask
 deep-links = ["shundemo"]                  # принадлежащие приложению схемы URL (myapp://…)
 
