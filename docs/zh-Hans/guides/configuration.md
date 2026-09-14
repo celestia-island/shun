@@ -19,6 +19,13 @@ dest = "models"
 [package.metadata.shun.attachments.online]
 url = "https://example.test/models.shun"   # 可选附件资源（精简版在安装时下载）
 
+[package.metadata.shun.update]             # 更新监视（可选）
+sources = [                                # 镜像根 URL，按顺序探测
+  "https://mirror.example.test/shun-demo",
+  "https://releases.example.test/shun-demo",
+]
+files = ["latest", "app-setup.exe"]        # 解析到获胜源之下
+
 [package.metadata.shun.install]            # install target（默认）
 local = true                               # 注册安装（ARP、卸载器、快捷方式）
 portable = true                            # 便携模式（.shun-portable 标记，零注册表）
@@ -67,6 +74,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
 | `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` 策略 |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
+| `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
 | `msix.logo-background` | 颜色 | `transparent` | 透明 MSIX 图标底下的底板色 |
 | `flash` | table | — | 声明烧写目标 |
@@ -113,6 +121,27 @@ url = "https://github.com/<org>/<repo>/releases/latest/download/ShunDemo.shun"
 在线安装器以单次流水线完成 **下载 → 解压 → 校验**：字节到达即按清单校验，
 进度事件同时上报下载与解压两个阶段（多层进度）。把 `url` 指向发布源
 （GitHub Releases 或任意 HTTP 主机），发布新包即完成安装器更新。
+
+## 更新监视
+
+`[package.metadata.shun.update]`（独立文档中使用 `update` 键）声明壳
+探测更新用的镜像源，以及解析到镜像之下的文件：
+
+```toml
+[update]
+sources = [                                # 镜像根 URL，按顺序尝试
+  "https://mirror.example.test/shun-demo",
+  "https://releases.example.test/shun-demo",
+]
+files = ["latest", "app-setup.exe"]
+```
+
+运行时壳调用 `shun::update::resolve`：对每个源做一次短探测（GET 第一个
+文件，10 秒超时），第一个应答 `200` 的源赢得整轮解析，声明的每个文件
+都解析到获胜源之下的 URL（`<source>/<file>`）。不可达或非 200 的源以
+警告记录跳过；全部无应答则什么都不解析。随后壳自行拉取解析出的 URL
+——`latest` 版本标记以文本读取（`fetch_text`），产物下载走在线 payload
+流水线（`OnlinePayload`：下载 → 解压 → 校验）。
 
 ## 许可与自定义步骤
 

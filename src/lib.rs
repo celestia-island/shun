@@ -39,5 +39,10 @@ pub mod attachments;
 #[cfg(feature = "online")]
 pub mod license_sysl;
 pub mod targets;
+// Update watch: mirror sources probed in order, with the declared files
+// resolved under the first reachable one. Probes and fetches ride the
+// same optional `ureq` dependency as the online payload source.
+#[cfg(feature = "online")]
+pub mod update;
 
 pub use error::ShunError;
