@@ -470,7 +470,14 @@ impl Registration for WindowsRegistration {
             key.set_value("Publisher", publisher)?;
         }
         key.set_value("InstallLocation", &ctx.install_dir.as_os_str())?;
-        key.set_value("DisplayIcon", &uninstaller.as_os_str())?;
+        // DisplayIcon on the application executable (not the icon-less
+        // uninstaller) so the Apps list shows the product icon.
+        let display_icon = ctx
+            .main_exe
+            .as_ref()
+            .map(|exe| ctx.install_dir.join(exe))
+            .unwrap_or_else(|| uninstaller.clone());
+        key.set_value("DisplayIcon", &display_icon.as_os_str())?;
         key.set_value(
             "UninstallString",
             &format!("\"{}\" /uninstall", uninstaller.display()),
