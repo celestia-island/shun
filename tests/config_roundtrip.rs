@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use shun::config::{
     CustomStepConfig, FlashConfig, InstallConfig, ProductIdentity, ShunConfig, SigningConfig,
-    SourceConfig, TargetConfig, ThemeConfig, ThemeMode, Webview2Strategy,
+    SourceConfig, TargetConfig, ThemeConfig, ThemeMode, UpdateWatchConfig, Webview2Strategy,
 };
 
 fn sample() -> ShunConfig {
@@ -33,6 +33,13 @@ fn sample() -> ShunConfig {
         }),
         source: Some(SourceConfig::Online {
             url: "https://example.test/ShunDemo.shun".into(),
+        }),
+        update: Some(UpdateWatchConfig {
+            sources: vec![
+                "https://mirror.example.test/shun-demo/".into(),
+                "https://releases.example.test/shun-demo".into(),
+            ],
+            files: vec!["latest".into(), "app-setup.exe".into()],
         }),
         license_sysl: Some(shun::config::LicenseSyslConfig {
             repo: None,
@@ -82,6 +89,20 @@ fn config_roundtrips_through_json() {
     let json = serde_json::to_string(&cfg).unwrap();
     let back: ShunConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(cfg, back);
+}
+
+#[test]
+fn update_watch_table_survives_the_roundtrip() {
+    let json = serde_json::to_value(sample()).unwrap();
+    assert_eq!(
+        json["update"]["sources"][0],
+        "https://mirror.example.test/shun-demo/"
+    );
+    assert_eq!(json["update"]["files"][1], "app-setup.exe");
+
+    let json = serde_json::to_string(&sample()).unwrap();
+    let back: ShunConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.update, sample().update);
 }
 
 #[test]

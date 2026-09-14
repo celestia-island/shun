@@ -20,6 +20,13 @@ dest = "models"
 [package.metadata.shun.attachments.online]
 url = "https://example.test/models.shun"   # optional companion resource (lite builds download it at install time)
 
+[package.metadata.shun.update]             # update watch (optional)
+sources = [                                # mirror base URLs, probed in order
+  "https://mirror.example.test/shun-demo",
+  "https://releases.example.test/shun-demo",
+]
+files = ["latest", "app-setup.exe"]        # resolved under the winning source
+
 [package.metadata.shun.install]            # install target (default)
 local = true                               # registered install (ARP, uninstaller, shortcuts)
 portable = true                            # portable mode (.shun-portable marker, no registry)
@@ -68,6 +75,7 @@ require-removable = true                   # refuse non-removable devices
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
 | `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` policies, `verbs`, `deep-links`, `aumid`, `icon` |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
+| `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
 | `msix.logo-background` | color | `transparent` | Plate flattened under a transparent MSIX logo |
 | `flash` | table | — | Declares the flash target |
@@ -163,6 +171,31 @@ bytes are verified against the manifest as they arrive, and progress events
 report the download and extract phases concurrently (multi-layer progress).
 Point `url` at your release feed (GitHub Releases or any HTTP host) and the
 installer is updated by simply publishing a new package.
+
+## Update watch
+
+`[package.metadata.shun.update]` (or the `update` key in a standalone
+document) declares the mirror sources the shell probes for updates, and
+the files resolved under them:
+
+```toml
+[update]
+sources = [                                # mirror base URLs, tried in order
+  "https://mirror.example.test/shun-demo",
+  "https://releases.example.test/shun-demo",
+]
+files = ["latest", "app-setup.exe"]
+```
+
+At runtime the shell calls `shun::update::resolve`: every source gets a
+short probe (a plain GET of the first file, 10 s timeout), the first
+source that answers `200` wins for the whole pass, and every declared
+file resolves to a URL under the winning base (`<source>/<file>`).
+Unreachable or non-200 sources are skipped as warnings; when no source
+answers, nothing resolves. The shell then fetches the resolved URLs
+itself — a `latest` version marker as text (`fetch_text`), artifact
+downloads through the online payload pipeline (`OnlinePayload`:
+download → extract → verify).
 
 ## License and custom steps
 

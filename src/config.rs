@@ -50,6 +50,13 @@ pub struct ShunConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceConfig>,
 
+    /// Update watch: mirror sources probed in order plus the files
+    /// resolved under the first reachable one (see [`crate::update`]).
+    /// The shell fetches the resolved URLs itself — a `latest` version
+    /// marker as text, new artifacts through the online payload pipeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<UpdateWatchConfig>,
+
     /// Optional companion resources (asset packs) declared beside the
     /// payload. Full builds carry them inside the payload under their dest
     /// prefix; lite builds embed only the declarations, and the shell
@@ -657,6 +664,19 @@ pub enum SourceConfig {
     },
 }
 
+/// Update watch: mirror sources probed in order, and the files resolved
+/// under the first reachable one (see the [`crate::update`] module).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct UpdateWatchConfig {
+    /// Mirror base URLs, tried in order. The first source that answers a
+    /// probe wins for the whole pass.
+    pub sources: Vec<String>,
+    /// File names resolved under the winning source (e.g. `latest`,
+    /// `app-setup.exe`).
+    pub files: Vec<String>,
+}
+
 /// Where an optional attachment is fetched from at install time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -964,6 +984,10 @@ struct ShunMetadataDraft {
     /// `[package.metadata.shun.source]` — embedded (default) or online.
     #[serde(default)]
     source: Option<SourceConfig>,
+    /// `[package.metadata.shun.update]` — update-watch mirrors and the
+    /// files resolved under the first reachable one.
+    #[serde(default)]
+    update: Option<UpdateWatchConfig>,
     /// `[[package.metadata.shun.attachments]]` — optional companion
     /// resources (asset packs) with an online source for lite builds.
     #[serde(default)]
@@ -1025,6 +1049,7 @@ impl ShunMetadataDraft {
             targets,
             shell: self.shell,
             source: self.source,
+            update: self.update,
             attachments: self.attachments.unwrap_or_default(),
             license_sysl: self.license_sysl,
             license: self.license.map(PathBuf::from),
@@ -1064,6 +1089,7 @@ mod tests {
             ],
             shell: None,
             source: None,
+            update: None,
             attachments: Vec::new(),
             license_sysl: None,
             license: None,
@@ -1179,6 +1205,45 @@ url = "https://example.test/models.shun"
         assert_eq!(attachment.dest, Path::new("models"));
         assert_eq!(attachment.size, Some(123));
         assert_eq!(attachment.online.url, "https://example.test/models.shun");
+    }
+
+    #[test]
+    fn update_watch_parses_from_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "watch-demo"
+version = "0.1.0"
+
+[package.metadata.shun]
+product = "WatchDemo"
+
+[package.metadata.shun.update]
+sources = [
+    "https://mirror.example.test/watch-demo/",
+    "https://releases.example.test/watch-demo",
+]
+files = ["latest", "app-setup.exe"]
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        let update = config.update.expect("update table parsed");
+        assert_eq!(
+            update.sources,
+            vec![
+                "https://mirror.example.test/watch-demo/".to_string(),
+                "https://releases.example.test/watch-demo".to_string(),
+            ]
+        );
+        assert_eq!(
+            update.files,
+            vec!["latest".to_string(), "app-setup.exe".to_string()]
+        );
     }
 
     #[test]
