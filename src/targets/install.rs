@@ -804,7 +804,12 @@ impl Registration for WindowsRegistration {
 /// directly.
 #[cfg(windows)]
 fn schedule_self_delete(exe: &Path) {
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    // CREATE_NO_WINDOW — NOT DETACHED_PROCESS: for a console-subsystem
+    // child, DETACHED means "don't inherit the parent console", and
+    // Windows then allocates a fresh VISIBLE console for cmd.exe — the
+    // ping flash users report after every uninstall. NO_WINDOW keeps the
+    // child console-less entirely.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     use std::os::windows::process::CommandExt;
 
     if std::env::current_exe()
@@ -815,7 +820,7 @@ fn schedule_self_delete(exe: &Path) {
         let _ = std::process::Command::new("cmd")
             .arg("/C")
             .raw_arg(script)
-            .creation_flags(DETACHED_PROCESS)
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     } else {
         let _ = std::fs::remove_file(exe);
