@@ -32,6 +32,7 @@ portable = true                            # 便携模式（.shun-portable 标�
 portable-marker = ".shun-portable"          # 便携副本写入的标记文件名（应用检测自有标记时可覆盖）
 desktop-shortcut = "ask"                   # always | never | ask（向导复选框，默认勾选）
 start-menu-shortcut = "always"             # always | never | ask（默认 always，向导只询问桌面那份）
+launch-after-install = "ask"               # always | never | ask（完成页复选框，默认勾选；无该选项的壳可固定取值）
 deep-links = ["shundemo"]                  # 应用持有的 URL scheme（myapp://…）
 aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生成
 icon = "assets/icon.png"                   # 载荷内启动器图标（Linux 的 Icon=）
@@ -72,12 +73,24 @@ require-removable = true                   # 拒绝非可移动设备
 | `logo` | path | — | 壳的 logo 资产（相对清单文件） |
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
-| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` 策略 |
+| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略 |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
 | `msix.logo-background` | 颜色 | `transparent` | 透明 MSIX 图标底下的底板色 |
 | `flash` | table | — | 声明烧写目标 |
+
+## 安装后启动
+
+`install.launch-after-install` 决定完成页的惯例：`ask`（默认）跟随向导复选
+框——即 NSIS 的「安装完成后立即启动」开关，无头运行时视为勾选；没有该选项
+的壳可用 `always` / `never` 固定取值。
+
+安装流程本身从不启动任何东西，由壳在安装成功后调用
+`shun::targets::install::launch`：它在安装目录内以游离方式启动配置的
+`main-exe`（不等待，安装器进程随即可以退出）；当
+`InstallContext::launch_after_install` 解析为 false、或未声明入口点时，
+调用是空操作。入口点已声明但文件缺失时，照常返回 `MissingEntry` 错误。
 
 ## WebView2 策略
 

@@ -76,16 +76,20 @@ pub struct WizardAnswers {
     pub start_menu_shortcut: bool,
     /// The machine-scope choice (`ask` policy; default per-user).
     pub machine: bool,
+    /// The launch-after-install checkbox (`ask` policy; default checked —
+    /// the NSIS done-page convention).
+    pub launch_after_install: bool,
 }
 
 impl WizardAnswers {
     /// The default-checked answers (headless runs): desktop and
-    /// start-menu shortcuts on, per-user scope.
+    /// start-menu shortcuts on, per-user scope, launch after install on.
     pub fn defaults() -> Self {
         Self {
             desktop_shortcut: true,
             start_menu_shortcut: true,
             machine: false,
+            launch_after_install: true,
         }
     }
 }
@@ -155,6 +159,10 @@ pub struct InstallContext {
     /// Create the start-menu launcher (local mode).
     pub start_menu_shortcut: bool,
 
+    /// Launch the installed application once the install succeeded — see
+    /// [`launch`]. Resolved from `install.launch-after-install`.
+    pub launch_after_install: bool,
+
     /// Context-menu verbs to register (local mode).
     pub verbs: Vec<VerbSpec>,
 
@@ -176,10 +184,11 @@ pub struct InstallContext {
 
 impl InstallContext {
     /// A context with the identity fields set and every registration
-    /// knob at its no-op default (no desktop shortcut, no verbs, no
-    /// icon; the start-menu launcher is on — the historical behavior for
-    /// hand-built contexts; the flow fills `estimated_size_kb`). Chain
-    /// [`Self::apply_config`] to resolve the config-declared knobs.
+    /// knob at its no-op default (no desktop shortcut, no launch after
+    /// install, no verbs, no icon; the start-menu launcher is on — the
+    /// historical behavior for hand-built contexts; the flow fills
+    /// `estimated_size_kb`). Chain [`Self::apply_config`] to resolve the
+    /// config-declared knobs.
     pub fn new(product: String, version: String, install_dir: PathBuf, portable: bool) -> Self {
         Self {
             product,
@@ -192,6 +201,7 @@ impl InstallContext {
             scope: InstallScope::User,
             desktop_shortcut: false,
             start_menu_shortcut: true,
+            launch_after_install: false,
             verbs: Vec::new(),
             deep_links: Vec::new(),
             aumid: None,
@@ -201,10 +211,11 @@ impl InstallContext {
     }
 
     /// Applies the install-target configuration knobs onto a context:
-    /// the desktop- and start-menu-shortcut and install-scope policies
-    /// resolved against the wizard answers (`ask` consults them;
-    /// headless runs pass [`WizardAnswers::defaults`]), the context-menu
-    /// verbs, the deep-link schemes, the AUMID, and the launcher icon.
+    /// the desktop- and start-menu-shortcut, launch-after-install and
+    /// install-scope policies resolved against the wizard answers (`ask`
+    /// consults them; headless runs pass [`WizardAnswers::defaults`]),
+    /// the context-menu verbs, the deep-link schemes, the AUMID, and the
+    /// launcher icon.
     pub fn apply_config(&mut self, install: &InstallConfig, answers: WizardAnswers) {
         use crate::config::{DesktopShortcutPolicy, ScopePolicy};
         self.desktop_shortcut = match install.desktop_shortcut {
@@ -216,6 +227,11 @@ impl InstallContext {
             DesktopShortcutPolicy::Always => true,
             DesktopShortcutPolicy::Never => false,
             DesktopShortcutPolicy::Ask => answers.start_menu_shortcut,
+        };
+        self.launch_after_install = match install.launch_after_install {
+            DesktopShortcutPolicy::Always => true,
+            DesktopShortcutPolicy::Never => false,
+            DesktopShortcutPolicy::Ask => answers.launch_after_install,
         };
         self.scope = match install.scope {
             ScopePolicy::User => InstallScope::User,
@@ -374,6 +390,27 @@ pub fn uninstall(ctx: &InstallContext, registration: &dyn Registration) -> Resul
     }
 
     let _ = std::fs::remove_dir(&ctx.install_dir);
+    Ok(())
+}
+
+/// Launches the installed application (the configured `main_exe` inside
+/// the install dir), detached — the installer process may exit right
+/// after. No-op when `ctx.launch_after_install` resolved false, and when
+/// no entry point is declared at all.
+pub fn launch(ctx: &InstallContext) -> Result<(), ShunError> {
+    if !ctx.launch_after_install {
+        return Ok(());
+    }
+    let Some(main_exe) = &ctx.main_exe else {
+        return Ok(());
+    };
+    let exe = ctx.install_dir.join(main_exe);
+    if !exe.is_file() {
+        return Err(ShunError::MissingEntry(exe));
+    }
+    std::process::Command::new(&exe)
+        .spawn()
+        .map_err(ShunError::Io)?;
     Ok(())
 }
 
@@ -910,6 +947,10 @@ mod tests {
             false,
         );
         ctx.publisher = Some("celestia-island".into());
+        assert!(
+            !ctx.launch_after_install,
+            "the baseline context launches nothing"
+        );
 
         let mut install = InstallConfig {
             desktop_shortcut: DesktopShortcutPolicy::Never,
@@ -927,6 +968,7 @@ mod tests {
                 desktop_shortcut: true,
                 start_menu_shortcut: true,
                 machine: false,
+                launch_after_install: true,
             },
         );
         assert!(!ctx.desktop_shortcut, "never wins over the wizard answer");
@@ -959,6 +1001,7 @@ mod tests {
                 desktop_shortcut: false,
                 start_menu_shortcut: false,
                 machine: false,
+                launch_after_install: true,
             },
         );
         assert!(!ctx.desktop_shortcut, "ask follows the wizard answer");
@@ -972,6 +1015,7 @@ mod tests {
                 desktop_shortcut: false,
                 start_menu_shortcut: false,
                 machine: false,
+                launch_after_install: true,
             },
         );
         assert!(
@@ -986,6 +1030,7 @@ mod tests {
                 desktop_shortcut: false,
                 start_menu_shortcut: true,
                 machine: false,
+                launch_after_install: true,
             },
         );
         assert!(ctx.start_menu_shortcut, "ask follows the wizard answer");
@@ -995,9 +1040,64 @@ mod tests {
                 desktop_shortcut: false,
                 start_menu_shortcut: false,
                 machine: false,
+                launch_after_install: true,
             },
         );
         assert!(!ctx.start_menu_shortcut, "ask follows the wizard answer");
+
+        // The launch-after-install policy mirrors the shortcut ones:
+        // `always` / `never` pin it, `ask` follows the wizard answer.
+        install.launch_after_install = DesktopShortcutPolicy::Always;
+        ctx.apply_config(
+            &install,
+            WizardAnswers {
+                desktop_shortcut: true,
+                start_menu_shortcut: true,
+                machine: false,
+                launch_after_install: false,
+            },
+        );
+        assert!(
+            ctx.launch_after_install,
+            "always wins over the wizard answer"
+        );
+
+        install.launch_after_install = DesktopShortcutPolicy::Never;
+        ctx.apply_config(
+            &install,
+            WizardAnswers {
+                desktop_shortcut: true,
+                start_menu_shortcut: true,
+                machine: false,
+                launch_after_install: true,
+            },
+        );
+        assert!(
+            !ctx.launch_after_install,
+            "never wins over the wizard answer"
+        );
+
+        install.launch_after_install = DesktopShortcutPolicy::Ask;
+        ctx.apply_config(
+            &install,
+            WizardAnswers {
+                desktop_shortcut: true,
+                start_menu_shortcut: true,
+                machine: false,
+                launch_after_install: true,
+            },
+        );
+        assert!(ctx.launch_after_install, "ask follows the wizard answer");
+        ctx.apply_config(
+            &install,
+            WizardAnswers {
+                desktop_shortcut: true,
+                start_menu_shortcut: true,
+                machine: false,
+                launch_after_install: false,
+            },
+        );
+        assert!(!ctx.launch_after_install, "ask follows the wizard answer");
 
         // Without an explicit AUMID the default is generated from the
         // identity.
@@ -1008,6 +1108,7 @@ mod tests {
                 desktop_shortcut: true,
                 start_menu_shortcut: true,
                 machine: false,
+                launch_after_install: true,
             },
         );
         assert_eq!(ctx.aumid.as_deref(), Some("celestia-island.Shun-Demo"));
@@ -1020,6 +1121,7 @@ mod tests {
                 desktop_shortcut: true,
                 start_menu_shortcut: true,
                 machine: false,
+                launch_after_install: true,
             },
         );
         assert_eq!(

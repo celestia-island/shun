@@ -152,6 +152,7 @@ fn bundle_for(install_dir: &Path, main_exe: &Path) -> Option<PathBuf> {
         scope: crate::targets::install::InstallScope::User,
         desktop_shortcut: false,
         start_menu_shortcut: false,
+        launch_after_install: false,
         verbs: Vec::new(),
         deep_links: Vec::new(),
         aumid: None,

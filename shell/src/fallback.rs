@@ -601,6 +601,10 @@ impl FallbackApp {
                 desktop_shortcut: self.desktop_shortcut,
                 start_menu_shortcut: true,
                 machine: self.machine,
+                // No done-page launch toggle in the demo shell yet: the
+                // answer is the default-checked one (nothing calls
+                // `shun::targets::install::launch` here).
+                launch_after_install: true,
             },
         );
         Ok(ctx)
@@ -628,6 +632,10 @@ impl FallbackApp {
                 desktop_shortcut: self.desktop_shortcut,
                 start_menu_shortcut: true,
                 machine: self.machine,
+                // No done-page launch toggle in the demo shell yet: the
+                // answer is the default-checked one (nothing calls
+                // `shun::targets::install::launch` here).
+                launch_after_install: true,
             },
             uninstalling,
         ) {

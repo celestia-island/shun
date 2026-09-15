@@ -343,9 +343,11 @@ mod registration {
             string("InstallLocation"),
             install_dir.as_os_str().to_string_lossy(),
         );
+        // DisplayIcon targets the application executable (the uninstaller
+        // carries no icon) — the ARP entry renders the product icon.
         assert_eq!(
             string("DisplayIcon"),
-            install_dir.join("uninstall.exe").display().to_string()
+            install_dir.join("bin/shun-demo.exe").display().to_string()
         );
         let uninstall_string = string("UninstallString");
         assert!(
