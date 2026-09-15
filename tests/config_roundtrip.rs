@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use shun::config::{
-    CustomStepConfig, FlashConfig, InstallConfig, ProductIdentity, ShunConfig, SigningConfig,
-    SourceConfig, TargetConfig, ThemeConfig, ThemeMode, UpdateWatchConfig, Webview2Strategy,
+    CustomStepConfig, FlashConfig, InstallConfig, ProductIdentity, ShortcutPolicy, ShunConfig,
+    SigningConfig, SourceConfig, TargetConfig, ThemeConfig, ThemeMode, UpdateWatchConfig,
+    Webview2Strategy,
 };
 
 fn sample() -> ShunConfig {
@@ -18,7 +19,12 @@ fn sample() -> ShunConfig {
             path: "WebView2Runtime".into(),
         }),
         targets: vec![
-            TargetConfig::Install(InstallConfig::default()),
+            TargetConfig::Install(InstallConfig {
+                // A pinned (non-default) policy, so the roundtrip actually
+                // carries the key — `ask` is the default.
+                launch_after_install: ShortcutPolicy::Always,
+                ..InstallConfig::default()
+            }),
             TargetConfig::Flash(FlashConfig::default()),
         ],
         shell: Some(shun::config::ShellUiConfig {
@@ -129,6 +135,16 @@ fn install_modes_default_to_enabled() {
     let json = serde_json::to_value(sample()).unwrap();
     assert_eq!(json["targets"][0]["local"], true);
     assert_eq!(json["targets"][0]["portable"], true);
+}
+
+#[test]
+fn launch_after_install_survives_the_roundtrip() {
+    let json = serde_json::to_value(sample()).unwrap();
+    assert_eq!(json["targets"][0]["launch-after-install"], "always");
+
+    let json = serde_json::to_string(&sample()).unwrap();
+    let back: ShunConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.targets[0], sample().targets[0]);
 }
 
 #[test]

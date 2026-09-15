@@ -233,6 +233,7 @@ mod tests {
             scope: crate::targets::install::InstallScope::User,
             desktop_shortcut: false,
             start_menu_shortcut: false,
+            launch_after_install: false,
             verbs: vec![
                 VerbSpec {
                     key: "open-data".into(),

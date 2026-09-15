@@ -218,6 +218,10 @@ fn start_install(
         desktop_shortcut: desktop.unwrap_or(true),
         start_menu_shortcut: true,
         machine: machine.unwrap_or(false),
+        // No done-page launch toggle in the demo shell yet: the answer is
+        // the default-checked one, and nothing calls
+        // `shun::targets::install::launch` here yet.
+        launch_after_install: true,
     };
     let ctx = state.install_context(&mode, &dir, answers)?;
 
@@ -374,6 +378,9 @@ fn run_headless(
         desktop_shortcut: desktop.unwrap_or(true),
         start_menu_shortcut: true,
         machine: machine.unwrap_or(false),
+        // No done-page launch toggle in the demo shell yet (the answer is
+        // the default-checked one; nothing calls `launch` here).
+        launch_after_install: true,
     };
     if let Some(install) = config.targets.iter().find_map(|t| match t {
         TargetConfig::Install(install) => Some(install),

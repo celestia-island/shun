@@ -33,6 +33,7 @@ portable = true                            # portable mode (.shun-portable marke
 portable-marker = ".shun-portable"          # marker file name for portable copies (override when the app detects its own)
 desktop-shortcut = "ask"                   # always | never | ask (wizard checkbox, default checked)
 start-menu-shortcut = "always"             # always | never | ask (default: always — the desktop one is the asked-about convenience)
+launch-after-install = "ask"               # always | never | ask (done-page checkbox, default checked; pin it for shells without one)
 deep-links = ["shundemo"]                  # URL schemes the app owns (myapp://...)
 aumid = "celestia-island.ShunDemo"         # default: generated from publisher + product
 icon = "assets/icon.png"                   # payload-relative launcher icon (Linux Icon=)
@@ -73,12 +74,27 @@ require-removable = true                   # refuse non-removable devices
 | `logo` | path | — | Shell logo asset (relative to the manifest) |
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
-| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` policies, `verbs`, `deep-links`, `aumid`, `icon` |
+| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `verbs`, `deep-links`, `aumid`, `icon` |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
 | `msix.logo-background` | color | `transparent` | Plate flattened under a transparent MSIX logo |
 | `flash` | table | — | Declares the flash target |
+
+## Launch after install
+
+`install.launch-after-install` resolves the done-page convention: `ask`
+(the default) follows the wizard's checkbox — the NSIS "launch after
+install" toggle, checked in headless runs — while `always` / `never` pin
+it for shells that offer no such toggle.
+
+The install flow itself never launches anything. The shell calls
+`shun::targets::install::launch` once the run succeeded: it spawns the
+configured `main-exe` inside the install directory detached — no waiting,
+so the installer process can exit right after — and is a no-op when the
+resolved `InstallContext::launch_after_install` is false or no entry
+point is declared. A declared but missing entry point surfaces as the
+usual `MissingEntry` error.
 
 ## WebView2 strategies
 

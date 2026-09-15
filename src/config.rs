@@ -439,6 +439,12 @@ pub struct InstallConfig {
     #[serde(default = "start_menu_shortcut_default")]
     pub start_menu_shortcut: ShortcutPolicy,
 
+    /// Launch the installed application after a successful install.
+    /// `ask` (default) consults the wizard answer; shells without a
+    /// done-page checkbox may pin it to `always`/`never`.
+    #[serde(default)]
+    pub launch_after_install: ShortcutPolicy,
+
     /// Install scope: per-user (the default, no elevation anywhere) or
     /// machine-wide (Windows: HKLM, all-users shortcuts; the shell
     /// self-elevates), or a wizard question.
@@ -480,6 +486,7 @@ impl Default for InstallConfig {
             main_exe: None,
             desktop_shortcut: DesktopShortcutPolicy::Ask,
             start_menu_shortcut: DesktopShortcutPolicy::Always,
+            launch_after_install: ShortcutPolicy::default(),
             scope: ScopePolicy::User,
             verbs: Vec::new(),
             deep_links: Vec::new(),
@@ -1304,6 +1311,7 @@ main-exe = "bin/shun-demo.exe"
 [package.metadata.shun.install]
 desktop-shortcut = "always"
 start-menu-shortcut = "never"
+launch-after-install = "never"
 aumid = "celestia-island.ShunDemo"
 icon = "assets/icon.png"
 deep-links = ["shundemo"]
@@ -1328,6 +1336,7 @@ arguments = "--safe"
         };
         assert_eq!(install.desktop_shortcut, DesktopShortcutPolicy::Always);
         assert_eq!(install.start_menu_shortcut, DesktopShortcutPolicy::Never);
+        assert_eq!(install.launch_after_install, DesktopShortcutPolicy::Never);
         assert_eq!(install.aumid.as_deref(), Some("celestia-island.ShunDemo"));
         assert_eq!(install.icon.as_deref(), Some(Path::new("assets/icon.png")));
         assert_eq!(install.deep_links, vec!["shundemo".to_string()]);
@@ -1371,6 +1380,10 @@ arguments = "--safe"
         // compatible); only the desktop one defaults to `ask`.
         assert!(
             matches!(&config.targets[0], TargetConfig::Install(install) if install.start_menu_shortcut == DesktopShortcutPolicy::Always)
+        );
+        // The launch-after-install policy defaults to the wizard question.
+        assert!(
+            matches!(&config.targets[0], TargetConfig::Install(install) if install.launch_after_install == DesktopShortcutPolicy::Ask)
         );
     }
 
