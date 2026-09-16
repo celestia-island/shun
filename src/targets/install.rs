@@ -519,8 +519,9 @@ impl Registration for WindowsRegistration {
             "UninstallString",
             &format!("\"{}\" /uninstall", uninstaller.display()),
         )?;
-        key.set_value("NoModify", &1u32)?;
-        key.set_value("NoRepair", &1u32)?;
+        // ModifyPath: 修改 re-opens the delivery wizard so the user can
+        // repair (re-extract over the existing install) or reconfigure.
+        key.set_value("ModifyPath", &format!("\"{}\"", uninstaller.display()))?;
         key.set_value("EstimatedSize", &ctx.estimated_size_kb)?;
 
         // Shortcuts: the start-menu one when the context resolved
