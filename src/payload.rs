@@ -109,7 +109,41 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
         builder.finish()?;
     }
 
-    Ok(zstd::stream::encode_all(&tar_bytes[..], 19)?)
+    encode_tar(tar_bytes)
+}
+
+/// Compress a packed tar with zstd.
+///
+/// Level and worker count are environment-tunable so payload-heavy build
+/// hosts can trade installer size for pack speed without a code change:
+/// `SHUN_ZSTD_LEVEL` (default 19), `SHUN_ZSTD_WORKERS` (default: one
+/// worker per CPU core; requires the `zstdmt` feature — with it disabled
+/// the encoder stays single-threaded).
+fn encode_tar(tar_bytes: Vec<u8>) -> Result<Vec<u8>, ShunError> {
+    let level = std::env::var("SHUN_ZSTD_LEVEL")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(19);
+    let workers = std::env::var("SHUN_ZSTD_WORKERS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .or_else(|| {
+            std::thread::available_parallelism()
+                .ok()
+                .map(|n| n.get() as u32)
+        })
+        .unwrap_or(1);
+
+    let mut encoder = zstd::stream::Encoder::new(Vec::new(), level)
+        .map_err(|e| ShunError::Config(format!("zstd encoder: {e}")))?;
+    encoder
+        .multithread(workers)
+        .map_err(|e| ShunError::Config(format!("zstd workers: {e}")))?;
+    std::io::copy(&mut tar_bytes.as_slice(), &mut encoder)
+        .map_err(|e| ShunError::Config(format!("zstd compress: {e}")))?;
+    encoder
+        .finish()
+        .map_err(|e| ShunError::Config(format!("zstd finish: {e}")))
 }
 
 /// Read-side of a shun payload: a manifest plus streamed extraction.
