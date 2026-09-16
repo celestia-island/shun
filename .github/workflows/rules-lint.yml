@@ -1,0 +1,23 @@
+# Lint this repository's rules tree.
+#
+# AGENTS.md here is injected into every agent that works inside this repository, so a
+# credential written in it reaches the same audience as the workspace-wide file, and a
+# skill whose frontmatter fails to parse is dropped from the catalog silently while its
+# pointer still claims the rules are loaded. `celestia-rules-lint` reports both.
+#
+# Public repository: AGENTS §8.2 allows GitHub-hosted jobs here, and this check is
+# sub-minute and stdlib-only, so hosting it keeps it off the self-hosted queue.
+
+name: Rules Lint
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  merge_group:
+    types: [checks_requested]
+
+jobs:
+  rules-lint:
+    uses: celestia-island/celestia-devtools/.github/workflows/rules-lint.yml@master
+    with:
+      runs-on: '["ubuntu-latest"]'
