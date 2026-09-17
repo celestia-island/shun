@@ -21,7 +21,7 @@ Windows 自己读回来（WScript.Shell COM 解析器、注册表、Windows SDK
 | 开始菜单 `.lnk` 能被 shell 解析 | **通过** —— `TargetPath` 与 `WorkingDirectory` 与安装上下文声明完全一致；`mslnk` 手工构造的合成 PIDL 可被正确解析 |
 | 非 ASCII 安装路径（中文目录） | **通过** —— `顺测试目录` 安装目录经 COM 解析器逐字节回读一致 |
 | `.lnk` 二进制对照 MS-SHLLINK | **通过** —— 头、CLSID `{00021401-…}`、标志位（target ID list + relative path + working dir + unicode）、无热键 |
-| ARP 条目（HKCU） | **通过** —— 完整 NSIS 等价字段集：DisplayName/Version/Publisher/InstallLocation/DisplayIcon/UninstallString（带引号）、`NoModify`/`NoRepair`/`EstimatedSize` 为 DWORD；EstimatedSize 与载荷清单总量一致 |
+| ARP 条目（HKCU） | **通过** —— 完整 NSIS 等价字段集：DisplayName/Version/Publisher/InstallLocation/DisplayIcon，加 `UninstallString`/`ModifyPath`/`RepairString`（均带引号，各自经 `/uninstall` 打开卸载器界面）与 `EstimatedSize` 为 DWORD；EstimatedSize 与载荷清单总量一致 |
 | 卸载清理 | **通过** —— ARP 键、快捷方式、载荷、卸载器、目录全部移除（`tests/install_local.rs` 覆盖，此处复核） |
 | MSIX 清单生成 | **通过** —— 标识、四段补零版本号、XML 转义字符串、正斜杠入口、runFullTrust |
 | MSIX 真实打包（MakeAppx 10.0.26100） | **通过** —— 合法 OPC zip，含 `[Content_Types].xml` + `AppxManifest.xml`；产出的 `dist/shundemo-0.1.0-x64.msix` **无签名块**（符合设计：商店分发代签，或需信任自签证书） |

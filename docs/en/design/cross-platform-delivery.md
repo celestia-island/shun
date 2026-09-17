@@ -25,7 +25,7 @@ our own output:
 | Start-menu `.lnk` resolves through the shell | **ok** — `TargetPath` and `WorkingDirectory` come back exactly as the install context declared; `mslnk`'s hand-built synthetic PIDL resolves correctly |
 | Non-ASCII install paths (中文目录) | **ok** — a `顺测试目录` install dir round-trips through the COM resolver byte-exact |
 | `.lnk` binary vs MS-SHLLINK | **ok** — header, CLSID `{00021401-…}`, flag set (target ID list + relative path + working dir + unicode), no hotkey |
-| ARP entry (HKCU) | **ok** — full NSIS-equivalent field set: DisplayName/Version/Publisher/InstallLocation/DisplayIcon/UninstallString (quoted), `NoModify`/`NoRepair`/`EstimatedSize` as DWORDs; EstimatedSize matches the payload manifest total |
+| ARP entry (HKCU) | **ok** — full NSIS-equivalent field set: DisplayName/Version/Publisher/InstallLocation/DisplayIcon plus `UninstallString`/`ModifyPath`/`RepairString` (all quoted, each invoking the uninstaller UI via `/uninstall`) and `EstimatedSize` as DWORD; EstimatedSize matches the payload manifest total |
 | Uninstall cleanup | **ok** — ARP key, shortcut, payload, uninstaller, directory all removed (covered by `tests/install_local.rs`, re-confirmed here) |
 | MSIX manifest generation | **ok** — identity, four-part padded version, XML-escaped strings, forward-slash entry point, runFullTrust |
 | MSIX real pack (MakeAppx 10.0.26100) | **ok** — valid OPC zip with `[Content_Types].xml` + `AppxManifest.xml`; the produced `dist/shundemo-0.1.0-x64.msix` carries **no signature block** (by design: Store distribution signs it, or a self-signed cert must be trusted) |
