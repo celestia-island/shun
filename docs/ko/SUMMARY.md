@@ -14,3 +14,5 @@
 # Design
 
 - [배포 모델](./design/delivery-model.md)
+- [설치 시점 스크립팅(초안)](./design/scripting.md)
+- [크로스 플랫폼 배포(초안)](./design/cross-platform-delivery.md)
