@@ -14,3 +14,5 @@
 # Design
 
 - [Модель доставки](./design/delivery-model.md)
+- [Скрипты времени установки (черновик)](./design/scripting.md)
+- [Кроссплатформенная доставка (черновик)](./design/cross-platform-delivery.md)

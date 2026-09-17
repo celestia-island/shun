@@ -89,7 +89,7 @@ Rust 错误，全链路跑通。该 feature 绝不进默认构建；CI 上只有
 | --- | --- | --- |
 | `system`（默认） | 无 | duckscript 的 `process` 命令可调用已安装的 python；不存在时优雅降级 |
 | `embeddable` | Windows embeddable 包（约 12–16 MB） | 官方 `python-3.x.x-embed-amd64.zip`：`python3xx.dll` + 标准库 zip + `._pth`，免管理员、零注册表 —— 与 fixed-version WebView2 同哲学的私有运行时 |
-| `standalone` | python-build-standalone（约 30–60 MB）） | [Astral 接管维护](https://astral.sh/blog/python-build-standalone)的发行版（`uv` 同款）；跨平台、版本锁定、功能完整；除非需要 pip/原生依赖，否则杀鸡用牛刀 |
+| `standalone` | python-build-standalone（约 30–60 MB） | [Astral 接管维护](https://astral.sh/blog/python-build-standalone)的发行版（`uv` 同款）；跨平台、版本锁定、功能完整；除非需要 pip/原生依赖，否则杀鸡用牛刀 |
 
 草案：
 

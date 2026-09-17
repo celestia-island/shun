@@ -101,9 +101,12 @@
 - 主要开发在 Windows 上进行；CI 的完整检查也是 windows runner
   （linux 只跑 lib）。shell crate 只在 Windows 编译其注册后端，
   Linux/macOS 侧代码靠 CI 的 ubuntu 任务与共享纯函数测试覆盖。
-- **文档八语言同步**：改了 `docs/en/` 下的指南 / README，同一改动要
-  同步到 es / fr / ja / ko / ru / zh-Hans / zh-Hant 对应文件；设计笔记
-  （design/）按惯例只维护 en + zh-Hans。
+- **文档八语言同步**：任何多语言内容都必须八语言齐全——指南、README、
+  设计笔记（design/）一视同仁。改了 `docs/en/` 下的内容，同一改动要
+  同步到 es / fr / ja / ko / ru / zh-Hans / zh-Hant 对应文件；某语言
+  缺失对应文件时，随首次触及它的 PR 一并补齐翻译，不允许长期停留在
+  单语言状态（2026-09-17 用户决策，废除「设计笔记只维护 en + zh-Hans」
+  的旧惯例）。
 - **跨仓依赖**：hikari 走 npm 发布包 `@celestia-island/hikari`，不要
   引入指向本机目录的 path 依赖。
 

@@ -14,3 +14,5 @@
 # Design
 
 - [Modelo de entrega](./design/delivery-model.md)
+- [Scripting en tiempo de instalación (borrador)](./design/scripting.md)
+- [Entrega multiplataforma (borrador)](./design/cross-platform-delivery.md)

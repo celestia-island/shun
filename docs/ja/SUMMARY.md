@@ -14,3 +14,5 @@
 # Design
 
 - [配布モデル](./design/delivery-model.md)
+- [インストール時スクリプティング（草案）](./design/scripting.md)
+- [クロスプラットフォーム配布（草案）](./design/cross-platform-delivery.md)
