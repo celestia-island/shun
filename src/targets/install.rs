@@ -519,9 +519,18 @@ impl Registration for WindowsRegistration {
             "UninstallString",
             &format!("\"{}\" /uninstall", uninstaller.display()),
         )?;
-        // ModifyPath: 修改 re-opens the delivery wizard so the user can
-        // repair (re-extract over the existing install) or reconfigure.
-        key.set_value("ModifyPath", &format!("\"{}\"", uninstaller.display()))?;
+        // Maintenance entries (修改/修复): both land on the uninstaller
+        // UI, which hosts the repair (re-extract) action beside the
+        // uninstall one — a bare launch of the wizard would read as a
+        // fresh install instead.
+        key.set_value(
+            "ModifyPath",
+            &format!("\"{}\" /uninstall", uninstaller.display()),
+        )?;
+        key.set_value(
+            "RepairString",
+            &format!("\"{}\" /uninstall", uninstaller.display()),
+        )?;
         key.set_value("EstimatedSize", &ctx.estimated_size_kb)?;
 
         // Shortcuts: the start-menu one when the context resolved

@@ -354,10 +354,13 @@ mod registration {
             uninstall_string.starts_with('"') && uninstall_string.ends_with("\" /uninstall"),
             "UninstallString must quote the path (spaces): {uninstall_string}"
         );
+        // The maintenance entries land on the same uninstaller UI — a
+        // bare wizard launch would read as a fresh install.
+        for name in ["ModifyPath", "RepairString"] {
+            assert_eq!(string(name), uninstall_string, "{name}");
+        }
 
         let dword = |name: &str| -> u32 { arp.get_value(name).unwrap() };
-        assert_eq!(dword("NoModify"), 1);
-        assert_eq!(dword("NoRepair"), 1);
         let payload = demo_payload();
         let expected_kb = (PayloadEntry::total_bytes(payload.manifest()) / 1024) as u32;
         assert_eq!(dword("EstimatedSize"), expected_kb);
