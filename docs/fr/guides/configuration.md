@@ -28,6 +28,7 @@ desktop-shortcut = "ask"                   # always | never | ask (case de l'ass
 start-menu-shortcut = "always"             # always | never | ask (par défaut : always — la demande concerne le raccourci du bureau)
 scope = "ask"                              # user (par défaut) | machine | ask
 deep-links = ["shundemo"]                  # schémas d'URL détenus par l'app (myapp://…)
+root-dir-folder = "ShunDemo"              # dossier inséré sous une racine de lecteur nue (D:\ → D:\ShunDemo ; défaut : nom du produit)
 
 [[package.metadata.shun.install.verbs]]    # verbes du menu contextuel (verbes de l'Explorateur / actions de bureau)
 key = "open-data"                          # id stable du verbe
@@ -55,6 +56,18 @@ kind = "install"                           # exactement une étape install
 [package.metadata.shun.flash]              # cible flash (optionnel)
 require-removable = true                   # refuser les périphériques non amovibles
 ```
+
+## Garde anti-racine
+
+Une cible qui est une racine de système de fichiers nue — un lecteur
+choisi comme `D:\` (`D:` et une racine de partage UNC
+`\\server\share` comptent aussi, tout comme le `/` POSIX) — ne reçoit
+jamais le payload directement : `InstallContext::apply_config` insère
+un niveau de dossier dessous, le nom du produit par défaut,
+personnalisable via `install.root-dir-folder`. Les assistants réécrivent
+la zone de chemin dès qu'une racine est choisie ou saisie, afin que la
+destination affichée soit toujours la réelle ; les exécutions headless
+`--dir=D:\` bénéficient de la même garde dans le flux.
 
 ## Interface du shell
 

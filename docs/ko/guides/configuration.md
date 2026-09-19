@@ -28,6 +28,7 @@ desktop-shortcut = "ask"                   # always | never | ask(마법사 체�
 start-menu-shortcut = "always"             # always | never | ask(기본값 always, 묻는 것은 데스크톱 쪽)
 scope = "ask"                              # user(기본값) | machine | ask
 deep-links = ["shundemo"]                  # 앱이 소유한 URL 스킴(myapp://…)
+root-dir-folder = "ShunDemo"              # 드라이브 루트 바로 아래에 자동으로 깔리는 폴더 (D:\ → D:\ShunDemo, 기본값은 제품명)
 
 [[package.metadata.shun.install.verbs]]    # 우클릭 동사(탐색기 동사 / 데스크톱 액션)
 key = "open-data"                          # 안정적인 동사 id
@@ -55,6 +56,16 @@ kind = "install"                           # install 단계는 정확히 하나
 [package.metadata.shun.flash]              # flash 타깃 (선택)
 require-removable = true                   # 이동식이 아닌 장치 거부
 ```
+
+## 드라이브 루트 보호
+
+드라이브 루트처럼 표형 파일 시스템 루트(`D:\` 외에 `D:`, UNC 공유 루트
+`\\server\share`, POSIX의 `/`도 동일)가 대상이면 페이로드가 곧바로
+루트에 놓이는 일은 없습니다. `InstallContext::apply_config`가 그 아래에
+폴더를 한 단계 깔며, 기본값은 제품명이고 `install.root-dir-folder`로
+바꿀 수 있습니다. 마법사는 루트가 선택·입력된 즉시 경로 상자를 다시
+쓰므로 표시되는 대상이 항상 실제 경로이며, 헤드리스 `--dir=D:\`
+실행 역시 플로우 안에서 같은 보호를 받습니다.
 
 ## 셸 UI
 

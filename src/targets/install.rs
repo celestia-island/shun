@@ -6,7 +6,8 @@
 //! shortcut. Portable mode writes a `.shun-portable` marker and skips all
 //! registration — the same convention wowsp apps detect for data placement.
 
-use std::path::{Path, PathBuf};
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 
 use walkdir::WalkDir;
 
@@ -262,7 +263,82 @@ impl InstallContext {
                 .unwrap_or_else(|| default_aumid(self.publisher.as_deref(), &self.product)),
         );
         self.icon = install.icon.clone();
+
+        // A bare filesystem root target (a picked drive like `D:\`) never
+        // receives the payload directly — pad one folder level under it
+        // (`root-dir-folder`, the product name by default).
+        self.install_dir = nest_root_dir(
+            &self.install_dir,
+            &self.product,
+            install.root_dir_folder.as_deref(),
+        );
     }
+}
+
+/// Whether a path addresses a bare filesystem root: a drive root (`D:\`,
+/// `D:`, verbatim `\\?\C:\`), a UNC share root (`\\server\share`), or the
+/// POSIX root (`/`). `.` and `..` segments resolve away first, so `D:\..`
+/// and `/foo/..` are roots too. A payload delivered onto such a target
+/// would scatter its files across the root (and an uninstall would try
+/// to sweep them), so [`nest_root_dir`] pads one folder level under it
+/// first.
+pub fn is_fs_root(dir: &Path) -> bool {
+    // A path is a bare root when it carries a prefix/root lead-in and no
+    // normal component survives resolving `.`/`..` against it (`..` above
+    // a root cannot climb out of it, hence the saturating subtraction).
+    let starts_at_root = matches!(
+        dir.components().next(),
+        Some(Component::Prefix(_)) | Some(Component::RootDir)
+    );
+    if !starts_at_root {
+        return false;
+    }
+    let mut depth = 0usize;
+    for component in dir.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::ParentDir => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// Pads one folder level under a bare filesystem root target (see
+/// [`is_fs_root`]); every other path passes through unchanged. The
+/// folder defaults to the product name and is customized via the
+/// install target's `root-dir-folder` knob.
+pub fn nest_root_dir(dir: &Path, product: &str, folder: Option<&str>) -> PathBuf {
+    if !is_fs_root(dir) {
+        return dir.to_path_buf();
+    }
+    let name = folder
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(product);
+    // Rebuild the bare root textually — `D:\..` pads as `D:\Wowsp`, not
+    // the odd `D:\..\Wowsp` — by keeping only the prefix/root lead-in.
+    let mut padded = dir
+        .components()
+        .take_while(|component| matches!(component, Component::Prefix(_) | Component::RootDir))
+        .fold(OsString::new(), |mut acc, component| {
+            acc.push(component.as_os_str());
+            acc
+        });
+    // Pin a separator unless the lead-in already ends with one. `D:\`
+    // does, but `D:` would swallow the folder as a drive-relative
+    // segment (`D:Wowsp`), and a UNC share root parsed without its
+    // trailing separator (`\\server\share`) would fuse onto the share
+    // name (`\\server\shareWowsp`).
+    let ends_with_sep = padded
+        .as_encoded_bytes()
+        .last()
+        .is_some_and(|byte| matches!(byte, b'/' | b'\\'));
+    if !ends_with_sep {
+        padded.push(if cfg!(windows) { "\\" } else { "/" });
+    }
+    padded.push(name);
+    PathBuf::from(padded)
 }
 
 /// Normalizes a configured deep-link scheme to a registry-safe URL
@@ -944,6 +1020,137 @@ mod tests {
         assert_eq!(default_aumid(Some("A & B Co"), "My App"), "A-B-Co.My-App");
         assert_eq!(default_aumid(None, "Widget"), "Widget");
         assert_eq!(default_aumid(Some("///"), "Widget"), "Widget");
+    }
+
+    #[test]
+    fn non_roots_pass_through_untouched() {
+        assert!(!is_fs_root(Path::new("")));
+        assert!(!is_fs_root(Path::new(".")));
+        assert!(!is_fs_root(Path::new("relative/dir")));
+        assert!(!is_fs_root(Path::new(r"D:\Apps")));
+        assert_eq!(
+            nest_root_dir(Path::new(r"D:\Apps"), "Wowsp", Some("Guard")),
+            PathBuf::from(r"D:\Apps")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_roots_nest_under_the_folder() {
+        for root in [
+            r"D:\",
+            "D:/",
+            "D:",
+            r"\\?\C:\",
+            r"\\server\share",
+            r"\\server\share\",
+        ] {
+            assert!(is_fs_root(Path::new(root)), "{root} is a filesystem root");
+        }
+        // The product name is the default folder; a customized one wins.
+        assert_eq!(
+            nest_root_dir(Path::new(r"D:\"), "Wowsp", None),
+            PathBuf::from(r"D:\Wowsp")
+        );
+        assert_eq!(
+            nest_root_dir(Path::new("D:/"), "Wowsp", None),
+            PathBuf::from("D:/Wowsp")
+        );
+        // A prefix-only path pins the separator — `D:Wowsp` would be
+        // drive-relative (the current directory of D:), not the root.
+        assert_eq!(
+            nest_root_dir(Path::new("D:"), "Wowsp", None),
+            PathBuf::from(r"D:\Wowsp")
+        );
+        assert_eq!(
+            nest_root_dir(Path::new(r"\\server\share"), "Wowsp", Some("Tools")),
+            PathBuf::from(r"\\server\share\Tools")
+        );
+        // Blank customizations fall back to the product name.
+        assert_eq!(
+            nest_root_dir(Path::new(r"D:\"), "Wowsp", Some("  ")),
+            PathBuf::from(r"D:\Wowsp")
+        );
+        // `..` segments resolve away: these are all bare drive roots,
+        // and the padding rebuilds the clean root text.
+        for root in [r"D:\..", r"D:\Apps\..", r"D:\Apps\..\.."] {
+            assert!(is_fs_root(Path::new(root)), "{root} resolves to a root");
+        }
+        assert_eq!(
+            nest_root_dir(Path::new(r"D:\Apps\.."), "Wowsp", None),
+            PathBuf::from(r"D:\Wowsp")
+        );
+        // Relative paths never count, whatever they resolve to.
+        for relative in ["..", "relative/.."] {
+            assert!(!is_fs_root(Path::new(relative)));
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_root_nests_under_the_folder() {
+        assert!(is_fs_root(Path::new("/")));
+        assert_eq!(
+            nest_root_dir(Path::new("/"), "Wowsp", None),
+            PathBuf::from("/Wowsp")
+        );
+        // `..` above the root cannot climb out of it.
+        assert!(is_fs_root(Path::new("/foo/..")));
+        assert_eq!(
+            nest_root_dir(Path::new("/foo/.."), "Wowsp", None),
+            PathBuf::from("/Wowsp")
+        );
+    }
+
+    #[test]
+    fn apply_config_pads_a_root_install_dir() {
+        let root = if cfg!(windows) {
+            PathBuf::from(r"D:\")
+        } else {
+            PathBuf::from("/")
+        };
+        let padded = if cfg!(windows) {
+            PathBuf::from(r"D:\Wowsp")
+        } else {
+            PathBuf::from("/Wowsp")
+        };
+
+        let mut ctx = InstallContext::new("Wowsp".into(), "1.0.0".into(), root.clone(), false);
+        ctx.apply_config(
+            &crate::config::InstallConfig::default(),
+            WizardAnswers::defaults(),
+        );
+        assert_eq!(ctx.install_dir, padded, "roots pad under the product name");
+
+        let mut ctx = InstallContext::new("Wowsp".into(), "1.0.0".into(), root, false);
+        ctx.apply_config(
+            &crate::config::InstallConfig {
+                root_dir_folder: Some("Wowsp CE".into()),
+                ..Default::default()
+            },
+            WizardAnswers::defaults(),
+        );
+        assert_eq!(
+            ctx.install_dir,
+            padded.parent().unwrap().join("Wowsp CE"),
+            "root-dir-folder customizes the padded name"
+        );
+
+        let mut ctx = InstallContext::new(
+            "Wowsp".into(),
+            "1.0.0".into(),
+            PathBuf::from(r"D:\Apps"),
+            false,
+        );
+        ctx.apply_config(
+            &crate::config::InstallConfig::default(),
+            WizardAnswers::defaults(),
+        );
+        assert_eq!(
+            ctx.install_dir,
+            PathBuf::from(r"D:\Apps"),
+            "non-root targets pass through"
+        );
     }
 
     #[test]

@@ -28,6 +28,7 @@ desktop-shortcut = "ask"                   # always | never | ask (casilla del a
 start-menu-shortcut = "always"             # always | never | ask (por defecto: always — el que se pregunta es el acceso del escritorio)
 scope = "ask"                              # user (por defecto) | machine | ask
 deep-links = ["shundemo"]                  # esquemas de URL propios de la app (myapp://…)
+root-dir-folder = "ShunDemo"              # carpeta añadida bajo una raíz de unidad desnuda (D:\ → D:\ShunDemo; por defecto: nombre del producto)
 
 [[package.metadata.shun.install.verbs]]    # verbos del menú contextual (verbos del Explorador / acciones de escritorio)
 key = "open-data"                          # id estable del verbo
@@ -55,6 +56,18 @@ kind = "install"                           # exactamente un paso install
 [package.metadata.shun.flash]              # destino flash (opcional)
 require-removable = true                   # rechazar dispositivos no extraíbles
 ```
+
+## Protección contra la raíz de unidad
+
+Un objetivo que sea una raíz de sistema de archivos desnuda — una
+unidad elegida como `D:\` (también cuentan `D:`, una raíz de recurso
+compartido UNC `\\server\share` y el `/` POSIX) — nunca recibe el
+payload directamente: `InstallContext::apply_config` añade un nivel de
+carpeta debajo, por defecto el nombre del producto, personalizable con
+`install.root-dir-folder`. Los asistentes reescriben el cuadro de ruta
+en cuanto se elige o teclea una raíz, de modo que el destino mostrado
+es siempre el real; las ejecuciones headless `--dir=D:\` reciben la
+misma protección dentro del flujo.
 
 ## Interfaz del shell
 

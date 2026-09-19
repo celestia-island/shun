@@ -240,10 +240,20 @@ export default defineComponent({
       });
     }
 
+    /** A bare filesystem root (a picked drive like `D:\`) never receives
+        the payload directly: pad one folder level under it
+        (`root-dir-folder`, the product name by default) and show the
+        final destination in the path box. */
+    async function applyNestRootDir(raw: string) {
+      const nested = (await invoke<DirDefaults>("nest_root_dir", { dir: raw })).dir;
+      if (nested !== raw.trim()) showNote(t()["note.root-nested"]);
+      dir.value = nested;
+    }
+
     async function browse() {
       if (running.value) return;
       const picked = await openDirectory(t()["dir.picker-title"]);
-      if (picked) dir.value = picked;
+      if (picked) await applyNestRootDir(picked);
     }
 
     function go(key: StepKey) {
@@ -307,6 +317,9 @@ export default defineComponent({
       termLines.value = [];
       overall.value = 0;
       try {
+        // A typed-in bare drive root pads its folder before anything
+        // runs — the box and the done page then show the real target.
+        await applyNestRootDir(dir.value);
         await invoke("start_install", {
           mode: mode.value,
           dir: dir.value.trim(),
@@ -344,6 +357,7 @@ export default defineComponent({
       if (running.value || !installed.value) return;
       running.value = true;
       try {
+        await applyNestRootDir(dir.value);
         await invoke("uninstall_demo", {
           mode: mode.value,
           dir: dir.value.trim(),
@@ -416,6 +430,12 @@ export default defineComponent({
                     spellcheck={false}
                     v-model={dir.value}
                     disabled={running.value}
+                    onBlur={() => {
+                      // A typed-in bare drive root pads its folder as
+                      // soon as the field is left, keeping the box
+                      // honest before the run starts.
+                      if (!running.value) void applyNestRootDir(dir.value);
+                    }}
                   />
                 </div>
                 <HButton variant="ghost" disabled={running.value} onClick={browse}>

@@ -195,6 +195,24 @@ fn default_dir(state: State<'_, AppState>, mode: String) -> DirDefaults {
     }
 }
 
+/// Pads one folder level under a bare filesystem root target (a picked
+/// drive like `D:\`) so the payload never lands directly on the root —
+/// the wizard rewrites the path box with the result the moment a root
+/// is picked or typed. The install itself re-applies the same guard.
+#[tauri::command]
+fn nest_root_dir(state: State<'_, AppState>, dir: String) -> DirDefaults {
+    let install = state.install_target().ok();
+    DirDefaults {
+        dir: shun::targets::install::nest_root_dir(
+            Path::new(dir.trim()),
+            &state.config.product.name,
+            install.as_ref().and_then(|i| i.root_dir_folder.as_deref()),
+        )
+        .to_string_lossy()
+        .into_owned(),
+    }
+}
+
 fn emit_progress(app: &tauri::AppHandle, event: &FlowEvent) {
     let _ = app.emit("install-progress", event);
 }
@@ -272,7 +290,15 @@ fn download_attachment(
     if dir.is_empty() {
         return Err("安装目录不能为空".into());
     }
-    shun::attachments::download(&attachment.config, Path::new(&dir), &mut |event| {
+    // Same root-drive guard as the install itself: an attachment never
+    // streams onto a bare drive root either.
+    let install = state.install_target().ok();
+    let dir = shun::targets::install::nest_root_dir(
+        Path::new(&dir),
+        &state.config.product.name,
+        install.as_ref().and_then(|i| i.root_dir_folder.as_deref()),
+    );
+    shun::attachments::download(&attachment.config, &dir, &mut |event| {
         emit_progress(&app, &event)
     })
     .map_err(|e| e.to_string())
@@ -551,6 +577,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             default_dir,
+            nest_root_dir,
             start_install,
             uninstall_demo,
             download_attachment
