@@ -58,6 +58,7 @@ const en: Strings = {
   "install.back": "Back",
   "note.installed": "Install complete",
   "note.uninstalled": "Uninstalled",
+  "note.root-nested": "Padded a folder under the drive root so nothing installs directly onto it.",
 };
 
 const zhHans: Strings = {
@@ -99,6 +100,7 @@ const zhHans: Strings = {
   "install.back": "上一步",
   "note.installed": "Install complete",
   "note.uninstalled": "已卸载",
+  "note.root-nested": "已自动垫一层文件夹，避免直接安装到盘符根目录。",
 };
 
 const zhHant: Strings = {
@@ -140,6 +142,7 @@ const zhHant: Strings = {
   "install.back": "上一步",
   "note.installed": "Install complete",
   "note.uninstalled": "已解除安裝",
+  "note.root-nested": "已自動墊一層資料夾，避免直接安裝到磁碟根目錄。",
 };
 
 const ja: Strings = {
@@ -181,6 +184,7 @@ const ja: Strings = {
   "install.back": "戻る",
   "note.installed": "Install complete",
   "note.uninstalled": "アンインストールしました",
+  "note.root-nested": "ドライブ直下に直接インストールしないよう、フォルダーを一段自動で追加しました。",
 };
 
 const ko: Strings = {
@@ -222,6 +226,7 @@ const ko: Strings = {
   "install.back": "이전",
   "note.installed": "Install complete",
   "note.uninstalled": "제거되었습니다",
+  "note.root-nested": "드라이브 루트에 직접 설치되지 않도록 폴더를 한 단계 자동으로 추가했습니다.",
 };
 
 const fr: Strings = {
@@ -263,6 +268,7 @@ const fr: Strings = {
   "install.back": "Retour",
   "note.installed": "Install complete",
   "note.uninstalled": "Désinstallé",
+  "note.root-nested": "Un dossier a été ajouté sous la racine du lecteur pour éviter toute installation directe à la racine.",
 };
 
 const ru: Strings = {
@@ -304,6 +310,7 @@ const ru: Strings = {
   "install.back": "Назад",
   "note.installed": "Install complete",
   "note.uninstalled": "Удалено",
+  "note.root-nested": "Под корнем диска добавлена папка, чтобы файлы не устанавливались прямо в корень.",
 };
 
 const es: Strings = {
@@ -345,6 +352,7 @@ const es: Strings = {
   "install.back": "Atrás",
   "note.installed": "Install complete",
   "note.uninstalled": "Desinstalado",
+  "note.root-nested": "Se añadió una carpeta bajo la raíz de la unidad para no instalar directamente en ella.",
 };
 
 const TABLE: Record<Locale, Strings> = {

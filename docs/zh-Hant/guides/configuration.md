@@ -27,6 +27,7 @@ desktop-shortcut = "ask"                   # always | never | ask（精靈核取
 start-menu-shortcut = "always"             # always | never | ask（預設 always，精靈只詢問桌面那份）
 scope = "ask"                              # user（預設）| machine | ask
 deep-links = ["shundemo"]                  # 應用程式持有的 URL scheme（myapp://…）
+root-dir-folder = "ShunDemo"              # 裸磁碟根目錄下自動墊的資料夾（D:\ → D:\ShunDemo；預設取產品名）
 
 [[package.metadata.shun.install.verbs]]    # 右鍵選單動詞（Explorer 動詞 / 桌面動作）
 key = "open-data"                          # 穩定的動詞 id
@@ -54,6 +55,15 @@ kind = "install"                           # 恰好一個 install 步驟
 [package.metadata.shun.flash]              # flash target（可選）
 require-removable = true                   # 拒絕非可移除裝置
 ```
+
+## 根磁碟保護
+
+裸檔案系統根目錄目標——選中的磁碟（如 `D:\`，`D:`、UNC 共享根
+`\\server\share`、POSIX 的 `/` 同理）——不會直接接收載荷：
+`InstallContext::apply_config` 會在其下自動墊一層資料夾，預設取
+產品名，可用 `install.root-dir-folder` 自訂。精靈視窗在選取或
+輸入根目錄的當下即改寫路徑框，顯示的永遠是真實目標；無介面的
+`--dir=D:\` 執行同樣在流程內受此保護。
 
 ## 殼 UI
 

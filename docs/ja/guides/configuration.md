@@ -28,6 +28,7 @@ desktop-shortcut = "ask"                   # always | never | ask（ウィザー
 start-menu-shortcut = "always"             # always | never | ask（既定は always、尋ねられるのはデスクトップの方）
 scope = "ask"                              # user（既定）| machine | ask
 deep-links = ["shundemo"]                  # アプリが保有する URL スキーム（myapp://…）
+root-dir-folder = "ShunDemo"              # ドライブルート直下に自動で挟むフォルダー（D:\ → D:\ShunDemo、既定は製品名）
 
 [[package.metadata.shun.install.verbs]]    # 右クリック動詞（Explorer 動詞 / デスクトップアクション）
 key = "open-data"                          # 安定した動詞 id
@@ -55,6 +56,17 @@ kind = "install"                           # install ステップはちょうど
 [package.metadata.shun.flash]              # flash ターゲット（任意）
 require-removable = true                   # リムーバブル以外のデバイスを拒否
 ```
+
+## ドライブルートの保護
+
+ドライブなど、裸のファイルシステムルート（`D:\` のほか `D:`、
+UNC 共有ルート `\\server\share`、POSIX の `/` も同様）が対象の
+場合、ペイロードが直接そこへ置かれることはありません：
+`InstallContext::apply_config` がその下に一段フォルダーを挟みます。
+既定は製品名で、`install.root-dir-folder` でカスタマイズできます。
+ウィザードはルートが選択・入力された時点でパス欄を書き換えるため、
+表示される宛先は常に実際のものです。ヘッドレスの `--dir=D:\` 実行
+もフロー内で同じ保護を受けます。
 
 ## シェル UI
 

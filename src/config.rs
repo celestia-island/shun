@@ -475,6 +475,12 @@ pub struct InstallConfig {
     /// (`Icon=` accepts absolute paths; macOS bundles use `Contents/Resources`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<PathBuf>,
+
+    /// Folder padded under a bare filesystem root target (a picked drive
+    /// like `D:\`, a UNC share root, the POSIX `/`) so the payload never
+    /// lands directly on the root. Defaults to the product name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_dir_folder: Option<String>,
 }
 
 impl Default for InstallConfig {
@@ -492,6 +498,7 @@ impl Default for InstallConfig {
             deep_links: Vec::new(),
             aumid: None,
             icon: None,
+            root_dir_folder: None,
         }
     }
 }
@@ -1667,6 +1674,45 @@ kind = "install"
             panic!("install target expected")
         };
         assert_eq!(install.scope, ScopePolicy::Machine);
+    }
+
+    #[test]
+    fn root_dir_folder_parses_from_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "root-guard-demo"
+version = "0.1.0"
+
+[package.metadata.shun.install]
+root-dir-folder = "Wowsp CE"
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        let TargetConfig::Install(install) = &config.targets[0] else {
+            panic!("install target expected")
+        };
+        assert_eq!(install.root_dir_folder.as_deref(), Some("Wowsp CE"));
+
+        // Absent = the product name is the padded folder (resolved by
+        // shun::targets::install::nest_root_dir, not stored here).
+        let dir2 = tempfile::tempdir().unwrap();
+        let plain = dir2.path().join("Cargo.toml");
+        std::fs::write(
+            &plain,
+            "[package]\nname = \"plain-app\"\nversion = \"1.2.3\"\n",
+        )
+        .unwrap();
+        let config = ShunConfig::from_cargo_manifest(&plain).unwrap();
+        assert!(
+            matches!(&config.targets[0], TargetConfig::Install(i) if i.root_dir_folder.is_none()),
+            "the knob stays optional"
+        );
     }
 
     #[test]

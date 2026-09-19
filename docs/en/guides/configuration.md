@@ -37,6 +37,7 @@ launch-after-install = "ask"               # always | never | ask (done-page che
 deep-links = ["shundemo"]                  # URL schemes the app owns (myapp://...)
 aumid = "celestia-island.ShunDemo"         # default: generated from publisher + product
 icon = "assets/icon.png"                   # payload-relative launcher icon (Linux Icon=)
+root-dir-folder = "ShunDemo"               # folder padded under a bare drive root (D:\ → D:\ShunDemo; default: product name)
 
 [[package.metadata.shun.install.verbs]]    # right-click verbs (Explorer verbs / desktop actions)
 key = "open-data"                          # stable verb id
@@ -74,7 +75,7 @@ require-removable = true                   # refuse non-removable devices
 | `logo` | path | — | Shell logo asset (relative to the manifest) |
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
-| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `verbs`, `deep-links`, `aumid`, `icon` |
+| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `verbs`, `deep-links`, `aumid`, `icon`, `root-dir-folder` (folder padded under a bare drive-root target, default: the product name) |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
@@ -95,6 +96,17 @@ so the installer process can exit right after — and is a no-op when the
 resolved `InstallContext::launch_after_install` is false or no entry
 point is declared. A declared but missing entry point surfaces as the
 usual `MissingEntry` error.
+
+## Root-drive guard
+
+A target that is a bare filesystem root — a picked drive like `D:\`
+(`D:` and a UNC share root `\\server\share` count too, as does the
+POSIX `/`) — never receives the payload directly:
+`InstallContext::apply_config` pads one folder level under it, the
+product name by default, customized via `install.root-dir-folder`. The
+wizard shells rewrite the path box the moment a root is picked or
+typed, so the displayed destination is always the real one; headless
+`--dir=D:\` runs get the same guard inside the flow.
 
 ## WebView2 strategies
 

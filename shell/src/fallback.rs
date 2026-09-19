@@ -20,7 +20,7 @@
 //! The banner states why the fallback is running — a missing-runtime
 //! install must say so, not silently degrade.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 
 use egui::{
@@ -465,6 +465,17 @@ fn default_dir(config: &ShunConfig, mode: &str) -> PathBuf {
     }
 }
 
+/// Pads one folder level under a bare filesystem root target (a picked
+/// drive like `D:\`) so the payload never lands directly on the root —
+/// the field and the done page show the real target (`install_context`
+/// re-applies the same guard).
+fn nested_dir(config: &ShunConfig, raw: &str) -> String {
+    let folder = install_of(config).and_then(|i| i.root_dir_folder.as_deref());
+    shun::targets::install::nest_root_dir(Path::new(raw.trim()), &config.product.name, folder)
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Whether the install target's desktop-shortcut policy is `ask` (the
 /// wizard checkbox); `always`/`never` never consult the user.
 fn desktop_policy_asks(config: &ShunConfig) -> bool {
@@ -613,6 +624,8 @@ impl FallbackApp {
     /// Spawns the worker thread driving the flow. The egui context is
     /// cloned in so the worker can request repaints as events arrive.
     fn spawn_worker(&mut self, ctx: &Context, uninstalling: bool) {
+        let raw = self.dir.clone();
+        self.dir = nested_dir(&self.config, &raw);
         let install_ctx = match self.install_context() {
             Ok(ctx) => ctx,
             Err(err) => {
@@ -1322,7 +1335,7 @@ impl FallbackApp {
                     .set_title(texts.browse_title)
                     .pick_folder()
                 {
-                    self.dir = picked.to_string_lossy().into_owned();
+                    self.dir = nested_dir(&self.config, &picked.to_string_lossy());
                 }
             }
         });

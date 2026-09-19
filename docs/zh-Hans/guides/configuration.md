@@ -36,6 +36,7 @@ launch-after-install = "ask"               # always | never | ask（完成页复
 deep-links = ["shundemo"]                  # 应用持有的 URL scheme（myapp://…）
 aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生成
 icon = "assets/icon.png"                   # 载荷内启动器图标（Linux 的 Icon=）
+root-dir-folder = "ShunDemo"               # 裸盘符根目录下自动垫的文件夹（D:\ → D:\ShunDemo；默认取产品名）
 
 [[package.metadata.shun.install.verbs]]    # 右键菜单动词（Explorer 动词 / Desktop Action）
 key = "open-data"                          # 稳定动词 id
@@ -73,7 +74,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `logo` | path | — | 壳的 logo 资产（相对清单文件） |
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
-| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略 |
+| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`root-dir-folder`（裸盘符根目录下垫的文件夹，默认取产品名） |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
@@ -91,6 +92,15 @@ require-removable = true                   # 拒绝非可移动设备
 `main-exe`（不等待，安装器进程随即可以退出）；当
 `InstallContext::launch_after_install` 解析为 false、或未声明入口点时，
 调用是空操作。入口点已声明但文件缺失时，照常返回 `MissingEntry` 错误。
+
+## 根盘保护
+
+裸文件系统根目录目标——选中的盘符（如 `D:\`，`D:`、UNC 共享根
+`\\server\share`、POSIX 的 `/` 同理）——不会直接接收载荷：
+`InstallContext::apply_config` 会在其下自动垫一层文件夹，默认取
+产品名，可用 `install.root-dir-folder` 自定义。向导弹窗在选中或
+输入根目录的当下即改写路径框，展示的始终是真实目标；无界面的
+`--dir=D:\` 运行同样在流程内受此保护。
 
 ## WebView2 策略
 
