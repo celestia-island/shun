@@ -292,16 +292,14 @@ fn download_attachment(
     }
     // Same root-drive guard as the install itself: an attachment never
     // streams onto a bare drive root either.
+    let install = state.install_target().ok();
     let dir = shun::targets::install::nest_root_dir(
         Path::new(&dir),
         &state.config.product.name,
-        state
-            .install_target()
-            .ok()
-            .and_then(|install| install.root_dir_folder.as_deref()),
+        install.as_ref().and_then(|i| i.root_dir_folder.as_deref()),
     );
     shun::attachments::download(&attachment.config, &dir, &mut |event| {
-        emit_progress(&app, event)
+        emit_progress(&app, &event)
     })
     .map_err(|e| e.to_string())
 }
