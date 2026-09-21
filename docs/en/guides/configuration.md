@@ -234,12 +234,30 @@ license = "docs/LICENSE.md"                # markdown, rendered on the license s
 zh-Hans = "docs/LICENSE.zh-Hans.md"
 ja = "docs/LICENSE.ja.md"
 
+[[licenses]]                               # additional license documents
+title = "Copyright notice"                 # optional heading above the body
+path = "NOTICE.md"                         # markdown, relative to the manifest
+[licenses.locale-paths]                    # per-locale overrides for this document
+zh-Hans = "NOTICE.zh-Hans.md"
+
 [[custom-steps]]                           # inject a markdown content step
 key = "whats-new"
 after = "license"
 title = "What's New"
 markdown = "docs/whats-new.md"
 ```
+
+`license` + `license-locales` are the single-document sugar; the
+`licenses` array of tables declares further documents, each with an
+optional `title` and its own `locale-paths`. Both combine: the sugar
+document comes first, then the array in declaration order. A matching
+locale path (`license-locales` or `locale-paths`) wins over the base
+document. The license step shows one document at a time — with a
+prev/next pager when several resolve — and the single accept checkbox
+covers all of them. In the resolved JSON each document travels under
+`licenses` (title + body); the legacy `body` string concatenates every
+body joined by a divider line, so renderers that only read `body` keep
+showing the whole agreement.
 
 The UI ships eight locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`,
 `ru`, `es`) with default texts; `shell.language = "auto"` follows the

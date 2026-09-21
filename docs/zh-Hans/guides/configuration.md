@@ -175,12 +175,27 @@ license = "docs/LICENSE.md"                # markdown，渲染于许可步骤
 zh-Hans = "docs/LICENSE.zh-Hans.md"
 ja = "docs/LICENSE.ja.md"
 
+[[licenses]]                               # 追加许可文档
+title = "Copyright notice"                 # 可选：正文上方的标题
+path = "NOTICE.md"                         # markdown，相对清单文件
+[licenses.locale-paths]                    # 该文档的分语言覆盖
+zh-Hans = "NOTICE.zh-Hans.md"
+
 [[custom-steps]]                           # 注入 markdown 内容步骤
 key = "whats-new"
 after = "license"
 title = "What's New"
 markdown = "docs/whats-new.md"
 ```
+
+`license` + `license-locales` 是单文档简写；表格数组 `licenses` 声明
+更多许可文档，每份可带可选 `title` 与自己的 `locale-paths`。两者可以
+同时使用：简写文档排在最前，数组按声明顺序依次排列。匹配当前语言的
+路径（`license-locales` 或 `locale-paths`）优先于基础文档。许可步骤
+一次显示一份文档，多份时以「上一份/下一份」翻页；唯一的同意复选框
+覆盖全部文档。解析后的 JSON 中每份文档存于 `licenses`（title + body），
+而旧的 `body` 字符串把所有正文用分隔线拼接，只读 `body` 的渲染器也能
+完整展示整个协议。
 
 界面内置八种语言的默认文案（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
 `ru`、`es`）；`shell.language = "auto"` 跟随系统，固定语言可直接指定，

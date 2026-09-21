@@ -109,12 +109,27 @@ license = "docs/LICENSE.md"                # markdown，渲染於授權步驟
 zh-Hant = "docs/LICENSE.zh-Hant.md"
 ja = "docs/LICENSE.ja.md"
 
+[[licenses]]                               # 追加授權文件
+title = "Copyright notice"                 # 可選：正文上方的標題
+path = "NOTICE.md"                         # markdown，相對清單檔案
+[licenses.locale-paths]                    # 該文件的分語言覆寫
+zh-Hant = "NOTICE.zh-Hant.md"
+
 [[custom-steps]]                           # 注入 markdown 內容步驟
 key = "whats-new"
 after = "license"
 title = "What's New"
 markdown = "docs/whats-new.md"
 ```
+
+`license` + `license-locales` 是單文件簡寫；表格陣列 `licenses` 宣告
+更多授權文件，每份可帶可選 `title` 與自己的 `locale-paths`。兩者可以
+同時使用：簡寫文件排在最前，陣列按宣告順序依次排列。符合目前語言的
+路徑（`license-locales` 或 `locale-paths`）優先於基礎文件。授權步驟
+一次顯示一份文件，多份時以「上一份/下一份」翻頁；唯一的同意核取方塊
+涵蓋全部文件。解析後的 JSON 中每份文件存於 `licenses`（title + body），
+而舊的 `body` 字串把所有正文用分隔線串接，只讀 `body` 的渲染器也能
+完整呈現整份協議。
 
 介面內建八種語言的預設文案（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
 `ru`、`es`）；`shell.language = "auto"` 跟隨系統，固定語言可直接指定，

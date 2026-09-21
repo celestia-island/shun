@@ -63,6 +63,11 @@ fn sample() -> ShunConfig {
         }],
         license: Some("docs/LICENSE.md".into()),
         license_locales: BTreeMap::from([("zh-Hans".into(), "docs/LICENSE.zh.md".into())]),
+        licenses: vec![shun::config::LicenseDocConfig {
+            title: Some("Copyright notice".into()),
+            path: "docs/NOTICE.md".into(),
+            locale_paths: BTreeMap::from([("zh-Hans".into(), "docs/NOTICE.zh-Hans.md".into())]),
+        }],
         custom_steps: vec![CustomStepConfig {
             key: "whats-new".into(),
             after: "license".into(),
@@ -145,6 +150,21 @@ fn launch_after_install_survives_the_roundtrip() {
     let json = serde_json::to_string(&sample()).unwrap();
     let back: ShunConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(back.targets[0], sample().targets[0]);
+}
+
+#[test]
+fn licenses_survive_the_roundtrip() {
+    let json = serde_json::to_value(sample()).unwrap();
+    assert_eq!(json["licenses"][0]["title"], "Copyright notice");
+    assert_eq!(json["licenses"][0]["path"], "docs/NOTICE.md");
+    assert_eq!(
+        json["licenses"][0]["locale-paths"]["zh-Hans"],
+        "docs/NOTICE.zh-Hans.md"
+    );
+
+    let json = serde_json::to_string(&sample()).unwrap();
+    let back: ShunConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.licenses, sample().licenses);
 }
 
 #[test]

@@ -114,12 +114,29 @@ license = "docs/LICENSE.md"                # markdown, 라이선스 단계에서
 ko = "docs/LICENSE.ko.md"
 en = "docs/LICENSE.en.md"
 
+[[licenses]]                               # 추가 라이선스 문서
+title = "Copyright notice"                 # 선택: 본문 위 표제
+path = "NOTICE.md"                         # markdown, 매니페스트 기준 상대 경로
+[licenses.locale-paths]                    # 이 문서의 로캘별 재정의
+ko = "NOTICE.ko.md"
+
 [[custom-steps]]                           # markdown 콘텐츠 단계 주입
 key = "whats-new"
 after = "license"
 title = "What's New"
 markdown = "docs/whats-new.md"
 ```
+
+`license` + `license-locales`는 단일 문서용 축약 표기입니다. 테이블
+배열 `licenses`는 문서를 추가로 선언하며, 각 문서는 선택적 `title`과
+자체 `locale-paths`를 가질 수 있습니다. 둘은 결합됩니다. 축약 문서가
+먼저 오고 그다음 선언 순서대로 배열이 이어집니다. 일치하는 로캘 경로
+(`license-locales` 또는 `locale-paths`)는 기본 문서보다 우선합니다.
+라이선스 단계는 문서를 한 번에 하나씩 표시하며, 여러 문서가 확인되면
+이전/다음 페이저로 넘깁니다. 동의 체크박스 하나가 모든 문서를 대상으로
+합니다. 확인된 JSON에서 각 문서는 `licenses`(title + body)로 전달되고,
+기존 `body` 문자열은 모든 본문을 구분선으로 연결한 값이므로 `body`만
+읽는 렌더러도 계약 전문을 그대로 표시합니다.
 
 UI에는 8개 로캘(`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`, `ru`, `es`)의
 기본 문구가 포함되어 있습니다. `shell.language = "auto"`는 시스템을 따르고,

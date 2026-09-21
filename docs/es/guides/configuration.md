@@ -118,12 +118,31 @@ license = "docs/LICENSE.md"                # markdown, mostrado en el paso de li
 es = "docs/LICENSE.es.md"
 en = "docs/LICENSE.en.md"
 
+[[licenses]]                               # documentos de licencia adicionales
+title = "Copyright notice"                 # encabezado opcional sobre el cuerpo
+path = "NOTICE.md"                         # markdown, relativo al manifiesto
+[licenses.locale-paths]                    # sustituciones por locale de este documento
+es = "NOTICE.es.md"
+
 [[custom-steps]]                           # inyección de un paso markdown
 key = "whats-new"
 after = "license"
 title = "What's New"
 markdown = "docs/whats-new.md"
 ```
+
+`license` + `license-locales` son el atajo de documento único; el array
+de tablas `licenses` declara más documentos, cada uno con un `title`
+opcional y sus propios `locale-paths`. Ambos se combinan: el documento
+del atajo va primero y después el array en orden de declaración. La
+ruta del locale coincidente (`license-locales` o `locale-paths`) gana
+sobre el documento base. El paso de licencia muestra un documento cada
+vez — con un paginador anterior/siguiente cuando se resuelven varios —
+y la única casilla de aceptación cubre todos. En el JSON resuelto cada
+documento viaja bajo `licenses` (title + body); la cadena heredada
+`body` concatena todos los cuerpos unidos por una línea divisoria, así
+los renderizadores que solo leen `body` siguen mostrando el acuerdo
+completo.
 
 La interfaz incluye ocho locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`,
 `fr`, `ru`, `es`) con textos por defecto; `shell.language = "auto"` sigue el
