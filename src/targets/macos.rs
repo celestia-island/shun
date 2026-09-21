@@ -158,6 +158,7 @@ fn bundle_for(install_dir: &Path, main_exe: &Path) -> Option<PathBuf> {
         aumid: None,
         icon: None,
         estimated_size_kb: 0,
+        language: None,
     })
 }
 

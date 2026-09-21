@@ -14,6 +14,7 @@
 //! dies at startup with STATUS_ENTRYPOINT_NOT_FOUND (tao imports
 //! TaskDialogIndirect).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -87,6 +88,32 @@ fn main() {
         serde_json::to_vec_pretty(&steps).expect("steps serialize"),
     )
     .expect("write embedded steps");
+
+    // 1c. Resolve the license documents per shell locale — the wizard
+    // switches the agreement along with the language picked on its
+    // first step. The locale set mirrors the shell's i18n tables
+    // (`shell/web/src/i18n.ts` `LOCALES`); documents without a variant
+    // for a locale resolve to their base path (resolve_steps' existing
+    // fallback). The egui fallback shares this one JSON and reads its
+    // two supported tables out of it.
+    const SHELL_LOCALES: [&str; 8] = ["en", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "ru", "es"];
+    let mut license_docs: BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>> = BTreeMap::new();
+    for locale in SHELL_LOCALES {
+        let locale_steps = config
+            .resolve_steps(&manifest_dir, Some(locale))
+            .expect("wizard pipeline resolves per locale");
+        if let Some(license) = locale_steps
+            .iter()
+            .find(|step| step.kind == shun::config::StepKind::License)
+        {
+            license_docs.insert(locale.to_string(), license.licenses.clone());
+        }
+    }
+    std::fs::write(
+        out_dir.join("shun-license-docs.json"),
+        serde_json::to_vec_pretty(&license_docs).expect("license docs serialize"),
+    )
+    .expect("write embedded license docs");
 
     // 2. Pack the payload directory declared in the configuration (paths in
     //    the manifest are relative to it).

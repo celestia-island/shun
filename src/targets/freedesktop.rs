@@ -252,6 +252,7 @@ mod tests {
             aumid: Some("celestia-island.ShunDemoTest".into()),
             icon: Some(PathBuf::from("assets/icon.png")),
             estimated_size_kb: 1,
+            language: None,
         }
     }
 

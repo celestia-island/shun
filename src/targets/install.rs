@@ -9,6 +9,7 @@
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use crate::config::InstallConfig;
@@ -22,6 +23,14 @@ use crate::payload::{MANIFEST_PATH, PayloadEntry, PayloadSource};
 
 /// Marker file enabling portable (便捷) mode for a delivered copy.
 pub const PORTABLE_MARKER: &str = ".shun-portable";
+
+/// The environment variable shun exports to payload script steps (the
+/// duckscript / Python runners — see `docs/en/design/scripting.md`):
+/// the wizard language, so a payload can write the user's choice into
+/// the installed application's own configuration. The flow only
+/// exports the fact — what a payload does with it is the payload's own
+/// script ([`InstallContext::script_env`]).
+pub const LANGUAGE_ENV: &str = "SHUN_LANGUAGE";
 
 /// Name of the uninstaller binary copied into the install directory.
 #[cfg(windows)]
@@ -181,6 +190,13 @@ pub struct InstallContext {
 
     /// ARP `EstimatedSize` in KiB; computed by the flow from the manifest.
     pub estimated_size_kb: u32,
+
+    /// The wizard language the install ran under (`en`, `zh-Hans`, ...),
+    /// as picked on the wizard's first step. Exported to payload scripts
+    /// as [`LANGUAGE_ENV`] and recorded in the on-disk manifest so later
+    /// passes (repair/update) can see it; `None` when the shell offered
+    /// no choice.
+    pub language: Option<String>,
 }
 
 impl InstallContext {
@@ -208,6 +224,18 @@ impl InstallContext {
             aumid: None,
             icon: None,
             estimated_size_kb: 0,
+            language: None,
+        }
+    }
+
+    /// The environment shun exports to payload script steps (see
+    /// [`LANGUAGE_ENV`]): the wizard language when the context carries
+    /// one, empty otherwise — the variable is absent rather than blank,
+    /// so scripts can distinguish "not chosen" from a value.
+    pub fn script_env(&self) -> Vec<(String, String)> {
+        match &self.language {
+            Some(language) => vec![(LANGUAGE_ENV.to_string(), language.clone())],
+            None => Vec::new(),
         }
     }
 
@@ -402,6 +430,40 @@ pub fn shortcut_stem(product: &str) -> String {
     stem
 }
 
+/// The on-disk install manifest (`shun-manifest.json` in the install
+/// directory): the payload entries the uninstall pass consumes, plus
+/// the install-time metadata later passes (repair/update) need. The
+/// same file name inside the payload archive stays the bare
+/// [`PayloadEntry`] list — only the delivered copy carries the wrapper.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InstallManifest {
+    /// The wizard language the install ran under (the context's
+    /// `language`, also exported to scripts as [`LANGUAGE_ENV`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+
+    /// The payload entries, per the archive manifest.
+    pub entries: Vec<PayloadEntry>,
+}
+
+/// Reads the on-disk install manifest written by [`InstallFlow::run`].
+/// Manifests delivered by pre-0.4.1 installs carry the bare entry list;
+/// both shapes parse.
+pub fn read_manifest(install_dir: &Path) -> Result<InstallManifest, ShunError> {
+    let raw = std::fs::read(install_dir.join(MANIFEST_PATH))?;
+    // The new wrapper first; the legacy bare entry list degrades to a
+    // manifest without metadata.
+    if let Ok(manifest) = serde_json::from_slice::<InstallManifest>(&raw) {
+        return Ok(manifest);
+    }
+    let entries: Vec<PayloadEntry> = serde_json::from_slice(&raw)
+        .map_err(|e| ShunError::Config(format!("manifest parse: {e}")))?;
+    Ok(InstallManifest {
+        language: None,
+        entries,
+    })
+}
+
 /// The install delivery flow: extract the payload with progress, persist
 /// the on-disk manifest (consumed by uninstall), then either register
 /// (local mode) or drop the portable marker (portable mode).
@@ -421,8 +483,11 @@ impl Flow for InstallFlow<'_> {
         on_event(FlowEvent::Started);
         self.payload.extract(&self.ctx.install_dir, on_event)?;
 
-        let manifest = serde_json::to_vec_pretty(self.payload.manifest())
-            .map_err(|e| ShunError::Config(format!("manifest serialize: {e}")))?;
+        let manifest = serde_json::to_vec_pretty(&InstallManifest {
+            language: self.ctx.language.clone(),
+            entries: self.payload.manifest().to_vec(),
+        })
+        .map_err(|e| ShunError::Config(format!("manifest serialize: {e}")))?;
         std::fs::write(self.ctx.install_dir.join(MANIFEST_PATH), manifest)?;
 
         let mut ctx = self.ctx.clone();
@@ -450,8 +515,9 @@ pub fn uninstall(ctx: &InstallContext, registration: &dyn Registration) -> Resul
 
     let manifest_path = ctx.install_dir.join(MANIFEST_PATH);
     if manifest_path.exists() {
-        let entries: Vec<PayloadEntry> = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
-        for entry in entries {
+        // read_manifest accepts both the wrapper and the legacy bare
+        // entry list, so copies installed by older shells still uninstall.
+        for entry in read_manifest(&ctx.install_dir)?.entries {
             let _ = std::fs::remove_file(ctx.install_dir.join(entry.path));
         }
         let _ = std::fs::remove_file(&manifest_path);
@@ -1353,5 +1419,65 @@ mod tests {
         assert_eq!(url_scheme(" Web+Extension.1 "), "web+extension.1");
         assert_eq!(url_scheme("has spaces"), "hasspaces");
         assert_eq!(url_scheme("///"), "");
+    }
+
+    #[test]
+    fn script_env_exports_the_wizard_language() {
+        let mut ctx =
+            InstallContext::new("Wowsp".into(), "1.0.0".into(), PathBuf::from("."), false);
+        assert!(
+            ctx.script_env().is_empty(),
+            "no language chosen, no variable exported"
+        );
+        ctx.language = Some("zh-Hans".into());
+        assert_eq!(
+            ctx.script_env(),
+            vec![(LANGUAGE_ENV.to_string(), "zh-Hans".to_string())]
+        );
+    }
+
+    #[test]
+    fn install_manifest_roundtrips_and_reads_the_legacy_shape() {
+        use crate::payload::MANIFEST_PATH;
+
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_path = dir.path().join(MANIFEST_PATH);
+        let manifest = InstallManifest {
+            language: Some("zh-Hans".into()),
+            entries: vec![PayloadEntry {
+                path: "bin/app.exe".into(),
+                size: 3,
+                sha256: "abc".into(),
+            }],
+        };
+
+        // The 0.4.1 shape: the metadata wrapper around the entries,
+        // `language` skipped when unset.
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read_manifest(dir.path()).unwrap(), manifest);
+        let bare = InstallManifest {
+            language: None,
+            entries: manifest.entries.clone(),
+        };
+        std::fs::write(&manifest_path, serde_json::to_vec_pretty(&bare).unwrap()).unwrap();
+        assert!(
+            !serde_json::to_string(&bare).unwrap().contains("language"),
+            "an unset language is not serialized"
+        );
+
+        // The pre-0.4.1 shape (the bare entry list) still parses —
+        // without metadata.
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest.entries).unwrap(),
+        )
+        .unwrap();
+        let legacy = read_manifest(dir.path()).unwrap();
+        assert_eq!(legacy.entries, manifest.entries);
+        assert_eq!(legacy.language, None);
     }
 }

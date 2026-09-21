@@ -86,6 +86,29 @@ mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # canaux RGB — remplace --color-primary
 ```
 
+### Langue de l'assistant
+
+L'assistant demande sa langue à la **première étape** : un sélecteur
+listant les huit langues prises en charge, chacune libellée dans sa
+propre langue (English, 简体中文, 日本語, ...). Le changement re-rend
+immédiatement les textes de l'interface et les documents de licence —
+l'accord suit la langue choisie via `license-locales` / `locale-paths`
+— et le choix est mémorisé pour l'exécution suivante dans le fichier de
+préférences par utilisateur
+(`<données locales>/<produit>/installer-prefs.json`, p. ex.
+`%LOCALAPPDATA%\ShunDemo\installer-prefs.json` contenant
+`{ "language": "zh-Hans" }`). Les exécutions portables gardent le choix
+en mémoire seule : une copie portable n'écrit aucun état système.
+`shell.language` reste la valeur fixée par la configuration — un choix
+mémorisé l'emporte dessus, puis la langue du système.
+
+La langue choisie accompagne le flux d'installation : les scripts du
+payload la reçoivent comme variable d'environnement `SHUN_LANGUAGE`,
+et elle est consignée dans le manifeste d'installation sur disque
+(visible pour les passes de réparation/mise à jour). Ce qui est écrit
+dans la configuration propre à l'application installée relève des
+scripts du payload — shun n'exporte que l'information.
+
 ## Source du payload
 
 `[package.metadata.shun.source]` choisit la provenance du payload lors de

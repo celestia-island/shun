@@ -6,6 +6,7 @@ import {
   HCheckbox,
   HMarkdownRenderer,
   HProgressBar,
+  HSelect,
   HSelectionGrid,
   HTimeline,
 } from "@celestia-island/hikari";
@@ -13,7 +14,7 @@ import {
 import AppTitleBar from "./components/AppTitleBar";
 import HTerminal, { type TerminalLine } from "./components/HTerminal";
 import { invoke, listen, openDirectory } from "./tauri";
-import { resolveLocale, strings, type Locale } from "./i18n";
+import { LOCALES, LOCALE_LABELS, resolveLocale, strings, type Locale } from "./i18n";
 
 /**
  * Shun demo shell UI — an NSIS-style delivery wizard rendered entirely with
@@ -54,6 +55,9 @@ interface ShellView {
   flash: boolean;
   attachments: AttachmentView[];
   steps: { kind: string; columns?: number | null; licenses?: LicenseDoc[] }[];
+  /** License documents resolved per locale; the license step re-picks
+      from here when the language selector changes the wizard language. */
+  license_docs?: Record<string, LicenseDoc[]>;
 }
 
 interface AttachmentView {
@@ -124,6 +128,10 @@ export default defineComponent({
     // post-install download on the done pane.
     const attachments = ref<AttachmentView[]>([]);
     const steps = ref<{ kind: string; columns?: number | null; licenses?: LicenseDoc[] }[]>([]);
+    // Per-locale license documents (`shun-license-docs.json`); the
+    // license step prefers the entry for the selected locale and falls
+    // back to the locale-less pipeline (`steps`).
+    const licenseDocs = ref<Record<string, LicenseDoc[]>>({});
     const downloaded = ref<Set<string>>(new Set());
     const downloading = ref<string | null>(null);
 
@@ -173,15 +181,42 @@ export default defineComponent({
       hint.value = t()["hint." + mode.value] ?? "";
     }
 
+    /** The first-step language selector: switches the UI strings and
+        the license documents live, and remembers the choice for the
+        next run (skipped while the portable mode is selected — the
+        portable promise is no system state at all). */
+    function setLocale(next: Locale) {
+      locale.value = next;
+      // The documents switched under the pager — restart at doc 1.
+      licenseIndex.value = 0;
+      // The mode-step hint follows the language too (`refreshDefaults`
+      // re-resolves it on mode changes; nothing else reads it here).
+      hint.value = strings(next)["hint." + mode.value] ?? "";
+      invoke("save_language", { language: next, portable: mode.value === "portable" }).catch(
+        () => {
+          /* preference state is best-effort; it never blocks the wizard */
+        },
+      );
+    }
+
     onMounted(() => {
       invoke<ShellView>("get_config")
-        .then((view) => {
+        .then(async (view) => {
           product.value = view.product;
           modes.value = view.modes;
           timeline.value = view.timeline ?? "top";
           themeMode.value = view.theme?.mode ?? "system";
           themeAccent.value = view.theme?.accent ?? null;
-          locale.value = resolveLocale(view.language);
+          licenseDocs.value = view.license_docs ?? {};
+          // Effective locale: the remembered choice (a previous run's
+          // picker) wins over the `shell.language` pin, then the system.
+          locale.value = await invoke<string | null>("get_saved_language")
+            .then((saved) =>
+              saved != null && (LOCALES as readonly string[]).includes(saved)
+                ? (saved as Locale)
+                : resolveLocale(view.language),
+            )
+            .catch(() => resolveLocale(view.language));
           applyTheme();
           applyAccent(themeAccent.value);
           if (themeMode.value === "system") {
@@ -321,6 +356,9 @@ export default defineComponent({
         await invoke("start_install", {
           mode: mode.value,
           dir: dir.value.trim(),
+          // The wizard language: reaches payload scripts as
+          // `SHUN_LANGUAGE` and lands in the install manifest.
+          language: locale.value,
         });
         overall.value = 100;
         installed.value = true;
@@ -381,8 +419,13 @@ export default defineComponent({
     return () => {
       const strings$ = t();
       const modeStep = steps.value.find((s) => s.kind === "mode");
-      const licenseDocs = steps.value.find((s) => s.kind === "license")?.licenses ?? [];
-      const licenseDoc = licenseDocs[licenseIndex.value];
+      // The license documents follow the wizard language: the per-locale
+      // map first, then the locale-less pipeline resolution.
+      const licenseDocsList =
+        licenseDocs.value[locale.value] ??
+        steps.value.find((s) => s.kind === "license")?.licenses ??
+        [];
+      const licenseDoc = licenseDocsList[licenseIndex.value];
       const modeColumns = (modeStep as { columns?: number } | undefined)?.columns ?? modes.value.length;
       const modeItems = modes.value.map((id) => ({
         id,
@@ -393,6 +436,12 @@ export default defineComponent({
       const timelineSteps = STEPS.map((s) => ({
         key: s.key,
         label: strings$[s.labelKey],
+      }));
+      // The first-step language selector: the eight i18n locales,
+      // each labeled in its own language (autonyms).
+      const languageOptions = LOCALES.map((code) => ({
+        value: code,
+        label: LOCALE_LABELS[code],
       }));
 
       const pane =
@@ -405,6 +454,17 @@ export default defineComponent({
               {strings$["hero.version-prefix"]} {product.value.version}
               {product.value.publisher ? ` · ${product.value.publisher}` : ""}
             </p>
+            {/* The wizard's first question: the language row. Switching
+                swaps the UI strings and the license documents live, and
+                remembers the choice for the next run. */}
+            <section class="wizard-language">
+              <HSelect
+                label={strings$["language.label"]}
+                modelValue={locale.value}
+                options={languageOptions}
+                onUpdate:modelValue={(value: string) => setLocale(value as Locale)}
+              />
+            </section>
             <HSelectionGrid
               items={modeItems}
               selectedId={mode.value}
@@ -450,7 +510,7 @@ export default defineComponent({
             <div class="license-box">
               <HMarkdownRenderer content={licenseDoc?.body ?? ""} />
             </div>
-            {licenseDocs.length > 1 && (
+            {licenseDocsList.length > 1 && (
               <div class="license-pager">
                 <HButton
                   variant="ghost"
@@ -462,13 +522,13 @@ export default defineComponent({
                   <ChevronLeft size={16} />
                 </HButton>
                 <span class="license-pager__label">
-                  {licenseIndex.value + 1}/{licenseDocs.length}{" "}
+                  {licenseIndex.value + 1}/{licenseDocsList.length}{" "}
                   {licenseDoc?.title ?? strings$["step.license"]}
                 </span>
                 <HButton
                   variant="ghost"
                   size="sm"
-                  disabled={licenseIndex.value >= licenseDocs.length - 1}
+                  disabled={licenseIndex.value >= licenseDocsList.length - 1}
                   ariaLabel={strings$["license.nextDoc"]}
                   onClick={() => licenseIndex.value++}
                 >

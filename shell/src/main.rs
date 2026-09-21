@@ -33,10 +33,28 @@ use tauri::{Emitter, State};
 const SHUN_CONFIG_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-config.json"));
 /// The payload archive packed by build.rs from `metadata.shun.payload`.
 const EMBEDDED_PAYLOAD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shun-demo-payload.shun"));
+/// The wizard pipeline resolved once without a locale (`shun-steps.json`,
+/// written by build.rs) — the first-paint steps and their back-compat
+/// license documents.
+const SHUN_STEPS_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json"));
+/// The license documents resolved per shell locale (`shun-license-docs.json`,
+/// written by build.rs) — the license step re-picks from this map whenever
+/// the first-step language selector changes the wizard language.
+const SHUN_LICENSE_DOCS_JSON: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/shun-license-docs.json"));
 /// The product logo embedded by build.rs (kind file + bytes) — both UIs
 /// render it in their caption bars.
 const LOGO_KIND: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-logo-kind.txt"));
 const LOGO_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shun-logo.bin"));
+
+/// The per-locale license documents, keyed by locale (`en`, `zh-Hans`,
+/// ...). Empty when the config declares no license at all.
+type LicenseDocs = std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>;
+
+/// Parses the embedded per-locale license document map.
+fn license_docs() -> LicenseDocs {
+    serde_json::from_str(SHUN_LICENSE_DOCS_JSON).expect("embedded license docs parse")
+}
 
 /// State shared by the commands: the resolved config and the payload
 /// (cloned per install run).
@@ -86,6 +104,10 @@ struct ShellView {
     modes: Vec<String>,
     /// The resolved wizard pipeline (ordered steps with inlined bodies).
     steps: Vec<shun::config::ResolvedStep>,
+    /// License documents resolved per locale — the wizard re-picks from
+    /// this map when the first-step language selector changes the UI
+    /// language, falling back to `steps[].licenses` for unknown keys.
+    license_docs: LicenseDocs,
     /// Step indicator placement for the wizard layout.
     timeline: Option<shun::config::TimelineOrientation>,
     /// Theme knobs for the frontend (mode pin + accent override).
@@ -136,8 +158,8 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
         modes,
         // The wizard pipeline, resolved at build time (markdown bodies
         // inlined into shun-steps.json next to the config).
-        steps: serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json")))
-            .expect("embedded wizard pipeline parses"),
+        steps: serde_json::from_str(SHUN_STEPS_JSON).expect("embedded wizard pipeline parses"),
+        license_docs: license_docs(),
         timeline: shell.timeline,
         theme: shell.theme,
         language: shell.language,
@@ -160,10 +182,91 @@ struct DirDefaults {
     dir: String,
 }
 
-fn local_appdata() -> PathBuf {
+/// The per-user application-data root preference state lives under:
+/// `%LOCALAPPDATA%` on Windows, the XDG data home on unix
+/// (`$XDG_DATA_HOME` when set to a non-empty value, else
+/// `$HOME/.local/share`). Both fall back to the working directory when
+/// nothing is resolvable — a last resort, never the normal path.
+#[cfg(windows)]
+pub(crate) fn local_appdata() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+}
+
+/// Non-Windows branch of [`local_appdata`]: the XDG data home (a
+/// set-but-empty value counts as unset, per the XDG base-directory
+/// spec).
+#[cfg(not(windows))]
+pub(crate) fn local_appdata() -> PathBuf {
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+        return PathBuf::from(data_home);
+    }
+    match std::env::var_os("HOME") {
+        Some(home) if !home.is_empty() => PathBuf::from(home).join(".local").join("share"),
+        _ => std::env::current_dir().unwrap_or_default(),
+    }
+}
+
+// ── Installer preferences (the wizard's remembered language) ────────────
+//
+// `<data home>/<product>/installer-prefs.json` — per-user, per-product,
+// one key today. Portable runs NEVER touch it (the repo promise: a
+// portable copy writes no system state), so the choice stays in memory
+// for that run. The helpers take the appdata root as a parameter so
+// tests can point them at a scratch directory.
+
+/// The on-disk shape of `installer-prefs.json`.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct InstallerPrefs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) language: Option<String>,
+}
+
+/// The prefs file location for a product, under [`local_appdata`].
+pub(crate) fn prefs_path(root: &Path, product: &str) -> PathBuf {
+    root.join(product).join("installer-prefs.json")
+}
+
+/// Reads the prefs file; a missing or unreadable file means defaults —
+/// preference state is best-effort and never blocks the wizard.
+pub(crate) fn load_prefs(root: &Path, product: &str) -> InstallerPrefs {
+    std::fs::read(prefs_path(root, product))
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Writes the prefs file (creating the product folder).
+pub(crate) fn save_prefs(root: &Path, product: &str, prefs: &InstallerPrefs) -> Result<(), String> {
+    let path = prefs_path(root, product);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_vec_pretty(prefs).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+/// Remembers the wizard language for the next run. A portable run keeps
+/// the choice in memory only — nothing is written, and the return value
+/// says whether the preference was persisted.
+pub(crate) fn remember_language(
+    root: &Path,
+    product: &str,
+    language: String,
+    portable: bool,
+) -> Result<bool, String> {
+    if portable {
+        return Ok(false);
+    }
+    save_prefs(
+        root,
+        product,
+        &InstallerPrefs {
+            language: Some(language),
+        },
+    )?;
+    Ok(true)
 }
 
 fn exe_dir() -> Option<PathBuf> {
@@ -193,6 +296,35 @@ fn default_dir(state: State<'_, AppState>, mode: String) -> DirDefaults {
             .to_string_lossy()
             .into_owned(),
     }
+}
+
+/// The wizard language remembered from a previous run (the
+/// `installer-prefs.json` per-user file), if any. The frontend seeds the
+/// first-step language selector with it, falling back to its own
+/// system-locale resolution.
+#[tauri::command]
+fn get_saved_language(state: State<'_, AppState>) -> Option<String> {
+    load_prefs(&local_appdata(), &state.config.product.name).language
+}
+
+/// Remembers the wizard language for the next run. Skipped when the
+/// wizard runs portable — a portable copy writes no system state, so
+/// the choice stays in memory for that run only.
+#[tauri::command]
+fn save_language(
+    state: State<'_, AppState>,
+    language: String,
+    // The selected delivery mode decides portability; absent (older
+    // front-ends) means not portable.
+    portable: Option<bool>,
+) -> Result<(), String> {
+    remember_language(
+        &local_appdata(),
+        &state.config.product.name,
+        language,
+        portable.unwrap_or(false),
+    )
+    .map(|_| ())
 }
 
 /// Pads one folder level under a bare filesystem root target (a picked
@@ -227,6 +359,9 @@ fn start_install(
     // front-ends) resolve to the defaults (desktop on, per-user).
     desktop: Option<bool>,
     machine: Option<bool>,
+    // The wizard language picked on the first step; reaches payload
+    // scripts as `SHUN_LANGUAGE` and the on-disk install manifest.
+    language: Option<String>,
 ) -> Result<(), String> {
     let dir = dir.trim().trim_end_matches('\\').to_string();
     if dir.is_empty() {
@@ -241,7 +376,8 @@ fn start_install(
         // `shun::targets::install::launch` here yet.
         launch_after_install: true,
     };
-    let ctx = state.install_context(&mode, &dir, answers)?;
+    let mut ctx = state.install_context(&mode, &dir, answers)?;
+    ctx.language = language;
 
     // Machine scope needs an elevated token; re-launch this binary under
     // UAC carrying the resolved answers, headlessly.
@@ -324,6 +460,11 @@ pub(crate) fn ensure_elevated_for(
         args.push_str(" --no-desktop");
     }
     args.push_str(" --scope=machine");
+    // Carry the wizard language through the elevation relaunch so the
+    // headless copy still exports it to scripts and records it.
+    if let Some(language) = &ctx.language {
+        args.push_str(&format!(" --language={language}"));
+    }
     if uninstalling {
         args.push_str(" --uninstall");
     }
@@ -343,10 +484,11 @@ pub(crate) fn ensure_elevated_for(
 
 /// Automated-install arguments (headless mode): `--silent` skips the
 /// UI and runs the flow headlessly with `--mode=local|portable`,
-/// `--dir=<path>`, `--scope=user|machine`, `--desktop`/`--no-desktop`
-/// and an optional `--uninstall`. The host application is
-/// expected to exit cleanly BEFORE invoking the installer with these flags
-/// during an update.
+/// `--dir=<path>`, `--scope=user|machine`, `--desktop`/`--no-desktop`,
+/// an optional `--language=<locale>` (the wizard language, carried
+/// through the elevation relaunch) and an optional `--uninstall`. The
+/// host application is expected to exit cleanly BEFORE invoking the
+/// installer with these flags during an update.
 fn run_headless(
     args: &[String],
     config: &ShunConfig,
@@ -357,11 +499,14 @@ fn run_headless(
     let mut uninstall_mode = false;
     let mut desktop: Option<bool> = None;
     let mut machine: Option<bool> = None;
+    let mut language: Option<String> = None;
     for arg in args {
         if let Some(value) = arg.strip_prefix("--mode=") {
             mode = value.to_string();
         } else if let Some(value) = arg.strip_prefix("--dir=") {
             dir = Some(PathBuf::from(value.trim_matches('"')));
+        } else if let Some(value) = arg.strip_prefix("--language=") {
+            language = Some(value.trim_matches('"').to_string());
         } else if arg == "--uninstall" || arg == "/uninstall" {
             // `/uninstall` is what the ARP UninstallString passes; the
             // double dash spelling stays for script symmetry.
@@ -396,6 +541,7 @@ fn run_headless(
         mode == "portable",
     );
     ctx.publisher = config.product.publisher.clone();
+    ctx.language = language;
     ctx.main_exe = config.targets.iter().find_map(|t| match t {
         TargetConfig::Install(install) => install.main_exe.clone(),
         _ => None,
@@ -476,10 +622,6 @@ fn bootstrap_fixed_webview2(config: &ShunConfig, payload: &ArchivePayload) {
         );
     }
 }
-
-/// The resolved wizard pipeline, embedded at build time (markdown
-/// bodies inlined).
-const SHUN_STEPS_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json"));
 
 /// Renders one structured log record for a headless console (English —
 /// the console has no locale negotiation).
@@ -567,6 +709,7 @@ fn main() {
             LOGO_KIND.trim(),
             LOGO_BYTES,
             serde_json::from_str(SHUN_STEPS_JSON).expect("embedded wizard pipeline parses"),
+            license_docs(),
         );
         return;
     }
@@ -578,6 +721,8 @@ fn main() {
             get_config,
             default_dir,
             nest_root_dir,
+            get_saved_language,
+            save_language,
             start_install,
             uninstall_demo,
             download_attachment
@@ -630,4 +775,109 @@ fn webview2_available() -> bool {
 #[cfg(not(windows))]
 fn webview2_available() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch appdata root: the prefs helpers take the root as a
+    /// parameter, so tests never touch the real `%LOCALAPPDATA%`.
+    fn scratch_root(tag: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("shun-prefs-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn installer_prefs_roundtrip_and_portable_skip() {
+        let root = scratch_root("roundtrip");
+        let product = "ShunDemo";
+
+        // Nothing saved yet: the defaults carry no language.
+        assert_eq!(load_prefs(&root, product).language, None);
+
+        // A remembered choice reads back from the same file the wizard
+        // writes (`installer-prefs.json` under the product folder).
+        assert!(
+            remember_language(&root, product, "zh-Hans".into(), false).expect("prefs saved"),
+            "a non-portable run persists the choice"
+        );
+        assert_eq!(
+            load_prefs(&root, product).language.as_deref(),
+            Some("zh-Hans")
+        );
+
+        // A portable run keeps the choice in memory only: nothing is
+        // written, and an earlier choice survives untouched.
+        assert!(
+            !remember_language(&root, product, "en".into(), true).expect("portable is a no-op"),
+            "a portable run does not persist"
+        );
+        assert_eq!(
+            load_prefs(&root, product).language.as_deref(),
+            Some("zh-Hans"),
+            "the portable run did not overwrite the saved choice"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn corrupt_prefs_file_degrades_to_defaults() {
+        let root = scratch_root("corrupt");
+        let product = "ShunDemo";
+
+        // Junk bytes (not JSON): preference state is best-effort, so a
+        // corrupt file degrades to the defaults instead of failing the
+        // wizard (or panicking the parser).
+        let path = prefs_path(&root, product);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, [0xFF, 0xFE]).unwrap();
+        assert_eq!(load_prefs(&root, product).language, None);
+
+        // A following save repairs the file and the choice reads back.
+        remember_language(&root, product, "ja".into(), false).expect("prefs saved");
+        assert_eq!(load_prefs(&root, product).language.as_deref(), Some("ja"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Pulls the quoted literals out of the bracketed list following
+    /// `marker` — a lenient scan, no TS parser: slice from `= [` to the
+    /// closing `]`, then take the odd split segments.
+    fn quoted_list(marker: &str, text: &str) -> Vec<String> {
+        let marker_at = text.find(marker).expect("marker present");
+        let open = text[marker_at..].find("= [").expect("list opens") + marker_at + 2;
+        let close = text[open..].find(']').expect("list closes") + open;
+        text[open + 1..close]
+            .split('"')
+            .enumerate()
+            .filter(|(index, _)| index % 2 == 1)
+            .map(|(_, part)| part.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn shell_locale_lists_match_i18n_ts_and_build_rs() {
+        // The wizard's locale list is written out in two places: the
+        // i18n tables (`shell/web/src/i18n.ts`, the language selector's
+        // options) and build.rs's `SHELL_LOCALES` (the per-locale
+        // license documents). They must not drift silently.
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let i18n = std::fs::read_to_string(manifest_dir.join("web/src/i18n.ts"))
+            .expect("the web i18n tables sit inside the shell crate");
+        let build = std::fs::read_to_string(manifest_dir.join("build.rs"))
+            .expect("build.rs sits in the shell crate");
+
+        let locales = quoted_list("export const LOCALES", &i18n);
+        let shell_locales = quoted_list("const SHELL_LOCALES", &build);
+
+        assert_eq!(locales.len(), 8, "i18n.ts carries the eight locales");
+        assert_eq!(
+            shell_locales, locales,
+            "build.rs SHELL_LOCALES must mirror the i18n.ts locale list"
+        );
+    }
 }

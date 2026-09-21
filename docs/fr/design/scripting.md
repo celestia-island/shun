@@ -33,6 +33,15 @@ La surface des built-ins shun s'enregistre en commandes duckscript :
 plus les propres commandes std du SDK (fs, env, http, process, semver,
 ...).
 
+Quand les hooks de scripts tourneront, le flux d'installation
+exportera la langue de l'assistant à chaque étape de script comme
+`SHUN_LANGUAGE` (la langue choisie à la première étape de l'assistant,
+consignée aussi dans le manifeste d'installation sur disque). La
+variable est absente quand aucune langue n'a été choisie. Exporter
+l'information est tout ce que fait shun — écrire la langue dans la
+configuration propre à l'application installée relève du script du
+payload.
+
 Pièges à normaliser dans les wrappers shun : les chemins Windows à
 antislashs sont des caractères d'échappement dans les arguments
 duckscript (passez des chemins à barres obliques), et l'affectation est

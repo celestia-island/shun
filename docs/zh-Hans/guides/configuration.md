@@ -126,6 +126,23 @@ mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB 通道——覆盖 --color-primary
 ```
 
+### 向导语言
+
+向导在**第一步**询问语言：选择器列出全部八个支持的语言，每项都以
+自身语言标注（English、简体中文、日本語……）。切换后 UI 文案与许可
+文档立即随之切换——协议文档按 `license-locales` / `locale-paths`
+跟随所选语言——并且该选择会记入每用户偏好文件，下次运行自动沿用
+（`<本地应用数据目录>/<产品>/installer-prefs.json`，例如
+`%LOCALAPPDATA%\ShunDemo\installer-prefs.json`，内容形如
+`{ "language": "zh-Hans" }`）。便携运行只把选择保存在内存中——便携
+副本不写任何系统状态。`shell.language` 仍是配置层面的固定项，但
+记住的选择优先于它，其后才是系统语言。
+
+所选语言还会随安装流程传递：payload 脚本通过 `SHUN_LANGUAGE`
+环境变量拿到它，同时它也被写入磁盘上的安装清单（修复/更新等后续
+流程可以读取）。往已安装应用自身的配置里写什么由 payload 的脚本
+决定——shun 只导出事实。
+
 ## Payload 来源
 
 `[package.metadata.shun.source]` 选择安装时 payload 的来源：
