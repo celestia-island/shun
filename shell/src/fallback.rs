@@ -236,6 +236,59 @@ fn system_prefers_light() -> bool {
 
 // ── UI copy: the i18n strings of the web shell (shell/web/src/i18n.ts) ──
 
+/// The language the fallback UI renders in — the egui side carries the
+/// two TEXTS tables below, so its first-step language selector offers
+/// these two locales (the web shell offers all eight). The chosen value
+/// is what reaches the install context (and from there `SHUN_LANGUAGE`
+/// for scripts and the install manifest).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum FallbackLanguage {
+    En,
+    Zh,
+}
+
+impl FallbackLanguage {
+    /// The locale code this table maps to (the shell's i18n spelling).
+    fn code(self) -> &'static str {
+        match self {
+            FallbackLanguage::En => "en",
+            FallbackLanguage::Zh => "zh-Hans",
+        }
+    }
+
+    /// The key into the per-locale license documents
+    /// (`shun-license-docs.json`, shared with the web shell).
+    fn doc_key(self) -> &'static str {
+        self.code()
+    }
+
+    /// The option label in the language itself (the autonym).
+    fn autonym(self) -> &'static str {
+        match self {
+            FallbackLanguage::En => "English",
+            FallbackLanguage::Zh => "简体中文",
+        }
+    }
+
+    /// The UI text table for this language.
+    fn texts(self) -> &'static Texts {
+        match self {
+            FallbackLanguage::En => &TEXTS_EN,
+            FallbackLanguage::Zh => &TEXTS_ZH,
+        }
+    }
+
+    /// Maps a saved/known locale code (the shell's i18n spelling) onto
+    /// the closest table this renderer carries.
+    fn from_code(code: &str) -> Self {
+        if code.starts_with("zh") {
+            FallbackLanguage::Zh
+        } else {
+            FallbackLanguage::En
+        }
+    }
+}
+
 struct Texts {
     title_suffix: &'static str,
     version_prefix: &'static str,
@@ -283,6 +336,7 @@ struct Texts {
     installing_percent: &'static str,
     warn_desktop_blocked: &'static str,
     warn_aumid_blocked: &'static str,
+    language_label: &'static str,
 }
 
 const TEXTS_ZH: Texts = Texts {
@@ -332,6 +386,7 @@ const TEXTS_ZH: Texts = Texts {
     installing_percent: "正在安装…",
     warn_desktop_blocked: "桌面快捷方式被系统策略拦截（安全软件拒绝了 .lnk 写入）；开始菜单快捷方式与卸载注册不受影响",
     warn_aumid_blocked: "任务栏标识（AUMID）写入被系统策略拦截；手动固定的归组可能受影响",
+    language_label: "语言",
 };
 
 const TEXTS_EN: Texts = Texts {
@@ -381,6 +436,7 @@ const TEXTS_EN: Texts = Texts {
     installing_percent: "Installing…",
     warn_desktop_blocked: "Desktop shortcut blocked by system policy (security software denied the .lnk write); the Start-menu shortcut and uninstall registration are unaffected",
     warn_aumid_blocked: "Taskbar identity (AUMID) stamp blocked by system policy; manual pin grouping may be affected",
+    language_label: "Language",
 };
 
 /// Registers a system CJK font as a glyph fallback so the Chinese UI
@@ -504,6 +560,12 @@ struct FallbackApp {
     config: ShunConfig,
     payload: ArchivePayload,
     reason: FallbackReason,
+    /// The wizard language (the first-step selector); `texts` mirrors
+    /// it — see [`FallbackApp::apply_language`].
+    language: FallbackLanguage,
+    /// Whether a CJK font registered (the Zh table is only offered when
+    /// the machine can render it — the historical `zh = font_found`).
+    cjk_font: bool,
     texts: &'static Texts,
     theme: Theme,
     timeline_left: bool,
@@ -519,6 +581,10 @@ struct FallbackApp {
     machine: bool,
     /// The resolved wizard pipeline (ordered steps, bodies inlined).
     steps: Vec<shun::config::ResolvedStep>,
+    /// License documents resolved per locale (`shun-license-docs.json`,
+    /// shared with the web shell); the license step re-picks from this
+    /// map when the language changes, falling back to `steps`.
+    license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
     /// Cursor into `steps` while on `Stage::Configure`.
     step: usize,
     /// The license checkbox (`license` steps gate progression on it).
@@ -547,14 +613,17 @@ struct FallbackApp {
 }
 
 impl FallbackApp {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         config: ShunConfig,
         payload: ArchivePayload,
         reason: FallbackReason,
-        zh: bool,
+        language: FallbackLanguage,
+        cjk_font: bool,
         receiver: Receiver<WorkerMsg>,
         logo: Option<TextureHandle>,
         steps: Vec<shun::config::ResolvedStep>,
+        license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
     ) -> Self {
         let theme = resolve_theme(&config);
         let shell = config.shell.clone().unwrap_or_default();
@@ -564,7 +633,9 @@ impl FallbackApp {
             config,
             payload,
             reason,
-            texts: if zh { &TEXTS_ZH } else { &TEXTS_EN },
+            language,
+            cjk_font,
+            texts: language.texts(),
             theme,
             timeline_left: shell.timeline == Some(shun::config::TimelineOrientation::Left),
             logo,
@@ -573,6 +644,7 @@ impl FallbackApp {
             desktop_shortcut: true,
             machine: false,
             steps,
+            license_docs,
             step: 0,
             license_accepted: false,
             license_doc_index: 0,
@@ -587,6 +659,28 @@ impl FallbackApp {
             entry: None,
             receiver,
         }
+    }
+
+    /// Switches the wizard language: the TEXTS table, the license
+    /// documents and the document pager all follow, and the choice is
+    /// remembered for the next run — unless the selected mode is
+    /// portable, in which case nothing leaves this process.
+    fn apply_language(&mut self, language: FallbackLanguage) {
+        if self.language == language {
+            return;
+        }
+        self.language = language;
+        self.texts = language.texts();
+        // The documents switched under the pager — restart at doc 1.
+        self.license_doc_index = 0;
+        // Remember the choice unless this run is portable: a portable
+        // copy writes no system state, so it stays in memory only.
+        let _ = crate::remember_language(
+            &crate::local_appdata(),
+            &self.config.product.name,
+            language.code().to_string(),
+            self.mode == "portable",
+        );
     }
 
     fn install_context(&self) -> Result<InstallContext, String> {
@@ -611,6 +705,9 @@ impl FallbackApp {
         );
         ctx.publisher = self.config.product.publisher.clone();
         ctx.main_exe = install.main_exe.clone();
+        // The wizard language rides into the flow: exported to payload
+        // scripts as `SHUN_LANGUAGE`, recorded in the install manifest.
+        ctx.language = Some(self.language.code().to_string());
         ctx.apply_config(
             install,
             shun::targets::install::WizardAnswers {
@@ -878,6 +975,7 @@ pub fn run(
     logo_kind: &str,
     logo_bytes: &[u8],
     steps: Vec<shun::config::ResolvedStep>,
+    license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
 ) {
     let title = window_title(&config);
     // Frameless like the hikari shell: the title bar below draws the
@@ -900,18 +998,41 @@ pub fn run(
             visuals.window_fill = theme.background;
             visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0f32, theme.border);
             cc.egui_ctx.set_visuals(visuals);
-            // Language: `shell.language` pins it; `auto` (or unset)
-            // follows what the machine can render (CJK font present).
+            // A CJK font is the egui renderer's proxy for "the machine
+            // can render the Zh table" (the historical `zh = font_found`).
             let font_found = install_cjk_font(&cc.egui_ctx);
-            let zh = match config.shell.as_ref().and_then(|s| s.language.as_deref()) {
-                Some("en") => false,
-                Some(language) if language.starts_with("zh") => font_found,
-                _ => font_found,
-            };
+            // Language: the remembered preference wins (the same
+            // `installer-prefs.json` the web shell writes), then
+            // `shell.language`, then what the machine can render.
+            let language = crate::load_prefs(&crate::local_appdata(), &config.product.name)
+                .language
+                .as_deref()
+                .map(FallbackLanguage::from_code)
+                .or_else(|| {
+                    config
+                        .shell
+                        .as_ref()
+                        .and_then(|s| s.language.as_deref())
+                        .filter(|pin| *pin != "auto")
+                        .map(FallbackLanguage::from_code)
+                })
+                .unwrap_or(if font_found {
+                    FallbackLanguage::Zh
+                } else {
+                    FallbackLanguage::En
+                });
             let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
             let (_sender, receiver) = channel::<WorkerMsg>();
             Ok(Box::new(FallbackApp::new(
-                config, payload, reason, zh, receiver, logo, steps,
+                config,
+                payload,
+                reason,
+                language,
+                font_found,
+                receiver,
+                logo,
+                steps,
+                license_docs,
             )))
         }),
     );
@@ -1106,20 +1227,34 @@ impl FallbackApp {
         let texts = self.texts;
         // Snapshot the documents so the ui closures below can mutate
         // wizard state freely (the step borrow would otherwise span the
-        // checkbox and pager).
+        // checkbox and pager). The documents follow the wizard language:
+        // the per-locale map (shun-license-docs.json) first, then the
+        // locale-less pipeline resolution as the fallback.
         let docs: Vec<(Option<String>, String)> = {
-            let step = self.steps.get(self.step);
-            let licenses = step.map(|s| s.licenses.as_slice()).unwrap_or(&[]);
-            if licenses.is_empty() {
-                // Legacy single-string body: one untitled document.
-                step.and_then(|s| s.body.clone())
-                    .map(|body| vec![(None, body)])
-                    .unwrap_or_default()
-            } else {
-                licenses
+            let localized = self
+                .license_docs
+                .get(self.language.doc_key())
+                .filter(|docs| !docs.is_empty());
+            match localized {
+                Some(docs) => docs
                     .iter()
                     .map(|doc| (doc.title.clone(), doc.body.clone()))
-                    .collect()
+                    .collect(),
+                None => {
+                    let step = self.steps.get(self.step);
+                    let licenses = step.map(|s| s.licenses.as_slice()).unwrap_or(&[]);
+                    if licenses.is_empty() {
+                        // Legacy single-string body: one untitled document.
+                        step.and_then(|s| s.body.clone())
+                            .map(|body| vec![(None, body)])
+                            .unwrap_or_default()
+                    } else {
+                        licenses
+                            .iter()
+                            .map(|doc| (doc.title.clone(), doc.body.clone()))
+                            .collect()
+                    }
+                }
             }
         };
         let total = docs.len();
@@ -1285,7 +1420,9 @@ impl FallbackApp {
 
     /// Mode selection grid + target row (the "mode" pane).
     fn mode_view(&mut self, ui: &mut egui::Ui) {
-        let theme = &self.theme;
+        // Theme is Copy — a value (not a borrow) so the language switch
+        // below can take &mut self while the UI closures still paint.
+        let theme = self.theme;
         let texts = self.texts;
 
         // Hero — the h1 of the hikari wizard.
@@ -1320,6 +1457,48 @@ impl FallbackApp {
             .size(14.0),
         );
         ui.add_space(14.0);
+
+        // Language row — the wizard's first question: switching here
+        // swaps the UI copy and the license documents live (and
+        // remembers the choice for the next run). The Zh entry is only
+        // offered when the machine registered a CJK font — the same
+        // "render what the machine can" rule the startup heuristic
+        // follows.
+        let current = self.language;
+        let zh_offered = self.cjk_font;
+        let mut picked: Option<FallbackLanguage> = None;
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(texts.language_label)
+                    .size(13.0)
+                    .color(theme.text_secondary),
+            );
+            ui.add_space(4.0);
+            egui::ComboBox::from_id_salt("wizard-language")
+                .selected_text(current.autonym())
+                .width(160.0)
+                .show_ui(ui, |ui| {
+                    let candidates = [
+                        (FallbackLanguage::En, true),
+                        (FallbackLanguage::Zh, zh_offered),
+                    ];
+                    for (candidate, offered) in candidates {
+                        if !offered {
+                            continue;
+                        }
+                        if ui
+                            .selectable_label(current == candidate, candidate.autonym())
+                            .clicked()
+                        {
+                            picked = Some(candidate);
+                        }
+                    }
+                });
+        });
+        if let Some(candidate) = picked {
+            self.apply_language(candidate);
+        }
+        ui.add_space(6.0);
 
         // Selection grid: two cards side by side (hikari columns=2),
         // each allocated an exact equal share of the row.
@@ -1391,7 +1570,7 @@ impl FallbackApp {
         );
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            folder_badge(ui, theme, 28.0);
+            folder_badge(ui, &theme, 28.0);
             let browse_width = 84.0;
             let gap = ui.spacing().item_spacing.x;
             let input = TextEdit::singleline(&mut self.dir)

@@ -84,6 +84,26 @@ mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB 채널 — --color-primary 대체
 ```
 
+### 위자드 언어
+
+위자드는 **첫 단계**에서 언어를 묻습니다. 지원하는 8개 로캘을 각각
+자국어 레이블(English, 简体中文, 일본어, ...)로 나열한 선택기입니다.
+언어를 바꾸면 UI 문자열과 라이선스 문서가 즉시 다시 렌더링되고
+(동의 문서는 `license-locales` / `locale-paths`에 따라 선택한 로캘의
+것으로 바뀜), 선택은 사용자별 기본 파일에 기억되어 다음 실행에도
+이어집니다(`<로컬 앱 데이터>/<제품>/installer-prefs.json`, 예:
+`%LOCALAPPDATA%\ShunDemo\installer-prefs.json`에
+`{ "language": "zh-Hans" }`). 휴대용 실행에서는 선택이 메모리에만
+유지됩니다. 휴대용 복사본은 시스템 상태를 전혀 쓰지 않습니다.
+`shell.language`는 설정 고정값으로 남지만, 기억된 선택이 이를
+덮고, 그다음은 시스템 로캘을 따릅니다.
+
+선택한 언어는 설치 흐름으로도 전달됩니다. payload 스크립트에는
+`SHUN_LANGUAGE` 환경 변수로 전달되고, 디스크의 설치 매니페스트에도
+기록되어(복구/업데이트 패스에서 참조) 나중에 확인할 수 있습니다.
+설치된 애플리케이션 자체 설정에 무엇을 쓸지는 payload 스크립트의
+몫입니다 — shun은 사실만 내보냅니다.
+
 ## payload 공급원
 
 `[package.metadata.shun.source]`가 설치 시점의 payload 공급원을 선택합니다:

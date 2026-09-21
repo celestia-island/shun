@@ -31,6 +31,14 @@ La superficie integrada de shun se registra como comandos duckscript:
 `shun_progress`, `shun_emit`, `shun_fetch` (descargas verificadas), más
 los comandos std del propio SDK (fs, env, http, process, semver, ...).
 
+Cuando los hooks de scripts se ejecuten, el flujo de instalación
+exportará el idioma del asistente a cada paso de script como
+`SHUN_LANGUAGE` (la lengua elegida en el primer paso del asistente,
+también registrada en el manifiesto de instalación en disco). La
+variable está ausente cuando no se eligió idioma. Exportar el dato es
+todo lo que hace shun — escribir el idioma en la configuración propia
+de la aplicación instalada es tarea del script del payload.
+
 Puntos delicados a normalizar en los wrappers de shun: las rutas con
 barra invertida de Windows son caracteres de escape en los argumentos de
 duckscript (pase rutas con barra diagonal), y la asignación es sintaxis

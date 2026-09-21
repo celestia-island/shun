@@ -28,6 +28,12 @@ shun 內建介面將以 duckscript 命令形式註冊：`shun_progress`、
 `shun_emit`、`shun_fetch`（帶校驗的下載）等，加上 SDK 自帶的 std
 命令（fs、env、http、process、semver……）。
 
+指令碼鉤子執行時，交付流程會把精靈語言以 `SHUN_LANGUAGE`
+環境變數匯出給每個指令碼步驟（即在精靈第一步選擇的語言，同時也
+記錄在磁碟上的安裝清單中）。未選擇語言時該變數不存在。shun 只
+匯出事實——把語言寫進已安裝應用自身的設定，是 payload 指令碼
+自己的事。
+
 需要在 shun 封裝裡正規化的坑：duckscript 參數裡 Windows 反斜線是
 逸出字元（傳正斜線路徑）；賦值必須用 `x = 命令 參數` 的輸出擷取
 語法。

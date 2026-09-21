@@ -28,6 +28,12 @@ shun 内置接口将以 duckscript 命令形式注册：`shun_progress`、
 `shun_emit`、`shun_fetch`（带校验的下载）等，加上 SDK 自带的 std
 命令（fs、env、http、process、semver……）。
 
+脚本钩子运行时，交付流程会把向导语言以 `SHUN_LANGUAGE`
+环境变量导出给每个脚本步骤（即在向导第一步选择的语言，同时也
+记录在磁盘上的安装清单中）。未选择语言时该变量不存在。shun 只
+导出事实——把语言写进已安装应用自身的配置，是 payload 脚本自己的
+事。
+
 需要在 shun 封装里归一化的坑：duckscript 参数里 Windows 反斜杠是
 转义符（传正斜杠路径）；赋值必须用 `x = 命令 参数` 的输出捕获语法。
 

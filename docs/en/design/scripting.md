@@ -30,6 +30,13 @@ The shun built-in surface registers as duckscript commands:
 `shun_progress`, `shun_emit`, `shun_fetch` (verified downloads), plus
 the SDK's own std commands (fs, env, http, process, semver, ...).
 
+When script hooks run, the delivery flow exports the wizard
+language to every script step as `SHUN_LANGUAGE` (the locale picked on
+the wizard's first step, also recorded in the on-disk install
+manifest). The variable is absent when no language was chosen.
+Exporting the fact is all shun does — writing the language into the
+installed application's own configuration is the payload script's job.
+
 Gotchas to normalize in the shun wrappers: Windows backslash paths are
 escape characters in duckscript arguments (pass forward-slash paths),
 and assignment is output-capture syntax (`x = cmd args`).

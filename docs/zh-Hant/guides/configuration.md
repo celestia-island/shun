@@ -81,6 +81,23 @@ mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB 色頻——覆寫 --color-primary
 ```
 
+### 精靈語言
+
+精靈會在**第一步**詢問語言：選擇器列出全部八個支援的語言，每項都以
+自身語言標注（English、简体中文、日本語……）。切換後 UI 文案與授權
+文件立即跟著切換——授權文件按 `license-locales` / `locale-paths`
+跟隨所選語言——而且該選擇會記入每使用者偏好檔，下次執行自動沿用
+（`<本機應用程式資料目錄>/<產品>/installer-prefs.json`，例如
+`%LOCALAPPDATA%\ShunDemo\installer-prefs.json`，內容形如
+`{ "language": "zh-Hans" }`）。可攜執行只把選擇保存在記憶體中——
+可攜副本不寫任何系統狀態。`shell.language` 仍是設定層面的固定項，
+但記住的選擇優先於它，其後才是系統語言。
+
+所選語言還會隨安裝流程傳遞：payload 指令碼透過 `SHUN_LANGUAGE`
+環境變數取得它，同時它也被寫入磁碟上的安裝清單（修復/更新等後續
+流程可以讀取）。要往已安裝應用程式自身的設定裡寫什麼由 payload 的
+指令碼決定——shun 只匯出事實。
+
 ## Payload 來源
 
 `[package.metadata.shun.source]` 選擇安裝時 payload 的來源：

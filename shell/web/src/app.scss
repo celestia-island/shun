@@ -199,6 +199,12 @@ body {
   color: rgb(var(--color-muted));
 }
 
+/* First-step language selector — the wizard's own labeled row; a capped
+   width keeps it a control, not a banner. */
+.wizard-language {
+  max-width: 320px;
+}
+
 /* License agreement page — the rendered markdown fills the pane and
    scrolls inside its own box */
 .license-box {

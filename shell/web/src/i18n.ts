@@ -17,9 +17,26 @@ export const LOCALES = [
 
 export type Locale = (typeof LOCALES)[number];
 
+/**
+ * The picker labels in their own language (autonyms) — the first-step
+ * language selector renders these, so the user always finds their
+ * language even while the rest of the UI is in another one.
+ */
+export const LOCALE_LABELS: Record<Locale, string> = {
+  en: "English",
+  "zh-Hans": "简体中文",
+  "zh-Hant": "繁體中文",
+  ja: "日本語",
+  ko: "한국어",
+  fr: "Français",
+  ru: "Русский",
+  es: "Español",
+};
+
 type Strings = Record<string, string>;
 
 const en: Strings = {
+  "language.label": "Language",
   "warn.desktop-blocked": "Desktop shortcut blocked by system policy (security software denied the .lnk write); the Start-menu shortcut and uninstall registration are unaffected",
   "warn.aumid-blocked": "Taskbar identity (AUMID) stamp blocked by system policy; manual pin grouping may be affected",
   "log.title": "Log",
@@ -63,6 +80,7 @@ const en: Strings = {
 };
 
 const zhHans: Strings = {
+  "language.label": "语言",
   "warn.desktop-blocked": "桌面快捷方式被系统策略拦截（安全软件拒绝了 .lnk 写入）；开始菜单快捷方式与卸载注册不受影响",
   "warn.aumid-blocked": "任务栏标识（AUMID）写入被系统策略拦截；手动固定的归组可能受影响",
   "log.title": "日志",
@@ -106,6 +124,7 @@ const zhHans: Strings = {
 };
 
 const zhHant: Strings = {
+  "language.label": "語言",
   "warn.desktop-blocked": "桌面捷徑被系統策略攔截（安全軟體拒絕了 .lnk 寫入）；開始功能表捷徑與解除安裝註冊不受影響",
   "warn.aumid-blocked": "任務欄標識（AUMID）寫入被系統策略攔截；手動固定的歸組可能受影響",
   "log.title": "日誌",
@@ -149,6 +168,7 @@ const zhHant: Strings = {
 };
 
 const ja: Strings = {
+  "language.label": "言語",
   "warn.desktop-blocked": "デスクトップショートカットがシステムポリシーによりブロックされました（セキュリティソフトが .lnk の書き込みを拒否）；スタートメニューのショートカットとアンインストール登録には影響しません",
   "warn.aumid-blocked": "タスクバー識別子（AUMID）の書き込みがシステムポリシーによりブロック；手動ピンのグループ化に影響する可能性があります",
   "log.title": "ログ",
@@ -192,6 +212,7 @@ const ja: Strings = {
 };
 
 const ko: Strings = {
+  "language.label": "언어",
   "warn.desktop-blocked": "바탕 화면 바로 가기가 시스템 정책에 의해 차단되었습니다(보안 소프트웨어가 .lnk 쓰기를 거부); 시작 메뉴 바로 가기와 제거 등록에는 영향이 없습니다",
   "warn.aumid-blocked": "작업 표시줄 식별자(AUMID) 쓰기가 시스템 정책에 의해 차단; 수동 고정 그룹화에 영향이 있을 수 있습니다",
   "log.title": "로그",
@@ -235,6 +256,7 @@ const ko: Strings = {
 };
 
 const fr: Strings = {
+  "language.label": "Langue",
   "warn.desktop-blocked": "Raccourci bureau bloqué par la politique système (le logiciel de sécurité a refusé l'écriture du .lnk) ; le raccourci du menu Démarrer et l'enregistrement de désinstallation ne sont pas affectés",
   "warn.aumid-blocked": "Estampille d'identité de barre des tâches (AUMID) bloquée par la politique système ; le regroupement des épinglage manuels peut être affecté",
   "log.title": "Journal",
@@ -278,6 +300,7 @@ const fr: Strings = {
 };
 
 const ru: Strings = {
+  "language.label": "Язык",
   "warn.desktop-blocked": "Ярлык на рабочем столе заблокирован системной политикой (security-ПО отклонило запись .lnk); ярлык в меню «Пуск» и регистрация деинсталлятора не затронуты",
   "warn.aumid-blocked": "Запись идентификатора панели задач (AUMID) заблокирована системной политикой; группировка ручного закрепления может пострадать",
   "log.title": "Журнал",
@@ -321,6 +344,7 @@ const ru: Strings = {
 };
 
 const es: Strings = {
+  "language.label": "Idioma",
   "warn.desktop-blocked": "Atajo de escritorio bloqueado por política del sistema (el software de seguridad denegó la escritura del .lnk); el atajo del menú Inicio y el registro de desinstalación no se ven afectados",
   "warn.aumid-blocked": "La escritura de la identidad de barra de tareas (AUMID) está bloqueada por política del sistema; la agrupación del anclado manual puede verse afectada",
   "log.title": "Registro",

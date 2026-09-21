@@ -178,6 +178,27 @@ mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB channels — overrides --color-primary
 ```
 
+### Wizard language
+
+The wizard asks for its language on the **first step**: a selector
+listing the eight supported locales, each labeled in its own language
+(English, 简体中文, 日本語, ...). Switching re-renders the UI strings
+and the license documents immediately — the agreement follows the
+selected locale through `license-locales` / `locale-paths` — and the
+choice is remembered for the next run in the per-user preferences file
+(`<local app data>/<product>/installer-prefs.json`, e.g.
+`%LOCALAPPDATA%\ShunDemo\installer-prefs.json` holding
+`{ "language": "zh-Hans" }`). Portable runs keep the choice in memory
+only: a portable copy writes no system state. `shell.language` stays
+the configuration pin — a remembered choice wins over it, then the
+system locale.
+
+The chosen language travels into the install flow: payload scripts
+receive it as the `SHUN_LANGUAGE` environment variable, and it is
+recorded in the on-disk install manifest (so repair/update passes can
+see it). What lands in the installed application's own configuration
+is up to the payload's scripts — shun only exports the fact.
+
 ## Source
 
 `[package.metadata.shun.source]` picks where the payload comes from at
