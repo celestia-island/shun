@@ -1,5 +1,5 @@
 import { defineComponent, onBeforeUnmount, onMounted, ref } from "vue";
-import { Box, FolderOpen, HardDrive, Monitor } from "lucide-vue-next";
+import { Box, ChevronLeft, ChevronRight, FolderOpen, HardDrive, Monitor } from "lucide-vue-next";
 import {
   HAlert,
   HButton,
@@ -39,6 +39,11 @@ interface DirDefaults {
   dir: string;
 }
 
+interface LicenseDoc {
+  title?: string | null;
+  body: string;
+}
+
 interface ShellView {
   product: ProductIdentity;
   modes: Mode[];
@@ -48,7 +53,7 @@ interface ShellView {
   log_level?: LogLevel;
   flash: boolean;
   attachments: AttachmentView[];
-  steps: { kind: string; columns?: number | null }[];
+  steps: { kind: string; columns?: number | null; licenses?: LicenseDoc[] }[];
 }
 
 interface AttachmentView {
@@ -105,8 +110,9 @@ export default defineComponent({
 
     const step = ref<StepKey>("mode");
     const agreed = ref(false);
-    const licenseText = ref("");
-    const licenseLoading = ref(true);
+    // License documents come from the resolved pipeline's license step
+    // (inlined at build time); the pager tracks the visible document.
+    const licenseIndex = ref(0);
 
     const running = ref(false);
     const installFailed = ref(false);
@@ -117,7 +123,7 @@ export default defineComponent({
     // Optional attachments: declared ones not bundled in this build offer a
     // post-install download on the done pane.
     const attachments = ref<AttachmentView[]>([]);
-    const steps = ref<{ kind: string; columns?: number | null }[]>([]);
+    const steps = ref<{ kind: string; columns?: number | null; licenses?: LicenseDoc[] }[]>([]);
     const downloaded = ref<Set<string>>(new Set());
     const downloading = ref<string | null>(null);
 
@@ -216,16 +222,6 @@ export default defineComponent({
         }
         if (payload.step) flowStep.value = payload.step;
       });
-      fetch("/demo-license.md")
-        .then((r) => r.text())
-        .then((text) => {
-          licenseText.value = text;
-          licenseLoading.value = false;
-        })
-        .catch(() => {
-          licenseText.value = t()["license.failed"];
-          licenseLoading.value = false;
-        });
     });
 
     onBeforeUnmount(() => {
@@ -258,6 +254,8 @@ export default defineComponent({
 
     function go(key: StepKey) {
       step.value = key;
+      // Re-entering the license page restarts the document pager.
+      if (key === "license") licenseIndex.value = 0;
       if (key === "install" && !installed.value) {
         void install();
       }
@@ -383,6 +381,8 @@ export default defineComponent({
     return () => {
       const strings$ = t();
       const modeStep = steps.value.find((s) => s.kind === "mode");
+      const licenseDocs = steps.value.find((s) => s.kind === "license")?.licenses ?? [];
+      const licenseDoc = licenseDocs[licenseIndex.value];
       const modeColumns = (modeStep as { columns?: number } | undefined)?.columns ?? modes.value.length;
       const modeItems = modes.value.map((id) => ({
         id,
@@ -448,11 +448,34 @@ export default defineComponent({
         ) : step.value === "license" ? (
           <section class="wizard-pane">
             <div class="license-box">
-              <HMarkdownRenderer
-                content={licenseText.value}
-                loading={licenseLoading.value}
-              />
+              <HMarkdownRenderer content={licenseDoc?.body ?? ""} />
             </div>
+            {licenseDocs.length > 1 && (
+              <div class="license-pager">
+                <HButton
+                  variant="ghost"
+                  size="sm"
+                  disabled={licenseIndex.value <= 0}
+                  ariaLabel={strings$["license.prevDoc"]}
+                  onClick={() => licenseIndex.value--}
+                >
+                  <ChevronLeft size={16} />
+                </HButton>
+                <span class="license-pager__label">
+                  {licenseIndex.value + 1}/{licenseDocs.length}{" "}
+                  {licenseDoc?.title ?? strings$["step.license"]}
+                </span>
+                <HButton
+                  variant="ghost"
+                  size="sm"
+                  disabled={licenseIndex.value >= licenseDocs.length - 1}
+                  ariaLabel={strings$["license.nextDoc"]}
+                  onClick={() => licenseIndex.value++}
+                >
+                  <ChevronRight size={16} />
+                </HButton>
+              </div>
+            )}
             <HCheckbox
               modelValue={agreed.value}
               label={strings$["license.agree"]}

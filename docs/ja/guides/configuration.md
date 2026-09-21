@@ -115,12 +115,30 @@ license = "docs/LICENSE.md"                # markdown、ライセンスステッ
 ja = "docs/LICENSE.ja.md"
 en = "docs/LICENSE.en.md"
 
+[[licenses]]                               # 追加のライセンス文書
+title = "Copyright notice"                 # 任意：本文上の見出し
+path = "NOTICE.md"                         # markdown、マニフェスト相対
+[licenses.locale-paths]                    # この文書のロケール別上書き
+ja = "NOTICE.ja.md"
+
 [[custom-steps]]                           # markdown コンテンツステップの注入
 key = "whats-new"
 after = "license"
 title = "What's New"
 markdown = "docs/whats-new.md"
 ```
+
+`license` + `license-locales` は単一文書の省略記法（シュガー）です。
+テーブル配列 `licenses` は追加の文書を宣言し、それぞれ任意の `title` と
+専用の `locale-paths` を持てます。両者は組み合わせ可能で、省略記法の
+文書が先、その後に宣言順で配列が続きます。一致するロケールのパス
+（`license-locales` または `locale-paths`）は基本の文書より優先され
+ます。ライセンスステップは文書を一度に 1 つ表示し、複数が解決された
+場合は前へ/次へのページャーで切り替えられます。同意チェックボックスは
+1 つで全文書を対象とします。解決済み JSON では各文書が `licenses`
+（title + body）として運ばれ、従来の `body` 文字列は全本文を区切り行で
+連結したものになるため、`body` しか読まない描画側でも契約全体を表示
+し続けられます。
 
 UI には 8 ロケール（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、`ru`、`es`）
 の既定テキストが同梱されています。`shell.language = "auto"` はシステムに追従し、

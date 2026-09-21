@@ -77,12 +77,21 @@ pub struct ShunConfig {
 
     /// License document (markdown), relative to the config source. Shown on
     /// the license step; per-locale overrides via [`Self::license_locales`].
+    /// This is the single-document sugar — [`Self::licenses`] declares
+    /// further documents, and both combine (the sugar document first).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<PathBuf>,
 
     /// Per-locale license overrides keyed by locale (`zh-Hans`, `ja`, ...).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub license_locales: BTreeMap<String, PathBuf>,
+
+    /// Additional license documents rendered on the license step after the
+    /// [`Self::license`] sugar document, each with an optional title and
+    /// its own per-locale path overrides. The single accept checkbox gates
+    /// every document; shells page through them when several resolve.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub licenses: Vec<LicenseDocConfig>,
 
     /// Extra content steps injected into the wizard, rendered as markdown.
     ///
@@ -263,7 +272,10 @@ impl ShunConfig {
                         .filter(|c| c.after == "mode")
                         .map(custom_to_step),
                 );
-                if self.license.is_some() || !self.license_locales.is_empty() {
+                if self.license.is_some()
+                    || !self.license_locales.is_empty()
+                    || !self.licenses.is_empty()
+                {
                     steps.push(bare_step(StepKind::License));
                     steps.extend(
                         self.custom_steps
@@ -283,21 +295,46 @@ impl ShunConfig {
             }
         };
 
-        let license_body = || -> Result<Option<String>, crate::error::ShunError> {
-            let path = locale
+        // The license documents, resolved per step: the legacy
+        // `license`/`license-locales` sugar first (titleless, so
+        // single-document configs keep their exact shape), then every
+        // [`Self::licenses`] entry in declaration order. Per document a
+        // matching locale path wins over the base one.
+        let license_docs = || -> Result<Vec<ResolvedLicenseDoc>, crate::error::ShunError> {
+            let mut docs = Vec::new();
+            let sugar = locale
                 .and_then(|l| self.license_locales.get(l))
                 .or(self.license.as_ref());
-            match path {
-                Some(path) => read_markdown(&path.display().to_string(), "license").map(Some),
-                None => Ok(None),
+            if let Some(path) = sugar {
+                docs.push(ResolvedLicenseDoc {
+                    title: None,
+                    body: read_markdown(&path.display().to_string(), "license")?,
+                });
             }
+            for doc in &self.licenses {
+                let path = locale
+                    .and_then(|l| doc.locale_paths.get(l))
+                    .unwrap_or(&doc.path);
+                docs.push(ResolvedLicenseDoc {
+                    title: doc.title.clone(),
+                    body: read_markdown(&path.display().to_string(), "license")?,
+                });
+            }
+            Ok(docs)
         };
 
         pipeline
             .into_iter()
             .map(|step| {
+                let licenses = if step.kind == StepKind::License {
+                    license_docs()?
+                } else {
+                    Vec::new()
+                };
                 let markdown = match (step.kind, step.markdown.as_deref()) {
-                    (StepKind::License, _) => license_body()?,
+                    // The legacy single-string `body` stays in sync with
+                    // the documents (see [`joined_license_body`]).
+                    (StepKind::License, _) => joined_license_body(&licenses),
                     (StepKind::Content, Some(markdown)) => {
                         Some(read_markdown(markdown, "content step")?)
                     }
@@ -320,10 +357,34 @@ impl ShunConfig {
                     kind: step.kind,
                     title: step.title.unwrap_or_default(),
                     body: markdown,
+                    licenses,
                     columns,
                 })
             })
             .collect()
+    }
+}
+
+/// Divider joining multiple license document bodies inside the legacy
+/// [`ResolvedStep::body`] string, so renderers that only know `body`
+/// still show the whole agreement.
+const LICENSE_BODY_DIVIDER: &str =
+    "\n\n--------------------------------------------------------------------\n\n";
+
+/// The legacy single-string `body` of a license step, derived from the
+/// resolved documents: `None` with zero documents, the lone body as-is
+/// with one, and every body joined by [`LICENSE_BODY_DIVIDER`] with
+/// several.
+fn joined_license_body(docs: &[ResolvedLicenseDoc]) -> Option<String> {
+    match docs.len() {
+        0 => None,
+        1 => Some(docs[0].body.clone()),
+        _ => Some(
+            docs.iter()
+                .map(|doc| doc.body.as_str())
+                .collect::<Vec<_>>()
+                .join(LICENSE_BODY_DIVIDER),
+        ),
     }
 }
 
@@ -722,6 +783,26 @@ pub struct LicenseSyslConfig {
     pub locales: Vec<String>,
 }
 
+/// One document of a multi-document license page
+/// (`[[package.metadata.shun.licenses]]`). Documents render in
+/// declaration order after the [`ShunConfig::license`] sugar document,
+/// each heading-able and locale-aware on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct LicenseDocConfig {
+    /// Heading shown above the document body (absent = untitled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+
+    /// License document (markdown), relative to the config source.
+    pub path: PathBuf,
+
+    /// Per-locale overrides for this document keyed by locale
+    /// (`zh-Hans`, `ja`, ...); a matching entry wins over `path`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub locale_paths: BTreeMap<String, PathBuf>,
+}
+
 /// An optional companion resource (an asset pack) declared beside the
 /// payload. Full builds carry the attachment inside the payload under its
 /// dest prefix; lite builds embed only this declaration, and the shell
@@ -820,6 +901,19 @@ impl StepKind {
     }
 }
 
+/// One license document resolved for embedding: the locale-aware path
+/// is read and inlined at resolve time, so runtime shells carry no file
+/// dependencies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedLicenseDoc {
+    /// Heading shown above the body (`None` = the untitled legacy
+    /// document from the `license` sugar).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Inlined markdown body.
+    pub body: String,
+}
+
 /// A wizard step with its content resolved for embedding: markdown
 /// documents (license and content steps) are read relative to the
 /// config source and inlined, so runtime shells carry no file
@@ -833,7 +927,20 @@ pub struct ResolvedStep {
     /// Timeline label.
     pub title: String,
     /// Inlined markdown body (`None` for non-content steps).
+    ///
+    /// License steps mirror [`Self::licenses`] here for back-compat with
+    /// single-string renderers: `None` with zero documents, the lone
+    /// body as-is with one, and with several every body concatenated in
+    /// order, joined by a divider line
+    /// (`\n\n------…------\n\n`), so nothing disappears from panes that
+    /// only read `body`.
     pub body: Option<String>,
+    /// Resolved license documents (`license` steps; empty otherwise), in
+    /// render order: the `license` sugar document first, then the
+    /// declared [`ShunConfig::licenses`]. Shells page through these when
+    /// more than one resolves; the accept checkbox gates all of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub licenses: Vec<ResolvedLicenseDoc>,
     /// Mode-grid columns (`mode` steps; `None` = one column per mode).
     pub columns: Option<u8>,
 }
@@ -1016,6 +1123,10 @@ struct ShunMetadataDraft {
     /// Per-locale license overrides keyed by locale.
     #[serde(default, rename = "license-locales")]
     license_locales: Option<BTreeMap<String, String>>,
+    /// `[[package.metadata.shun.licenses]]` — additional license
+    /// documents (multi-document license pages).
+    #[serde(default)]
+    licenses: Option<Vec<LicenseDocConfig>>,
     /// Custom content steps injected into the wizard.
     #[serde(default)]
     custom_steps: Option<Vec<CustomStepConfig>>,
@@ -1073,6 +1184,7 @@ impl ShunMetadataDraft {
                 .into_iter()
                 .map(|(k, v)| (k, PathBuf::from(v)))
                 .collect(),
+            licenses: self.licenses.unwrap_or_default(),
             custom_steps: self.custom_steps.unwrap_or_default(),
             steps: self.steps,
             signing: self.signing,
@@ -1108,6 +1220,7 @@ mod tests {
             license_sysl: None,
             license: None,
             license_locales: BTreeMap::new(),
+            licenses: Vec::new(),
             custom_steps: Vec::new(),
             steps: None,
             signing: None,
@@ -1452,6 +1565,203 @@ version = \"1.0.0\"
             vec![StepKind::Mode, StepKind::License, StepKind::Install]
         );
         assert_eq!(steps[1].body.as_deref(), Some("# terms\n"));
+    }
+
+    #[test]
+    fn licenses_parse_kebab_case_from_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "multi-license-demo"
+version = "0.1.0"
+
+[package.metadata.shun]
+product = "MultiLicense"
+
+[[package.metadata.shun.licenses]]
+title = "Copyright notice"
+path = "NOTICE.md"
+[package.metadata.shun.licenses.locale-paths]
+zh-Hans = "NOTICE.zh-Hans.md"
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        assert_eq!(config.licenses.len(), 1);
+        let doc = &config.licenses[0];
+        assert_eq!(doc.title.as_deref(), Some("Copyright notice"));
+        assert_eq!(doc.path, Path::new("NOTICE.md"));
+        assert_eq!(
+            doc.locale_paths.get("zh-Hans"),
+            Some(&PathBuf::from("NOTICE.zh-Hans.md"))
+        );
+    }
+
+    #[test]
+    fn license_documents_resolve_locale_aware_and_sugar_first() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("LICENSE.md"), "sugar body\n").unwrap();
+        std::fs::write(dir.path().join("LICENSE.zh.md"), "sugar body zh\n").unwrap();
+        std::fs::write(dir.path().join("NOTICE.md"), "notice body\n").unwrap();
+        std::fs::write(dir.path().join("NOTICE.zh-Hans.md"), "notice body zh\n").unwrap();
+
+        let mut config = sample();
+        config.license = Some("LICENSE.md".into());
+        config
+            .license_locales
+            .insert("zh-Hans".into(), "LICENSE.zh.md".into());
+        config.licenses = vec![LicenseDocConfig {
+            title: Some("Demo notice".into()),
+            path: "NOTICE.md".into(),
+            locale_paths: BTreeMap::from([("zh-Hans".into(), "NOTICE.zh-Hans.md".into())]),
+        }];
+
+        // A matching locale path wins, and the sugar document stays first.
+        let steps = config.resolve_steps(dir.path(), Some("zh-Hans")).unwrap();
+        let license = steps.iter().find(|s| s.kind == StepKind::License).unwrap();
+        assert_eq!(license.licenses.len(), 2);
+        assert_eq!(license.licenses[0].title, None);
+        assert_eq!(license.licenses[0].body, "sugar body zh\n");
+        assert_eq!(license.licenses[1].title.as_deref(), Some("Demo notice"));
+        assert_eq!(license.licenses[1].body, "notice body zh\n");
+
+        // Without a locale the base paths resolve.
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        let license = steps.iter().find(|s| s.kind == StepKind::License).unwrap();
+        assert_eq!(license.licenses[0].body, "sugar body\n");
+        assert_eq!(license.licenses[1].body, "notice body\n");
+    }
+
+    #[test]
+    fn licenses_alone_trigger_the_license_step() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("NOTICE.md"), "notice\n").unwrap();
+        let mut config = sample();
+        config.licenses = vec![LicenseDocConfig {
+            title: None,
+            path: "NOTICE.md".into(),
+            locale_paths: BTreeMap::new(),
+        }];
+
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        assert_eq!(
+            steps.iter().map(|s| s.kind).collect::<Vec<_>>(),
+            vec![StepKind::Mode, StepKind::License, StepKind::Install]
+        );
+        assert_eq!(steps[1].licenses.len(), 1);
+        assert_eq!(steps[1].licenses[0].body, "notice\n");
+    }
+
+    #[test]
+    fn license_body_concatenation_semantics() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "a").unwrap();
+        std::fs::write(dir.path().join("b.md"), "b").unwrap();
+
+        let pipeline = |config: &ShunConfig| {
+            let mut cfg = config.clone();
+            cfg.steps = Some(vec![
+                bare_step(StepKind::License),
+                bare_step(StepKind::Install),
+            ]);
+            cfg.resolve_steps(dir.path(), None).unwrap()
+        };
+
+        // Zero documents: `body` stays None (a declared pipeline may
+        // carry a bare license step).
+        let steps = pipeline(&sample());
+        assert_eq!(steps[0].body, None);
+        assert!(steps[0].licenses.is_empty());
+
+        // One document: `body` is exactly that body.
+        let mut config = sample();
+        config.license = Some("a.md".into());
+        let steps = pipeline(&config);
+        assert_eq!(steps[0].body.as_deref(), Some("a"));
+        assert_eq!(steps[0].licenses.len(), 1);
+
+        // Several documents: `body` concatenates in order over the
+        // divider while `licenses` keeps them separate.
+        config.licenses = vec![LicenseDocConfig {
+            title: Some("B".into()),
+            path: "b.md".into(),
+            locale_paths: BTreeMap::new(),
+        }];
+        let steps = pipeline(&config);
+        assert_eq!(
+            steps[0].body.as_deref(),
+            Some(&format!("a{LICENSE_BODY_DIVIDER}b")[..]),
+        );
+        assert_eq!(steps[0].licenses.len(), 2);
+        assert_eq!(steps[0].licenses[1].title.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn resolved_license_step_serializes_back_compat() {
+        let bare = ResolvedStep {
+            kind: StepKind::License,
+            align: StepAlign::Start,
+            title: String::new(),
+            body: None,
+            licenses: Vec::new(),
+            columns: None,
+        };
+
+        // Zero documents: no `licenses` key at all, `body` null.
+        let json = serde_json::to_value(&bare).unwrap();
+        assert!(json.get("licenses").is_none());
+        assert_eq!(json["body"], serde_json::Value::Null);
+
+        // Single document: the pre-0.4 key set plus the additive
+        // `licenses` array; `body` carries the document as-is so old
+        // consumers keep working.
+        let single = ResolvedStep {
+            body: Some("solo".into()),
+            licenses: vec![ResolvedLicenseDoc {
+                title: None,
+                body: "solo".into(),
+            }],
+            ..bare.clone()
+        };
+        let json = serde_json::to_value(&single).unwrap();
+        let mut keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["align", "body", "columns", "kind", "licenses", "title"]
+        );
+        assert_eq!(json["body"], "solo");
+
+        // Several documents: `licenses` carries them separately while
+        // `body` is the divider concatenation.
+        let multi = ResolvedStep {
+            body: Some(format!("a{LICENSE_BODY_DIVIDER}b")),
+            licenses: vec![
+                ResolvedLicenseDoc {
+                    title: Some("A".into()),
+                    body: "a".into(),
+                },
+                ResolvedLicenseDoc {
+                    title: None,
+                    body: "b".into(),
+                },
+            ],
+            ..bare
+        };
+        let json = serde_json::to_value(&multi).unwrap();
+        assert_eq!(json["licenses"].as_array().unwrap().len(), 2);
+        assert_eq!(json["licenses"][0]["title"], "A");
+        assert!(json["licenses"][1].get("title").is_none());
+        assert_eq!(json["body"], format!("a{LICENSE_BODY_DIVIDER}b"));
     }
 
     #[test]

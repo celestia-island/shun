@@ -60,6 +60,18 @@ fn main() {
             manifest_dir.join(doc).display()
         );
     }
+    for license in &config.licenses {
+        println!(
+            "cargo:rerun-if-changed={}",
+            manifest_dir.join(&license.path).display()
+        );
+        for doc in license.locale_paths.values() {
+            println!(
+                "cargo:rerun-if-changed={}",
+                manifest_dir.join(doc).display()
+            );
+        }
+    }
     for step in &config.steps.clone().unwrap_or_default() {
         if step.kind == shun::config::StepKind::Content {
             if let Some(markdown) = &step.markdown {

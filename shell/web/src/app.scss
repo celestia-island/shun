@@ -218,6 +218,21 @@ body {
   }
 }
 
+/* Multi-document license pager — sits below the box, one document at a
+   time; the label carries position + the current document's title */
+.license-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+
+  .license-pager__label {
+    font-size: var(--text-sm);
+    color: rgb(var(--color-muted));
+    white-space: nowrap;
+  }
+}
+
 .wizard-done {
   align-items: flex-start;
 

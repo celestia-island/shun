@@ -297,7 +297,7 @@ const TEXTS_ZH: Texts = Texts {
     step_done: "完成",
     next: "下一步",
     back: "上一步",
-    license_agree: "我已阅读并同意上述许可协议",
+    license_agree: "我已阅读并同意上述全部协议文档",
     scope_user: "仅为我安装",
     scope_user_hint: "每用户安装：写入当前用户的注册表与开始菜单，全程无需管理员权限。",
     scope_machine: "为本机所有用户安装",
@@ -346,7 +346,7 @@ const TEXTS_EN: Texts = Texts {
     step_done: "Done",
     next: "Next",
     back: "Back",
-    license_agree: "I have read and agree to the license above",
+    license_agree: "I have read and agree to all documents above",
     scope_user: "Install for me only",
     scope_user_hint: "Per-user install: current user's registry and Start Menu; no administrator needed.",
     scope_machine: "Install for all users of this PC",
@@ -523,6 +523,10 @@ struct FallbackApp {
     step: usize,
     /// The license checkbox (`license` steps gate progression on it).
     license_accepted: bool,
+    /// Which license document the pane shows (multi-document licenses
+    /// page through [`shun::config::ResolvedStep::licenses`]); reset
+    /// whenever the wizard moves to another step.
+    license_doc_index: usize,
     /// Current progress step + percent (`None` while indeterminate).
     progress: Option<(String, Option<u8>)>,
     /// Overall run completion 0-100 (phase-weighted), `None` before the
@@ -571,6 +575,7 @@ impl FallbackApp {
             steps,
             step: 0,
             license_accepted: false,
+            license_doc_index: 0,
             progress: None,
             overall: None,
             terminal: crate::terminal::Terminal::new(true),
@@ -1094,14 +1099,40 @@ impl FallbackApp {
         self.scope_choice(ui);
     }
 
-    /// The license pane: the agreement text with an accept checkbox.
+    /// The license pane: the agreement documents (paged when several
+    /// resolve) with an accept checkbox gating all of them.
     fn license_view(&mut self, ui: &mut egui::Ui) {
         let theme = &self.theme;
-        let body = self
-            .steps
-            .get(self.step)
-            .and_then(|step| step.body.as_deref())
-            .unwrap_or_default();
+        let texts = self.texts;
+        // Snapshot the documents so the ui closures below can mutate
+        // wizard state freely (the step borrow would otherwise span the
+        // checkbox and pager).
+        let docs: Vec<(Option<String>, String)> = {
+            let step = self.steps.get(self.step);
+            let licenses = step.map(|s| s.licenses.as_slice()).unwrap_or(&[]);
+            if licenses.is_empty() {
+                // Legacy single-string body: one untitled document.
+                step.and_then(|s| s.body.clone())
+                    .map(|body| vec![(None, body)])
+                    .unwrap_or_default()
+            } else {
+                licenses
+                    .iter()
+                    .map(|doc| (doc.title.clone(), doc.body.clone()))
+                    .collect()
+            }
+        };
+        let total = docs.len();
+        let index = if total == 0 {
+            0
+        } else {
+            self.license_doc_index.min(total - 1)
+        };
+        let (title, body) = docs
+            .get(index)
+            .map(|(title, body)| (title.as_deref(), body.as_str()))
+            .unwrap_or((None, ""));
+
         Frame::default()
             .fill(theme.surface)
             .stroke(Stroke::new(1.0f32, theme.border))
@@ -1114,9 +1145,59 @@ impl FallbackApp {
                     .max_height(ui.available_height() - 44.0)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
+                        if let Some(title) = title {
+                            ui.label(RichText::new(title).strong().size(15.0).color(theme.text));
+                            ui.add_space(6.0);
+                        }
                         ui.label(RichText::new(body).size(12.5).color(theme.text_secondary));
                     });
             });
+        // Pager for multi-document licenses: [<] left, the position
+        // indicator centered between, [>] right (disabled at the ends).
+        if total > 1 {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let pager_button = |ui: &mut egui::Ui, glyph: &str, enabled: bool| {
+                    ui.add_enabled(
+                        enabled,
+                        Button::new(RichText::new(glyph).size(13.0).color(theme.text_secondary))
+                            .fill(theme.surface)
+                            .stroke(Stroke::new(1.0f32, theme.border))
+                            .corner_radius(CornerRadius::same(6))
+                            .min_size(Vec2::new(44.0, 24.0)),
+                    )
+                };
+                if pager_button(ui, "[<]", index > 0).clicked() {
+                    self.license_doc_index = index - 1;
+                }
+                let indicator = format!(
+                    "{}/{} {}",
+                    index + 1,
+                    total,
+                    title.unwrap_or(texts.step_license)
+                );
+                let galley = ui.painter().layout_no_wrap(
+                    indicator.clone(),
+                    egui::FontId::proportional(12.5),
+                    theme.text_secondary,
+                );
+                // Reserve the free space around the indicator (minus the
+                // right button's share) so it sits centered between the
+                // two pager buttons.
+                let pad = ((ui.available_width() - galley.size().x - 44.0) / 2.0).max(0.0);
+                ui.add_space(pad);
+                ui.label(
+                    RichText::new(indicator)
+                        .size(12.5)
+                        .color(theme.text_secondary),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if pager_button(ui, "[>]", index + 1 < total).clicked() {
+                        self.license_doc_index = index + 1;
+                    }
+                });
+            });
+        }
         ui.add_space(8.0);
         ui.checkbox(&mut self.license_accepted, self.texts.license_agree);
     }
@@ -1567,10 +1648,18 @@ impl FallbackApp {
                                 Some(Outcome::Failed(_)) => {
                                     self.stage = Stage::Configure;
                                     self.outcome = None;
+                                    // Re-entering the wizard restarts
+                                    // the license pager at doc 1.
+                                    self.license_doc_index = 0;
                                 }
                                 _ => std::process::exit(0),
                             },
-                            Stage::Configure if !on_last_step => self.step += 1,
+                            Stage::Configure if !on_last_step => {
+                                // Moving to another step restarts the
+                                // license pager at its first document.
+                                self.license_doc_index = 0;
+                                self.step += 1;
+                            }
                             _ => self.spawn_worker(ctx, uninstalling),
                         }
                     }
@@ -1604,6 +1693,7 @@ impl FallbackApp {
                 };
                 if configuring {
                     if self.step > 0 && ghost(ui, self.texts.back) {
+                        self.license_doc_index = 0;
                         self.step -= 1;
                     }
                     if on_last_step && ghost(ui, self.texts.uninstall) {

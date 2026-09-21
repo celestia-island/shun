@@ -118,12 +118,32 @@ license = "docs/LICENSE.md"                # markdown, affiché à l'étape lice
 fr = "docs/LICENSE.fr.md"
 en = "docs/LICENSE.en.md"
 
+[[licenses]]                               # documents de licence additionnels
+title = "Copyright notice"                 # en-tête optionnel au-dessus du corps
+path = "NOTICE.md"                         # markdown, relatif au manifeste
+[licenses.locale-paths]                    # substitutions par locale de ce document
+fr = "NOTICE.fr.md"
+
 [[custom-steps]]                           # injection d'une étape markdown
 key = "whats-new"
 after = "license"
 title = "What's New"
 markdown = "docs/whats-new.md"
 ```
+
+`license` + `license-locales` sont le raccourci à document unique ; le
+tableau de tables `licenses` déclare des documents supplémentaires,
+chacun avec un `title` optionnel et ses propres `locale-paths`. Les
+deux se combinent : le document du raccourci vient en premier, puis le
+tableau dans l'ordre de déclaration. Un chemin de locale correspondant
+(`license-locales` ou `locale-paths`) l'emporte sur le document de
+base. L'étape licence affiche un document à la fois — avec un pager
+précédent/suivant quand plusieurs se résolvent — et l'unique case
+d'acceptation couvre l'ensemble. Dans le JSON résolu, chaque document
+est transporté sous `licenses` (title + body) ; la chaîne historique
+`body` concatène tous les corps joints par une ligne de séparation,
+afin que les moteurs de rendu qui ne lisent que `body` continuent
+d'afficher l'accord complet.
 
 L'interface embarque huit locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`,
 `fr`, `ru`, `es`) avec leurs textes par défaut ; `shell.language = "auto"`

@@ -25,6 +25,10 @@
 pub mod config;
 pub mod error;
 pub mod flow;
+// Install-target filesystem probes: drive enumeration (fixed drives
+// included, unlike the flash backend's removable-only list), writability
+// probing, and conventional install-root candidates.
+pub mod fs_probe;
 pub mod msix;
 pub mod payload;
 // The online payload source rides the optional `ureq` dependency; without

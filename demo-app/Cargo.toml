@@ -29,6 +29,14 @@ publisher = "celestia-island"
 logo = "../docs/logo.webp"
 payload = "../examples/demo_payload"
 main-exe = "bin/shun-demo.exe"
+# Multi-document license page: the `license` sugar carries the main
+# agreement (untitled), `licenses` appends further documents — the shells
+# page through them and one accept checkbox gates all of them.
+license = "../LICENSE"
+
+[[package.metadata.shun.licenses]]
+title = "Demo notice"
+path = "NOTICE.md"
 
 [package.metadata.shun.install]
 local = true
@@ -53,6 +61,9 @@ kind = "mode"
 
 [[package.metadata.shun.steps]]
 kind = "scope"
+
+[[package.metadata.shun.steps]]
+kind = "license"
 
 [[package.metadata.shun.steps]]
 kind = "install"
