@@ -38,6 +38,27 @@ license = "../LICENSE"
 title = "Demo notice"
 path = "NOTICE.md"
 
+# Theme surface: page gradient, a slightly different rail plate, and
+# (documented, not enabled here — it would embed the bytes) the hikari
+# wallpaper chain with online candidates and an embedded fallback:
+#
+#   [package.metadata.shun.shell.theme.wallpaper]
+#   sources = [
+#     { video = "https://cdn.example/a.mp4" },
+#     { video = "https://mirror.example/a.mp4" },
+#     { image = "assets/fallback.png" },
+#   ]
+[package.metadata.shun.shell.theme]
+mode = "dark"
+background = { from = "#0B1220", to = "#16223A", angle = 120 }
+rail-background = "#0E1728"
+
+# A named build variant (shun build --variant lite): payload override +
+# shell-build env, the flavor-marker channel.
+[[package.metadata.shun.variant]]
+name = "lite"
+env = { SHUN_FLAVOR = "lite" }
+
 [package.metadata.shun.install]
 local = true
 portable = true

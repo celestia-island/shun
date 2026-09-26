@@ -22,12 +22,14 @@ fn main() {
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo");
 
     // Delivery manifest resolution: the `shun build` CLI points
-    // SHUN_MANIFEST at the target application's manifest; a plain cargo
-    // build of the shell falls back to the demo application's manifest —
-    // one source of truth for the comprehensive demo (product identity,
-    // payload, MSIX inputs all live there).
+    // SHUN_MANIFEST at the application's manifest; a plain cargo build of
+    // the shell falls back to the sibling demo application's manifest —
+    // one source of truth (product identity, payload, license all live
+    // there). SHUN_VARIANT applies the same named variant the CLI
+    // selected, so the embedded payload/faces match the packed artifact.
     println!("cargo:rerun-if-env-changed=SHUN_MANIFEST");
-    let manifest_path = std::env::var("SHUN_MANIFEST")
+    println!("cargo:rerun-if-env-changed=SHUN_VARIANT");
+    let mut manifest_path = std::env::var("SHUN_MANIFEST")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             Path::new(&own_manifest_dir)
@@ -42,9 +44,20 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo");
     let out_dir = Path::new(&out_dir);
 
-    // 1. Resolve the shun configuration (metadata.shun or standalone doc).
-    let config = shun::config::ShunConfig::from_any(&manifest_path)
+    // 1. Resolve the shun configuration (metadata.shun or standalone
+    //    doc), then apply the selected variant's overrides so the
+    //    embedded payload matches what `shun build --variant` packs.
+    let mut config = shun::config::ShunConfig::from_any(&manifest_path)
         .expect("shun metadata in the delivery manifest parses");
+    if let Ok(variant) = std::env::var("SHUN_VARIANT") {
+        config
+            .apply_variant(&variant)
+            .unwrap_or_else(|e| panic!("SHUN_VARIANT: {e}"));
+    }
+    // Wallpaper backgrounds resolve to data URLs here: the runtime
+    // config must carry its pixels (a single-file installer serves no
+    // asset files). Theme images read relative to the manifest.
+    embed_theme_images(&mut config, &manifest_dir);
     let config_json = serde_json::to_vec_pretty(&config).expect("config serializes");
     std::fs::write(out_dir.join("shun-config.json"), config_json).expect("write embedded config");
     println!("cargo:rerun-if-changed={}", manifest_path.display());
@@ -157,4 +170,95 @@ fn main() {
         tauri_build::WindowsAttributes::new().app_manifest(include_str!("app.manifest")),
     ))
     .expect("tauri-build failed");
+}
+
+/// Rewrites every wallpaper `BackgroundSpec::Image` in the theme into a
+/// `DataUrl` carrying the image bytes (base64, mime by extension), so
+/// the embedded runtime config renders wallpapers with no sidecar
+/// files. Missing files are a build error — a declared wallpaper that
+/// silently vanishes is a broken theme.
+fn embed_theme_images(config: &mut shun::config::ShunConfig, manifest_dir: &std::path::Path) {
+    use base64::Engine;
+    use shun::config::{BackgroundSpec, ThemeConfig, WallpaperSourceSpec};
+
+    let Some(theme) = config.shell.as_mut().and_then(|shell| shell.theme.as_mut()) else {
+        return;
+    };
+    // The wallpaper chain embeds the same way: local videos and images
+    // become data URLs (offline playback), URLs pass through.
+    if let Some(wallpaper) = theme.wallpaper.as_mut() {
+        for source in wallpaper.sources.iter_mut() {
+            let (kind, path_ref) = match source {
+                WallpaperSourceSpec::Video { video } => ("video", video),
+                WallpaperSourceSpec::Image { image } => ("image", image),
+                WallpaperSourceSpec::Pipeline { .. } => continue,
+            };
+            if path_ref.starts_with("https://") || path_ref.starts_with("http://") {
+                continue;
+            }
+            let path = manifest_dir.join(path_ref.clone());
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|e| panic!("wallpaper {kind} {}: {e}", path.display()));
+            let mime = match path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "mp4" | "m4v" => "video/mp4",
+                "webm" => "video/webm",
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "webp" => "image/webp",
+                "gif" => "image/gif",
+                other => panic!("wallpaper {kind} {other}: unsupported format"),
+            };
+            let url = format!(
+                "data:{mime};base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            );
+            println!("cargo:rerun-if-changed={}", path.display());
+            *path_ref = url;
+        }
+    }
+    let ThemeConfig {
+        background,
+        rail_background,
+        pane_background,
+        ..
+    } = theme;
+    for spec in [background, rail_background, pane_background]
+        .into_iter()
+        .flatten()
+    {
+        {
+            let inner = spec;
+            if let BackgroundSpec::Image { image } = inner {
+                let path = manifest_dir.join(image.clone());
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|e| panic!("theme wallpaper {}: {e}", path.display()));
+                let mime = match path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "png" => "image/png",
+                    "jpg" | "jpeg" => "image/jpeg",
+                    "webp" => "image/webp",
+                    "gif" => "image/gif",
+                    "bmp" => "image/bmp",
+                    other => panic!("theme wallpaper {other}: unsupported format"),
+                };
+                let url = format!(
+                    "data:{mime};base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                );
+                println!("cargo:rerun-if-changed={}", path.display());
+                *inner = BackgroundSpec::DataUrl(url);
+            }
+        }
+    }
 }

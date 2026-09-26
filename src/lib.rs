@@ -23,6 +23,7 @@
 //! three consumers between minor versions.
 
 pub mod config;
+pub mod env_probe;
 pub mod error;
 pub mod flow;
 // Install-target filesystem probes: drive enumeration (fixed drives
@@ -48,5 +49,7 @@ pub mod targets;
 // same optional `ureq` dependency as the online payload source.
 #[cfg(feature = "online")]
 pub mod update;
+
+pub mod wizard;
 
 pub use error::ShunError;

@@ -1,23 +1,28 @@
 [package]
-name = "shun_demo_shell"
+name = "shun_installer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license-file = "../LICENSE"
 publish = false # demo shell for the shun runtime, never published
-description = "Shun demo shell — hikari UI over the shun install flow"
+description = "Shun installer shell — hikari UI over the shun install flow"
 
 [[bin]]
-name = "shun-demo-shell"
+name = "shun-installer"
 path = "src/main.rs"
 
 [build-dependencies]
+base64 = "^0.22"
 shun = { path = ".." }
 tauri-build = "^2"
 serde_json = "^1"
 
 [dependencies]
+# Argument face + the TUI renderer.
+clap = { version = "^4", features = ["derive"] }
+ratatui = "^0.29"
+crossterm = "^0.28"
 eframe = "0.32.3"
 egui = "0.32.3"
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }

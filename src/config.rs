@@ -50,6 +50,13 @@ pub struct ShunConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceConfig>,
 
+    /// Build variants: named artifact configurations (payload override,
+    /// face overrides, shell-build env) the `shun build --variant` flag
+    /// selects — the axes behind an installer matrix (architecture and
+    /// OS come from `--target`, resource packs ride the payload dirs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variants: Option<Vec<VariantConfig>>,
+
     /// Update watch: mirror sources probed in order plus the files
     /// resolved under the first reachable one (see [`crate::update`]).
     /// The shell fetches the resolved URLs itself — a `latest` version
@@ -661,6 +668,68 @@ pub struct ShellUiConfig {
     /// top, Docker-Desktop style) or `oldest` (append at the tail).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_order: Option<LogOrder>,
+
+    /// Interface faces this product's shell may present
+    /// (`webview`/`egui`/`tui`). Absent = all three. The headless CLI
+    /// face is the substrate (`--silent`, the ARP uninstall string) and
+    /// cannot be disabled. Requesting a disabled face is an error;
+    /// auto-selection skips disabled faces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faces: Option<Vec<UiFace>>,
+}
+
+/// One named build variant: an artifact configuration the
+/// `shun build --variant <name>` flag selects. Resource-pack flavors
+/// stage their extra content into the variant's payload directory
+/// before the build (the wowsp full/lite pattern); `env` reaches the
+/// shell's cargo build (and its build.rs) so flavors can embed markers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VariantConfig {
+    /// The variant's id and artifact-name suffix.
+    pub name: String,
+    /// Payload directory override (relative to the manifest).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<PathBuf>,
+    /// Face overrides for this variant's shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faces: Option<Vec<UiFace>>,
+    /// Environment variables handed to the shell build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<std::collections::BTreeMap<String, String>>,
+}
+
+impl ShunConfig {
+    /// Applies a named variant in place: the payload and face overrides
+    /// take effect (the env reaches the shell build through the CLI).
+    /// Unknown names are an error.
+    pub fn apply_variant(&mut self, name: &str) -> Result<(), String> {
+        let variant = self
+            .variants
+            .as_ref()
+            .and_then(|vs| vs.iter().find(|v| v.name == name))
+            .cloned()
+            .ok_or_else(|| format!("unknown variant `{name}`"))?;
+        if let Some(payload) = variant.payload {
+            self.payload = Some(payload);
+        }
+        if let Some(faces) = variant.faces {
+            let shell = self.shell.get_or_insert_with(Default::default);
+            shell.faces = Some(faces);
+        }
+        Ok(())
+    }
+}
+
+/// One interface face a shell can render.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UiFace {
+    /// The tauri2 webview GUI (the default when the runtime exists).
+    Webview,
+    /// The egui GUI (no WebView2 needed).
+    Egui,
+    /// The ratatui terminal wizard (needs a TTY).
+    Tui,
 }
 
 /// The install pane's log line ordering.
@@ -711,6 +780,101 @@ pub struct ThemeConfig {
     /// Accent tint override as RGB channels (drives --color-primary).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent: Option<[u8; 3]>,
+    /// The wizard's background: a solid color, a gradient, or a
+    /// wallpaper image (embedded at build time). Per-side overrides
+    /// below win where set; without any, the theme's default surface
+    /// applies and the rail sits at a slight brightness offset from the
+    /// pane (the classic installer look).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<BackgroundSpec>,
+    /// The left step rail's own background (color, gradient or
+    /// wallpaper) — "only the left side has a background", the old-
+    /// school option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rail_background: Option<BackgroundSpec>,
+    /// The right pane's own background — the mirrored option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_background: Option<BackgroundSpec>,
+    /// Whether the USER may flip light/dark in-session (a toggle in
+    /// the title bar's right controls). `false` (the default) pins
+    /// whatever `mode` resolves — the installer look stays exactly as
+    /// themed. The resolution itself follows hikari's rules: `system`
+    /// tracks the OS preference live, `light`/`dark` pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_adjustable: Option<bool>,
+    /// The hikari wallpaper stack: media sources tried in order
+    /// (offline videos/images embed as data URLs at build time; online
+    /// entries stream). When every source fails the surface stands
+    /// down to the solid floor (the theme background / page token).
+    /// Pipeline sources need a host renderer; without one they too
+    /// stand down — hikari's own contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallpaper: Option<WallpaperSpec>,
+}
+
+/// The wallpaper source chain — first entry that renders wins.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WallpaperSpec {
+    /// Ordered candidates: a local `video`/`image` path embeds at
+    /// build time, an `https://` URL streams online, a `pipeline`
+    /// references a host shader preset.
+    pub sources: Vec<WallpaperSourceSpec>,
+}
+
+/// One wallpaper candidate, mapping onto hikari's `WallpaperSource`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WallpaperSourceSpec {
+    /// A video (local path embeds; a URL streams).
+    Video { video: String },
+    /// An image (local path embeds; a URL loads).
+    Image { image: String },
+    /// A host pipeline preset (shaders; the glTF model type is retired
+    /// upstream — pipelines are its replacement).
+    Pipeline { pipeline: String },
+}
+
+/// One background recipe. A bare string is a solid color; a table is a
+/// gradient (`from`/`to`, optional `angle`) or a wallpaper (`image`,
+/// a path relative to the manifest, embedded at build time).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum BackgroundSpec {
+    /// Solid color (any CSS color string the web face understands).
+    Color(String),
+    /// Linear gradient.
+    Gradient {
+        from: String,
+        to: String,
+        #[serde(default = "default_gradient_angle")]
+        angle: u16,
+    },
+    /// Wallpaper image (embedded; resolved to a data URL at build
+    /// time for the runtime config).
+    Image { image: String },
+    /// Build-time-resolved wallpaper (data URL) — what the runtime
+    /// config carries; never written by hand.
+    #[serde(skip_deserializing)]
+    DataUrl(String),
+}
+
+fn default_gradient_angle() -> u16 {
+    135
+}
+
+impl BackgroundSpec {
+    /// The CSS `background` shorthand value for the web face
+    /// (gradients as `linear-gradient`, wallpapers as `url(...)`).
+    pub fn css(&self) -> String {
+        match self {
+            BackgroundSpec::Color(color) => color.clone(),
+            BackgroundSpec::Gradient { from, to, angle } => {
+                format!("linear-gradient({angle}deg, {from}, {to})")
+            }
+            BackgroundSpec::Image { image } => format!("url({image})"),
+            BackgroundSpec::DataUrl(url) => format!("url({url})"),
+        }
+    }
 }
 
 /// Theme mode.
@@ -1102,6 +1266,10 @@ struct ShunMetadataDraft {
     /// `[package.metadata.shun.shell]` — runtime UI knobs.
     #[serde(default)]
     shell: Option<ShellUiConfig>,
+    /// `[[package.metadata.shun.variant]]` — named build variants
+    /// (manifest key is singular `variant`, the table-array idiom).
+    #[serde(default, rename = "variant")]
+    variants: Option<Vec<VariantConfig>>,
     /// `[package.metadata.shun.source]` — embedded (default) or online.
     #[serde(default)]
     source: Option<SourceConfig>,
@@ -1163,6 +1331,7 @@ impl ShunMetadataDraft {
         }
 
         ShunConfig {
+            variants: self.variants,
             product: ProductIdentity {
                 name: self.product.unwrap_or(product_name),
                 version,
@@ -1194,11 +1363,71 @@ impl ShunMetadataDraft {
 }
 
 #[cfg(test)]
+mod theme_variant_tests {
+    use super::*;
+
+    /// The face list, variants and background specs parse from the
+    /// manifest table shapes and round-trip through apply_variant.
+    #[test]
+    fn faces_variants_and_backgrounds_parse() {
+        let raw = r##"
+product = "app"
+payload = "payload"
+
+[shell.theme]
+background = { from = "#000", to = "#111" }
+rail-background = "#0A0A0A"
+user-adjustable = true
+[shell.theme.wallpaper]
+sources = [
+  { video = "https://cdn.example/a.mp4" },
+  { image = "res/fallback.png" },
+]
+
+[shell]
+faces = ["egui", "tui"]
+
+[[variant]]
+name = "lite"
+payload = "payload-lite"
+env = { SHUN_FLAVOR = "lite" }
+
+[install]
+local = true
+"##;
+        let draft: ShunMetadataDraft = toml::from_str(raw).expect("draft parses");
+        let mut config = draft.into_config("app".into(), "1.0".into(), Path::new(""));
+        let faces = config.shell.as_ref().unwrap().faces.clone().unwrap();
+        assert_eq!(faces, vec![UiFace::Egui, UiFace::Tui]);
+        let theme = config.shell.as_ref().unwrap().theme.clone().unwrap();
+        assert_eq!(
+            theme.background.unwrap().css(),
+            "linear-gradient(135deg, #000, #111)"
+        );
+        assert_eq!(theme.rail_background.unwrap().css(), "#0A0A0A");
+        assert_eq!(theme.user_adjustable, Some(true));
+        let wallpaper = theme.wallpaper.unwrap();
+        assert_eq!(wallpaper.sources.len(), 2);
+        assert!(matches!(
+            wallpaper.sources[0],
+            WallpaperSourceSpec::Video { .. }
+        ));
+        config.apply_variant("lite").expect("variant applies");
+        assert_eq!(
+            config.payload.clone().unwrap(),
+            PathBuf::from("payload-lite")
+        );
+        assert!(config.apply_variant("nope").is_err());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn sample() -> ShunConfig {
         ShunConfig {
+            variants: None,
             product: ProductIdentity {
                 name: "ShunDemo".into(),
                 version: "0.1.0".into(),

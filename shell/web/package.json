@@ -1,23 +1,23 @@
 {
-  "name": "@shun/demo-shell-web",
-  "version": "0.1.0",
+  "name": "@shun/installer-web",
+  "version": "0.1.9",
   "private": true,
   "type": "module",
-  "description": "Frontend of the shun demo shell — Vue + hikari over the shun install flow",
+  "description": "Frontend of the shun installer shell — Vue + hikari (left step rail, per-product branding from the manifest)",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
+    "build": "vite build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@celestia-island/hikari": "^0.40.18",
+    "@celestia-island/hikari": "^0.55.75",
     "lucide-vue-next": "^*",
     "vue": "^3.5.42"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^*",
-    "@vitejs/plugin-vue-jsx": "^*",
-    "sass": "^*",
-    "typescript": "^*",
-    "vite": "^*"
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vitejs/plugin-vue-jsx": "^5.1.6",
+    "sass": "^1.103.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
   }
 }

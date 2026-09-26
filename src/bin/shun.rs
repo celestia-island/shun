@@ -80,6 +80,15 @@ enum CliCommand {
         /// Skip code signing even when configured.
         #[arg(long)]
         no_sign: bool,
+        /// Named build variant from the manifest's `[[variant]]` tables:
+        /// applies the payload/face overrides and hands the variant's env
+        /// to the shell build (flavor markers, resource-pack stamps).
+        #[arg(long)]
+        variant: Option<String>,
+        /// Rust target triple (e.g. x86_64-pc-windows-msvc) passed
+        /// through to the shell build and folded into the artifact name.
+        #[arg(long)]
+        target: Option<String>,
     },
     /// Build an MSIX package from the payload (Windows SDK MakeAppx).
     Msix {
@@ -167,8 +176,23 @@ fn run(command: CliCommand) -> Result<(), String> {
             shell_src,
             out,
             no_sign,
+            variant,
+            target,
         } => {
-            let config = resolve_config(&manifest)?;
+            let mut config = resolve_config(&manifest)?;
+            let mut variant_env: std::collections::BTreeMap<String, String> = Default::default();
+            if let Some(name) = &variant {
+                config.apply_variant(name)?;
+                variant_env = config
+                    .variants
+                    .as_ref()
+                    .and_then(|vs| vs.iter().find(|v| &v.name == name))
+                    .and_then(|v| v.env.clone())
+                    .unwrap_or_default();
+                variant_env
+                    .entry("SHUN_VARIANT".to_string())
+                    .or_insert_with(|| name.clone());
+            }
             let product = config.product.clone();
 
             // 1. Payload package (*.shun) — works for both embedded and
@@ -216,7 +240,8 @@ fn run(command: CliCommand) -> Result<(), String> {
                 })
                 .unwrap_or_else(|| "shun-demo-shell".to_string());
 
-            let status = StdCommand::new("cargo")
+            let mut cargo = StdCommand::new("cargo");
+            cargo
                 .args([
                     "build",
                     "--release",
@@ -226,7 +251,17 @@ fn run(command: CliCommand) -> Result<(), String> {
                 .env(
                     "SHUN_MANIFEST",
                     std::fs::canonicalize(&manifest).map_err(|e| e.to_string())?,
-                )
+                );
+            if let Some(variant) = &variant {
+                cargo.env("SHUN_VARIANT", variant);
+                for (key, value) in &variant_env {
+                    cargo.env(key, value);
+                }
+            }
+            if let Some(target) = &target {
+                cargo.arg("--target").arg(target);
+            }
+            let status = cargo
                 .status()
                 .map_err(|e| format!("cargo build failed: {e}"))?;
             if !status.success() {
@@ -235,16 +270,38 @@ fn run(command: CliCommand) -> Result<(), String> {
 
             // 3. Collect artifacts: single-file installer + payload package.
             std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-            let target_exe = shell_src
-                .join("..")
-                .join("target")
-                .join("release")
-                .join(format!("{shell_bin}.exe"));
-            let installer = out.join(format!(
-                "{}-{}-setup.exe",
+            let target_dir = shell_src.join("..").join("target");
+            let target_dir = match &target {
+                Some(triple) => target_dir.join(triple),
+                None => target_dir,
+            };
+            let target_exe = target_dir.join("release").join(format!("{shell_bin}.exe"));
+            // Artifact naming carries the matrix axes: product-version
+            // [-variant] [-arch] -setup.exe — the variant from the flag,
+            // the arch folded from the target triple's cpu part.
+            let stem_base = format!(
+                "{}-{}",
                 product.name.to_lowercase().replace(' ', "-"),
                 product.version
-            ));
+            );
+            let stem_variant = variant
+                .as_deref()
+                .map(|v| format!("-{v}"))
+                .unwrap_or_default();
+            let stem_arch = target
+                .as_deref()
+                .and_then(|triple| triple.split('-').next())
+                .map(|cpu| {
+                    let arch = match cpu {
+                        "x86_64" => "x64",
+                        "aarch64" => "arm64",
+                        "i686" => "x86",
+                        other => other,
+                    };
+                    format!("-{arch}")
+                })
+                .unwrap_or_default();
+            let installer = out.join(format!("{stem_base}{stem_variant}{stem_arch}-setup.exe"));
             std::fs::copy(&target_exe, &installer).map_err(|e| {
                 format!(
                     "copy installer failed (expected {}): {e}",

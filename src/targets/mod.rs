@@ -18,3 +18,4 @@ pub mod elevate;
 
 #[cfg(windows)]
 pub mod aumid;
+pub mod shortcuts;
