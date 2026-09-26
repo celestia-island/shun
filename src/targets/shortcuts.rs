@@ -139,14 +139,14 @@ fn notify_shell_change(paths: &[PathBuf]) {
         for path in paths {
             let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
             SHChangeNotify(
-                SHCNE_UPDATEITEM as u32 as i32,
+                SHCNE_UPDATEITEM as i32,
                 SHCNF_PATH,
                 wide.as_ptr().cast(),
                 std::ptr::null(),
             );
         }
         SHChangeNotify(
-            SHCNE_ASSOCCHANGED as u32 as i32,
+            SHCNE_ASSOCCHANGED as i32,
             0,
             std::ptr::null(),
             std::ptr::null(),
