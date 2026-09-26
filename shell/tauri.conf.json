@@ -1,7 +1,7 @@
 {
-  "productName": "Shun Demo Shell",
+  "productName": "shun installer",
   "version": "0.1.0",
-  "identifier": "world.celestia.shun.demo",
+  "identifier": "world.celestia.shun.installer",
   "build": {
     "beforeBuildCommand": "pnpm --dir web build",
     "frontendDist": "./web/dist"
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "installer",
-        "title": "Shun Demo Shell",
+        "title": "shun installer",
         "width": 800,
         "height": 600,
         "resizable": false,

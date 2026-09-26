@@ -743,15 +743,7 @@ impl FallbackApp {
             &install_ctx,
             self.mode,
             self.dir.trim(),
-            shun::targets::install::WizardAnswers {
-                desktop_shortcut: self.desktop_shortcut,
-                start_menu_shortcut: true,
-                machine: self.machine,
-                // No done-page launch toggle in the demo shell yet: the
-                // answer is the default-checked one (nothing calls
-                // `shun::targets::install::launch` here).
-                launch_after_install: true,
-            },
+            self.desktop_shortcut,
             uninstalling,
         ) {
             self.outcome = Some(Outcome::Failed(err));
@@ -993,6 +985,13 @@ pub fn run(
         options,
         Box::new(move |cc| {
             let theme = resolve_theme(&config);
+            // The installer paints its own dark token set — following the
+            // system theme would re-apply light visuals after the
+            // set_visuals below, leaving native widgets (the path
+            // TextEdit) white with light text on the dark pane.
+            cc.egui_ctx.set_theme(egui::Theme::Dark);
+            cc.egui_ctx
+                .options_mut(|o| o.theme_preference = egui::ThemePreference::Dark);
             let mut visuals = egui::Visuals::dark();
             visuals.panel_fill = theme.background;
             visuals.window_fill = theme.background;
@@ -1098,6 +1097,9 @@ impl FallbackApp {
             .steps
             .iter()
             .enumerate()
+            // The terminal install step is the rail's own pushed item —
+            // listing it here would show "install" twice.
+            .filter(|(_, step)| step.kind != shun::config::StepKind::Install)
             .map(|(index, step)| (index, self.step_label(step).into_owned()))
             .collect();
         let active_marker = match current {

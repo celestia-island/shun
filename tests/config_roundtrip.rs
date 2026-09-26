@@ -8,6 +8,7 @@ use shun::config::{
 
 fn sample() -> ShunConfig {
     ShunConfig {
+        variants: None,
         product: ProductIdentity {
             name: "ShunDemo".into(),
             version: "0.1.0".into(),
@@ -28,8 +29,14 @@ fn sample() -> ShunConfig {
             TargetConfig::Flash(FlashConfig::default()),
         ],
         shell: Some(shun::config::ShellUiConfig {
+            faces: None,
             timeline: Some(shun::config::TimelineOrientation::Left),
             theme: Some(ThemeConfig {
+                background: None,
+                rail_background: None,
+                pane_background: None,
+                user_adjustable: None,
+                wallpaper: None,
                 mode: Some(ThemeMode::Dark),
                 accent: Some([34, 211, 238]),
             }),

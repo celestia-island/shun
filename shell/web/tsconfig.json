@@ -1,18 +1,22 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2020",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "preserve",
-    "jsxImportSource": "vue",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "useDefineForClassFields": true,
-    "isolatedModules": true,
-    "verbatimModuleSyntax": true,
-    "types": ["vite/client"]
+    "esModuleInterop": true,
+    "isolatedModules": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
 }
