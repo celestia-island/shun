@@ -936,7 +936,15 @@ fn os_window_title(config: &ShunConfig, uninstall: bool) -> String {
     let tag = saved
         .or_else(system_locale_tag)
         .unwrap_or_else(|| "zh-Hans".into());
-    let key = license_locale_key(&tag);
+    title_for_tag(&tag, config, uninstall)
+}
+
+/// The pure half of [`os_window_title`]: a resolved locale tag (saved
+/// preference, system locale, or the zh-Hans floor) → the interpolated
+/// frame title. Pure so the interpolation is testable without owning
+/// the machine's locale.
+fn title_for_tag(tag: &str, config: &ShunConfig, uninstall: bool) -> String {
+    let key = license_locale_key(tag);
     let (install, uninstall_title) = WINDOW_TITLES
         .iter()
         .find(|(k, _, _)| *k == key)
@@ -1275,9 +1283,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            os_window_title(&config, false),
-            "Evernight 安装程序",
-            "unmapped system locales resolve to the zh-Hans default"
+            title_for_tag("en-US", &config, false),
+            "Evernight Installer",
+            "BCP-47 prefixes map onto the locale table"
+        );
+        assert_eq!(
+            title_for_tag("fr-FR", &config, true),
+            "Désinstaller Evernight"
+        );
+        assert_eq!(
+            title_for_tag("zh-TW", &config, false),
+            "Evernight 安裝程式",
+            "traditional-Chinese tags map onto the zh-Hant table"
         );
     }
 }
