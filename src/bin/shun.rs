@@ -558,6 +558,7 @@ fn resolve_config(path: &Path) -> Result<ShunConfig, String> {
 }
 
 mod icons {
+    use std::io::Cursor;
     use std::path::Path;
 
     use image::imageops::FilterType;
@@ -573,8 +574,52 @@ mod icons {
         [512, 512],
     ];
 
+    /// Layer ladder for the Windows .ico. The ICO format records each
+    /// layer's dimensions in a single byte (0 meaning 256), so layers cap
+    /// at 256 px — larger renders stay in the PNG ladders below.
+    const ICO_SIZES: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
+
+    /// Encodes a multi-size .ico: one PNG-compressed layer per size in
+    /// the container layout (ICONDIR, one 16-byte directory entry per
+    /// layer, then the image bytes). PNG layers are the Vista+ convention
+    /// and need no extra encoder dependency.
+    fn encode_ico(img: &image::RgbaImage, sizes: &[u32]) -> Result<Vec<u8>, String> {
+        let mut layers: Vec<(u32, Vec<u8>)> = Vec::with_capacity(sizes.len());
+        for &size in sizes {
+            let scaled = image::imageops::resize(img, size, size, FilterType::Lanczos3);
+            let mut png = Cursor::new(Vec::new());
+            scaled
+                .write_to(&mut png, image::ImageFormat::Png)
+                .map_err(|e| format!("ico layer encode: {e}"))?;
+            layers.push((size, png.into_inner()));
+        }
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&0u16.to_le_bytes()); // reserved
+        out.extend_from_slice(&1u16.to_le_bytes()); // type: icon
+        out.extend_from_slice(&(layers.len() as u16).to_le_bytes());
+        let mut offset = 6 + 16 * layers.len();
+        for (size, png) in &layers {
+            let dim = if *size >= 256 { 0u8 } else { *size as u8 };
+            out.push(dim); // width (0 = 256)
+            out.push(dim); // height
+            out.push(0); // palette color count
+            out.push(0); // reserved
+            out.extend_from_slice(&1u16.to_le_bytes()); // color planes
+            out.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+            out.extend_from_slice(&(png.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(offset as u32).to_le_bytes());
+            offset += png.len();
+        }
+        for (_, png) in &layers {
+            out.extend_from_slice(png);
+        }
+        Ok(out)
+    }
+
     /// Derives per-OS icon sets from one square logo:
-    /// - windows/icon.ico (multi-size, from the largest render)
+    /// - windows/icon.ico (multi-size, layers within the 256 px ICO
+    ///   ceiling)
     /// - linux/*.png (full size ladder)
     /// - macos/icon.iconset/*.png (Apple iconset layout for iconutil)
     pub fn generate(logo: &Path, out: &Path) -> Result<(), String> {
@@ -589,9 +634,8 @@ mod icons {
 
         let windows_dir = out.join("windows");
         std::fs::create_dir_all(&windows_dir).map_err(|e| e.to_string())?;
-        let ico = image::DynamicImage::ImageRgba8(img.clone());
-        ico.save_with_format(windows_dir.join("icon.ico"), image::ImageFormat::Ico)
-            .map_err(|e| format!("ico encode: {e}"))?;
+        let ico = encode_ico(&img, &ICO_SIZES)?;
+        std::fs::write(windows_dir.join("icon.ico"), ico).map_err(|e| format!("ico write: {e}"))?;
 
         let linux_dir = out.join("linux");
         std::fs::create_dir_all(&linux_dir).map_err(|e| e.to_string())?;
@@ -619,6 +663,43 @@ mod icons {
         // macOS: `iconutil -c icns shun.iconset` on any mac produces the
         // .icns; Linux CI can use `icnsutil`. Documented in the CLI guide.
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// A source beyond the ICO ceiling (512 px, as shun icons itself
+        /// renders) encodes cleanly: every layer parses back as a PNG at
+        /// or below the 256 px format limit, with a consistent container.
+        #[test]
+        fn ico_layers_stay_within_the_format_ceiling() {
+            let img = image::RgbaImage::from_pixel(512, 512, image::Rgba([12, 34, 56, 255]));
+            let bytes = encode_ico(&img, &ICO_SIZES).expect("ico encodes");
+
+            assert_eq!(&bytes[0..2], &[0, 0], "reserved");
+            assert_eq!(&bytes[2..4], &[1, 0], "type: icon");
+            let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+            assert_eq!(count, ICO_SIZES.len());
+
+            let mut cursor = 6 + 16 * count;
+            for (i, size) in ICO_SIZES.iter().enumerate() {
+                let entry = &bytes[6 + 16 * i..6 + 16 * i + 16];
+                let expect = if *size >= 256 { 0 } else { *size as u8 };
+                assert_eq!(entry[0], expect, "layer {size} width byte (0 = 256)");
+                assert_eq!(entry[1], expect, "layer {size} height byte");
+                let len = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as usize;
+                let offset = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as usize;
+                assert_eq!(offset, cursor, "layer {size} offset");
+                assert_eq!(
+                    &bytes[offset..offset + 8],
+                    b"\x89PNG\r\n\x1a\n",
+                    "png layer"
+                );
+                cursor = offset + len;
+            }
+            assert_eq!(bytes.len(), cursor, "no trailing bytes");
+        }
     }
 }
 
