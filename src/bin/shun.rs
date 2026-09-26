@@ -620,8 +620,7 @@ mod icons {
         let windows_dir = out.join("windows");
         std::fs::create_dir_all(&windows_dir).map_err(|e| e.to_string())?;
         let ico = encode_ico(&img, &ICO_SIZES)?;
-        std::fs::write(windows_dir.join("icon.ico"), ico)
-            .map_err(|e| format!("ico write: {e}"))?;
+        std::fs::write(windows_dir.join("icon.ico"), ico).map_err(|e| format!("ico write: {e}"))?;
 
         let linux_dir = out.join("linux");
         std::fs::create_dir_all(&linux_dir).map_err(|e| e.to_string())?;
@@ -677,7 +676,11 @@ mod icons {
                 let len = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as usize;
                 let offset = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as usize;
                 assert_eq!(offset, cursor, "layer {size} offset");
-                assert_eq!(&bytes[offset..offset + 8], b"\x89PNG\r\n\x1a\n", "png layer");
+                assert_eq!(
+                    &bytes[offset..offset + 8],
+                    b"\x89PNG\r\n\x1a\n",
+                    "png layer"
+                );
                 cursor = offset + len;
             }
             assert_eq!(bytes.len(), cursor, "no trailing bytes");
