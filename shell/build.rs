@@ -29,7 +29,7 @@ fn main() {
     // selected, so the embedded payload/faces match the packed artifact.
     println!("cargo:rerun-if-env-changed=SHUN_MANIFEST");
     println!("cargo:rerun-if-env-changed=SHUN_VARIANT");
-    let mut manifest_path = std::env::var("SHUN_MANIFEST")
+    let manifest_path = std::env::var("SHUN_MANIFEST")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             Path::new(&own_manifest_dir)
