@@ -194,12 +194,27 @@ fn run(command: CliCommand) -> Result<(), String> {
                     )
                 })?)
                 .map_err(|e| format!("shell manifest parse: {e}"))?;
+            // The artifact cargo writes is named after the [[bin]] target,
+            // not the package: shells routinely rename their binary
+            // (shun-demo-shell.exe for the shun_demo_shell package), so
+            // resolve the first [[bin]].name and fall back to the package
+            // name (the implicit bin target) only when no [[bin]] table
+            // declares one.
             let shell_bin = shell_package
-                .get("package")
-                .and_then(|p| p.get("name"))
+                .get("bin")
+                .and_then(|bins| bins.as_array())
+                .and_then(|bins| bins.first())
+                .and_then(|bin| bin.get("name"))
                 .and_then(toml::Value::as_str)
-                .unwrap_or("shun-demo-shell")
-                .to_string();
+                .map(str::to_string)
+                .or_else(|| {
+                    shell_package
+                        .get("package")
+                        .and_then(|p| p.get("name"))
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| "shun-demo-shell".to_string());
 
             let status = StdCommand::new("cargo")
                 .args([

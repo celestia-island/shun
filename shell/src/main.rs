@@ -522,18 +522,29 @@ fn run_headless(
         }
     }
     let product = config.product.name.clone();
-    let dir = dir.unwrap_or_else(|| match mode.as_str() {
-        "portable" => exe_dir()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-            .join(format!("{product}-portable")),
-        _ => match machine {
-            // Machine-wide installs land in Program Files by default.
-            Some(true) => std::env::var_os("ProgramFiles")
-                .map(|root| PathBuf::from(root).join(&product))
-                .unwrap_or_else(|| local_appdata().join(&product)),
-            _ => local_appdata().join(&product),
-        },
-    });
+    let dir = match dir {
+        Some(dir) => Some(dir),
+        // The ARP UninstallString (`"...uninstall.exe" /uninstall`) carries
+        // no --dir: the uninstaller lives inside the install directory, so
+        // self-locate from the running executable instead of falling back
+        // to the default install location (which a custom --dir install
+        // never populated — uninstalling it would be a no-op that leaves
+        // the real installation behind).
+        None if uninstall_mode => exe_dir(),
+        None => Some(match mode.as_str() {
+            "portable" => exe_dir()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+                .join(format!("{product}-portable")),
+            _ => match machine {
+                // Machine-wide installs land in Program Files by default.
+                Some(true) => std::env::var_os("ProgramFiles")
+                    .map(|root| PathBuf::from(root).join(&product))
+                    .unwrap_or_else(|| local_appdata().join(&product)),
+                _ => local_appdata().join(&product),
+            },
+        }),
+    };
+    let dir = dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let mut ctx = InstallContext::new(
         product,
         config.product.version.clone(),
