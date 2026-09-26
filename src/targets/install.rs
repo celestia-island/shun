@@ -1001,11 +1001,30 @@ fn schedule_self_delete(exe: &Path) {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     use std::os::windows::process::CommandExt;
 
-    if std::env::current_exe()
-        .map(|current| current == exe)
-        .unwrap_or(false)
-    {
-        let script = format!("ping -n 2 127.0.0.1 > nul & del /q \"{}\"", exe.display());
+    // Canonicalized comparison: the scheduled path and current_exe can
+    // disagree in case, 8.3 short form, or the \\?\ prefix while naming
+    // the same file — and a false negative lands in the direct-delete
+    // branch, which cannot remove a running image, so the uninstaller
+    // copy survives its own uninstall.
+    let running = std::env::current_exe()
+        .ok()
+        .and_then(|current| std::fs::canonicalize(current).ok());
+    let scheduled = std::fs::canonicalize(exe).ok();
+    if scheduled.is_some() && scheduled == running {
+        // The uninstaller cannot remove its own image before exiting, and
+        // the synchronous rmdir in `uninstall` already ran while the file
+        // was still there — so the delayed sweep deletes the file and
+        // then the directory too (plain rmdir: a non-empty directory
+        // simply fails and stays).
+        let dir = exe
+            .parent()
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        let script = format!(
+            "ping -n 2 127.0.0.1 > nul & del /q \"{}\" & rmdir \"{}\"",
+            exe.display(),
+            dir,
+        );
         let _ = std::process::Command::new("cmd")
             .arg("/C")
             .raw_arg(script)
