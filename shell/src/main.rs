@@ -785,10 +785,8 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
                 println!("{line}");
             }
         }
-        shun::flow::FlowEvent::Progress { step, .. } => {
-            if !step.is_empty() {
-                println!("… {step}");
-            }
+        shun::flow::FlowEvent::Progress { step, .. } if !step.is_empty() => {
+            println!("… {step}");
         }
         _ => {}
     };

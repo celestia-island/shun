@@ -184,8 +184,8 @@ pub fn run(
                 if uninstall_mode {
                     match key.code {
                         KeyCode::Enter if core.state.uninstall_phase == UninstallPhase::Idle => {
-                            let (tx, rx) = mpsc::channel();
-                            events = Some(rx);
+                            // shun's uninstall emits no events: the page runs
+                            // an indeterminate phase until the worker lands.
                             core.state.uninstall_phase = UninstallPhase::Running;
                             let uninstall_core =
                                 WizardCore::new(core.config.clone(), BTreeMap::new());
@@ -271,9 +271,8 @@ pub fn run(
                         core.state.agreed = !core.state.agreed;
                     }
                     (Step::License, KeyCode::Enter, _) if core.state.agreed => {
-                        // Language preference persists once the mode is
-                        // fixed (local per-user — never portable here).
-                        let _ = core.set_locale(core.state.locale.clone());
+                        // The language is already on the model — the
+                        // install request carries it from state.
                         core.go(Step::Install);
                         let (tx, rx) = mpsc::channel();
                         events = Some(rx);
