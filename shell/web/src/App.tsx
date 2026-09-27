@@ -826,7 +826,7 @@ export default defineComponent({
               )}
               {identity.value && (
                 <p class="wizard-identity">
-                  {`%PRODUCT% ${identity.value.version} · `}
+                  {`${product.value} ${identity.value.version} · `}
                   {identity.value.flavor === "full-webview2"
                     ? s.flavors.fullWebview2
                     : identity.value.flavor === "full"

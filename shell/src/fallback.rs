@@ -1176,31 +1176,76 @@ impl FallbackApp {
             ui.set_min_height(bar_height);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // Caption buttons, Windows style: 40×24 plates, centered
-                // glyph, hover fill (red for close) — no bare × text.
-                let caption = |ui: &mut egui::Ui, glyph: &str, hover_fill: Color32| {
+                // VECTOR glyphs (egui's default fonts carry no caption
+                // dingbats — drawn strokes and discs render everywhere),
+                // hover fill (red for close).
+                enum CaptionIcon {
+                    Close,
+                    ThemeToggle,
+                }
+                let dark_now = self.dark_theme;
+                let caption = move |ui: &mut egui::Ui,
+                                    icon: CaptionIcon,
+                                    hover_fill: Color32|
+                      -> egui::Response {
                     let (rect, response) =
                         ui.allocate_exact_size(Vec2::new(40.0, 24.0), egui::Sense::click());
+                    let painter = ui.painter_at(rect);
                     if response.hovered() {
-                        ui.painter_at(rect)
-                            .rect_filled(rect, CornerRadius::same(5), hover_fill);
+                        painter.rect_filled(rect, CornerRadius::same(5), hover_fill);
                     }
-                    let mid = rect.center();
-                    ui.painter_at(rect).galley(
-                        pos2(mid.x - 5.0, mid.y - 7.0),
-                        ui.painter().layout_no_wrap(
-                            glyph.to_string(),
-                            egui::FontId::proportional(13.0),
-                            theme.text_secondary,
-                        ),
-                        theme.text_secondary,
-                    );
+                    let c = rect.center();
+                    let stroke = Stroke::new(1.3f32, theme.text_secondary);
+                    match icon {
+                        CaptionIcon::Close => {
+                            let d = 4.5f32;
+                            painter.line_segment(
+                                [pos2(c.x - d, c.y - d), pos2(c.x + d, c.y + d)],
+                                stroke,
+                            );
+                            painter.line_segment(
+                                [pos2(c.x - d, c.y + d), pos2(c.x + d, c.y - d)],
+                                stroke,
+                            );
+                        }
+                        CaptionIcon::ThemeToggle => {
+                            // Sun when dark (click → light); crescent
+                            // moon when light (click → dark).
+                            if dark_now {
+                                painter.circle_filled(c, 5.0, theme.text_secondary);
+                                for ray in 0..8 {
+                                    let angle = ray as f32 * std::f32::consts::TAU / 8.0;
+                                    let dir = egui::vec2(angle.cos(), angle.sin());
+                                    painter.line_segment(
+                                        [
+                                            c + dir * egui::vec2(7.0, 7.0),
+                                            c + dir * egui::vec2(9.5, 9.5),
+                                        ],
+                                        stroke,
+                                    );
+                                }
+                            } else {
+                                // Crescent: main disc, then the bite
+                                // painted in the bar's fill (the
+                                // plate stays transparent).
+                                painter.circle_filled(c, 5.5, theme.text_secondary);
+                                painter.circle_filled(
+                                    c + egui::vec2(2.5, -1.5),
+                                    4.5,
+                                    theme.surface,
+                                );
+                            }
+                        }
+                    }
                     response
                 };
-                // Close — right-most, red on hover, white glyph under it.
-                let close = caption(ui, "✕", Color32::from_rgb(232, 17, 35));
-                // Theme toggle — manifest-gated (user-adjustable).
+                // Theme toggle — manifest-gated (user-adjustable). Shows
+                // the sun while dark (click → light) and the crescent
+                // while light (click → dark); the bite disc paints in the
+                // bar's own fill, so it reads cleanly on hover too.
                 let toggle = if self.user_adjustable {
-                    let r = caption(ui, "◐", Color32::from_white_alpha(24));
+                    let hover = theme.surface;
+                    let r = caption(ui, CaptionIcon::ThemeToggle, hover);
                     if r.clicked() {
                         self.dark_theme = !self.dark_theme;
                         self.theme = if self.dark_theme {
@@ -1219,6 +1264,8 @@ impl FallbackApp {
                     false
                 };
                 let _ = toggle;
+                // Close — right-most, red on hover.
+                let close = caption(ui, CaptionIcon::Close, Color32::from_rgb(232, 17, 35));
                 if close.clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -1242,6 +1289,9 @@ impl FallbackApp {
             (Stage::Finished, Some(Outcome::Failed(_))) => Stage::Configure,
             (stage, _) => *stage,
         };
+        // The fixed five steps, webview-face parity: done steps carry a
+        // check in a filled circle, the active step its number in a
+        // ring, pending steps their number in a muted ring.
         let labels = [
             self.texts.step_language.to_owned(),
             self.texts.step_location.to_owned(),
@@ -1269,100 +1319,142 @@ impl FallbackApp {
                 )
             })
             .collect();
-        let rail: Box<dyn FnOnce(&mut egui::Ui)> = Box::new(|ui| {
-            let items = items.clone();
-            // One rail item: marker + label. The loop lives with the
-            // caller so the vertical branch controls row geometry.
-            let paint = |ui: &mut egui::Ui, index: usize| {
-                let (active, done, label) = &items[index];
-                if !vertical && index > 0 {
-                    let line_color = if *done { theme.success } else { theme.border };
-                    ui.label(RichText::new("——").color(line_color).small());
-                    ui.add_space(6.0);
-                }
-                let (marker, marker_color, text_color) = if *active {
-                    ("●", theme.primary, theme.text)
-                } else if *done {
-                    ("●", theme.success, theme.text_secondary)
-                } else {
-                    ("○", theme.text_tertiary, theme.text_tertiary)
-                };
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(marker).color(marker_color).size(15.0));
-                    ui.label(RichText::new(label.as_str()).color(text_color).size(14.5));
-                });
-                if !vertical {
-                    ui.add_space(0.0);
-                }
-            };
-            if vertical {
-                // Deterministic centering, both axes: fixed row metrics
-                // give the vertical offset (egui's main-align Center
-                // cannot place a sized-to-content block in one pass), and
-                // the block — all rows spanning one width, so the marker
-                // axis stays aligned — centers horizontally as a unit.
-                // The connector is a PAINTED hairline on that axis: a
-                // text glyph would wander with the label widths.
-                ui.spacing_mut().item_spacing.y = 0.0;
-                let row_height = 30.0f32;
-                let connector_slot = 38.0f32;
-                let n = items.len() as f32;
-                let total = n * row_height + (n - 1.0).max(0.0) * connector_slot;
-                ui.add_space(((ui.available_height() - total) / 2.0).max(0.0));
-                // Horizontal: the block width is the widest label plus
-                // the marker column; a computed left offset centers it —
-                // egui's cross-align nests unreliably through the pane's
-                // fixed-width block.
-                let font = egui::FontId::proportional(14.5);
-                let label_w = items
-                    .iter()
-                    .map(|(_, _, label)| {
-                        ui.painter()
-                            .layout_no_wrap(label.clone(), font.clone(), theme.text)
-                            .size()
-                            .x
-                    })
-                    .fold(0.0f32, f32::max);
-                let marker_w = 16.0f32;
-                let block_w = marker_w + 8.0 + label_w;
-                let left_offset = ((ui.available_width() - block_w) / 2.0).max(0.0);
-                for (index, _) in items.iter().enumerate() {
-                    if index > 0 {
-                        // Connector slot: the hairline rides the marker
-                        // axis, spanning the slot.
-                        let slot_left = ui.cursor().left() + left_offset + marker_w / 2.0;
-                        let slot_top = ui.cursor().top() + 4.0;
-                        ui.add_space(connector_slot);
-                        ui.painter().line_segment(
-                            [
-                                pos2(slot_left, slot_top),
-                                pos2(slot_left, slot_top + connector_slot - 8.0),
-                            ],
-                            Stroke::new(1.5f32, theme.border),
-                        );
-                    }
-                    let row = ui.available_width();
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(row, row_height),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.add_space(left_offset);
-                            paint(ui, index);
-                        },
+
+        let circle_d = 24.0f32;
+        let connector_h = 26.0f32;
+        let label_gap = 12.0f32;
+        // Block width: circle + gap + the widest localized label.
+        let font = egui::FontId::proportional(14.5);
+        let label_w = items
+            .iter()
+            .map(|(_, _, label)| {
+                ui.painter()
+                    .layout_no_wrap(label.clone(), font.clone(), theme.text)
+                    .size()
+                    .x
+            })
+            .fold(0.0f32, f32::max);
+        let block_w = circle_d + label_gap + label_w;
+
+        if vertical {
+            // Deterministic centering, both axes: computed vertical
+            // offset for the fixed-metric block, computed left offset
+            // for the block width (egui's aligns nest unreliably through
+            // the pane's fixed-width block).
+            let total = items.len() as f32 * circle_d + (items.len() as f32 - 1.0) * connector_h;
+            let top = ((ui.available_height() - total) / 2.0).max(0.0);
+            let left = ((ui.available_width() - block_w) / 2.0).max(0.0);
+            let cx = left + circle_d / 2.0;
+
+            let mut cursor_y = ui.cursor().top() + top;
+            for (index, (active, done, label)) in items.iter().enumerate() {
+                let cy = cursor_y + circle_d / 2.0;
+                // Connector BEFORE the circle (between previous and this).
+                if index > 0 {
+                    let seg_top = cursor_y - connector_h;
+                    ui.painter().line_segment(
+                        [pos2(cx, seg_top + 2.0), pos2(cx, cy - circle_d / 2.0 - 2.0)],
+                        Stroke::new(1.5_f32, theme.border),
                     );
                 }
-            } else {
-                for (index, _) in items.iter().enumerate() {
-                    paint(ui, index);
+                // Circle: done = filled primary with a stroked check;
+                // active = ring + number; pending = muted ring + number.
+                let center = pos2(cx, cy);
+                if *done {
+                    ui.painter()
+                        .circle_filled(center, circle_d / 2.0, theme.primary);
+                    let (l, r) = (center.x - 4.5, center.x + 4.0);
+                    let (ty, by) = (cy + 0.5, cy - 3.5);
+                    ui.painter().line_segment(
+                        [pos2(l, ty), pos2(cx - 1.0, by)],
+                        Stroke::new(1.6_f32, Color32::WHITE),
+                    );
+                    ui.painter().line_segment(
+                        [pos2(cx - 1.0, by), pos2(r, ty - 4.0)],
+                        Stroke::new(1.6_f32, Color32::WHITE),
+                    );
+                } else {
+                    ui.painter().circle_stroke(
+                        center,
+                        circle_d / 2.0 - 1.0,
+                        Stroke::new(1.5_f32, theme.primary),
+                    );
+                    ui.painter().text(
+                        center,
+                        egui::Align2::CENTER_CENTER,
+                        (index + 1).to_string(),
+                        egui::FontId::proportional(12.5),
+                        theme.primary,
+                    );
                 }
+                // Label beside the circle, vertically centered.
+                ui.painter().text(
+                    pos2(left + circle_d + label_gap, cy),
+                    egui::Align2::LEFT_CENTER,
+                    label.as_str(),
+                    font.clone(),
+                    if *active {
+                        theme.text
+                    } else {
+                        theme.text_secondary
+                    },
+                );
+                cursor_y = cy + circle_d / 2.0 + connector_h;
             }
-        });
-        rail(ui);
+        } else {
+            // Horizontal strip: circle + label side by side per step.
+            ui.horizontal(|ui| {
+                // (Active state is conveyed by the label weight above; the
+                // horizontal strip only distinguishes done vs pending.)
+                for (index, (_active, done, label)) in items.iter().enumerate() {
+                    if index > 0 {
+                        let line_color = if *done { theme.success } else { theme.border };
+                        ui.label(RichText::new("——").color(line_color).small());
+                        ui.add_space(6.0);
+                    }
+                    let cy = ui.cursor().top() + 12.0;
+                    let cx = ui.cursor().left() + circle_d / 2.0;
+                    if *done {
+                        ui.painter()
+                            .circle_filled(pos2(cx, cy), circle_d / 2.0, theme.primary);
+                        let (l, r) = (cx - 4.5, cx + 4.0);
+                        ui.painter().line_segment(
+                            [pos2(l, cy + 0.5), pos2(cx - 1.0, cy - 3.5)],
+                            Stroke::new(1.6_f32, Color32::WHITE),
+                        );
+                        ui.painter().line_segment(
+                            [pos2(cx - 1.0, cy - 3.5), pos2(r, cy + 0.5)],
+                            Stroke::new(1.6_f32, Color32::WHITE),
+                        );
+                    } else {
+                        ui.painter().circle_stroke(
+                            pos2(cx, cy),
+                            circle_d / 2.0 - 1.0,
+                            Stroke::new(1.5_f32, theme.primary),
+                        );
+                        ui.painter().text(
+                            pos2(cx, cy),
+                            egui::Align2::CENTER_CENTER,
+                            (index + 1).to_string(),
+                            egui::FontId::proportional(12.5),
+                            theme.primary,
+                        );
+                    }
+                    // Reserve the circle's box, then the label beside it.
+                    ui.allocate_exact_size(Vec2::new(circle_d, circle_d), egui::Sense::hover());
+                    ui.label(
+                        RichText::new(label.as_str())
+                            .color(theme.text_secondary)
+                            .size(14.0),
+                    );
+                }
+            });
+        }
     }
 
     /// The fallback-reason banner. This is the contract: a
     /// missing-environment install must say so.
-    fn banner(&self, ui: &mut egui::Ui) {
+    fn banner(&mut self, ui: &mut egui::Ui) {
         let theme = &self.theme;
         let text = match self.reason {
             FallbackReason::MissingWebview2 => self.texts.banner_missing,
@@ -1372,7 +1464,6 @@ impl FallbackApp {
             .fill(theme.warning_tint())
             .stroke(Stroke::new(1.0f32, theme.warning))
             .inner_margin(Margin::same(10))
-            .corner_radius(CornerRadius::same(8))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(RichText::new(text).color(theme.warning).size(12.5));
@@ -1390,9 +1481,6 @@ impl FallbackApp {
         }
     }
 
-    /// The language pane — the wizard's opening step, mirroring the
-    /// webview face: heading, sub line, and the picker (the Zh entry is
-    /// only offered when the machine registered a CJK font).
     fn language_view(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let texts = self.texts;
@@ -1417,14 +1505,15 @@ impl FallbackApp {
 
         let block_w = 280.0f32;
         let block_left = ((ui.available_width() - block_w) / 2.0).max(0.0);
+        // The block centers horizontally in the pane (the webview face's
+        // language step centers its picker the same way); its CONTENT is
+        // left-aligned inside.
         ui.allocate_ui_with_layout(
             egui::vec2(block_w, content_h),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.add_space(2.0);
-                let _ = block_left; // horizontal centering lands below via
-                // the fixed-width block + centered
-                // combo (kept simple for now)
+                let _ = block_left;
                 ui.label(
                     RichText::new(texts.lang_heading)
                         .strong()
@@ -1473,19 +1562,27 @@ impl FallbackApp {
         let texts = self.texts;
 
         ui.add_space(4.0);
-        ui.label(
-            RichText::new(texts.location_heading)
-                .strong()
-                .size(22.0)
-                .color(theme.text),
+        // Headings left-aligned to match the webview face (the central
+        // panel's cross-align would otherwise center them).
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 90.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.label(
+                    RichText::new(texts.location_heading)
+                        .strong()
+                        .size(22.0)
+                        .color(theme.text),
+                );
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new(texts.dir_label)
+                        .size(13.0)
+                        .color(theme.text_secondary),
+                );
+            },
         );
-        ui.add_space(16.0);
-
-        ui.label(
-            RichText::new(texts.dir_label)
-                .size(13.0)
-                .color(theme.text_secondary),
-        );
+        ui.add_space(6.0);
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             folder_badge(ui, &theme, 28.0);
