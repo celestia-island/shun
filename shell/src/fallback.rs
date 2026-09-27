@@ -86,6 +86,9 @@ pub(crate) struct Theme {
     pub(crate) success: Color32,
     pub(crate) error: Color32,
     pub(crate) warning: Color32,
+    /// The manifest's terminal-pane background (a solid or a gradient's
+    /// midpoint), when the theme declares one.
+    pub(crate) terminal_bg_override: Option<Color32>,
 }
 
 impl Theme {
@@ -102,10 +105,11 @@ impl Theme {
             primary: accent.map_or(Color32::from_rgb(0, 120, 200), |[r, g, b]| {
                 Color32::from_rgb(r, g, b)
             }),
-            on_primary: Color32::from_black_alpha(230),
+            on_primary: Color32::from_white_alpha(235),
             success: Color32::from_rgb(60, 180, 120),
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(230, 170, 50),
+            terminal_bg_override: None,
         }
     }
 
@@ -125,11 +129,15 @@ impl Theme {
             success: Color32::from_rgb(60, 180, 120),
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(190, 140, 30),
+            terminal_bg_override: None,
         }
     }
 
     /// Terminal pane background (a shade between page and surface).
     pub(crate) fn terminal_bg(&self) -> Color32 {
+        if let Some(override_bg) = self.terminal_bg_override {
+            return override_bg;
+        }
         mix(self.background, self.surface, 0.6)
     }
 
@@ -207,10 +215,13 @@ fn folder_badge(ui: &mut egui::Ui, theme: &Theme, size: f32) -> egui::Response {
 fn resolve_theme(config: &ShunConfig) -> Theme {
     let shell = config.shell.clone().unwrap_or_default();
     let accent = shell.theme.as_ref().and_then(|theme| theme.accent);
+    // A manifest background (solid or gradient) tints the base tokens:
+    // egui has no gradient fill, so gradients mix to their midpoint —
+    // honest approximation, zero extra infrastructure.
     // Same semantics as the webview shell (App.tsx applyTheme): an
     // unset mode defaults to dark — the installer ships dark — and only
     // an explicit `system` follows the OS preference.
-    match shell.theme.as_ref().and_then(|theme| theme.mode) {
+    let mut theme = match shell.theme.as_ref().and_then(|theme| theme.mode) {
         Some(shun::config::ThemeMode::Light) => Theme::light(accent),
         Some(shun::config::ThemeMode::System) => {
             if system_prefers_light() {
@@ -220,7 +231,71 @@ fn resolve_theme(config: &ShunConfig) -> Theme {
             }
         }
         Some(shun::config::ThemeMode::Dark) | None => Theme::dark(accent),
+    };
+    // The manifest's background tints the tokens: solid applies as-is, a
+    // gradient mixes to its midpoint (egui paints flat fills). Panes and
+    // the rail then derive from it, so the whole face shifts with the
+    // manifest's theme.
+    let background = shell
+        .theme
+        .as_ref()
+        .and_then(|theme| theme.background.as_ref());
+    match background {
+        Some(shun::config::BackgroundSpec::Color(color)) => {
+            if let Some(rgba) = css_color_to32(color) {
+                theme.background = rgba;
+                theme.surface = mix(rgba, theme.text, 0.06);
+                theme.terminal_bg_override = Some(mix(rgba, theme.text, 0.1));
+            }
+        }
+        Some(spec @ shun::config::BackgroundSpec::Gradient { .. }) => {
+            if let Some(mid) = gradient_midpoint(spec) {
+                theme.background = mid;
+                theme.surface = mix(mid, theme.text, 0.06);
+                theme.terminal_bg_override = Some(mix(mid, theme.text, 0.1));
+            }
+        }
+        // Wallpapers have no egui renderer — the face stays on the
+        // token background (the banner already says "no effects").
+        _ => {}
     }
+    theme
+}
+
+/// Parses the CSS color shapes the theme accepts for egui fills:
+/// `#rgb` / `#rrggbb` hex. `None` for anything else (the web face can
+/// render more; egui approximates rather than failing the theme).
+fn css_color_to32(color: &str) -> Option<Color32> {
+    let hex = color.strip_prefix('#')?;
+    let (r, g, b) = match hex.len() {
+        3 => (
+            u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?,
+            u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?,
+            u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?,
+        ),
+        6 => (
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+        ),
+        _ => return None,
+    };
+    Some(Color32::from_rgb(r, g, b))
+}
+
+/// A gradient's midpoint color (from/to may be hex or anything parseable
+/// by [`css_color_to32`]; unparsable sides keep the base token).
+fn gradient_midpoint(spec: &shun::config::BackgroundSpec) -> Option<Color32> {
+    let shun::config::BackgroundSpec::Gradient { from, to, .. } = spec else {
+        return None;
+    };
+    let a = css_color_to32(from)?;
+    let b = css_color_to32(to)?;
+    Some(Color32::from_rgb(
+        (a.r() + b.r()) / 2,
+        (a.g() + b.g()) / 2,
+        (a.b() + b.b()) / 2,
+    ))
 }
 
 /// Windows "apps use light theme" probe; non-Windows assumes dark.
@@ -547,6 +622,11 @@ struct FallbackApp {
     cjk_font: bool,
     texts: &'static Texts,
     theme: Theme,
+    /// The pinned light/dark state behind the title-bar toggle (the
+    /// manifest's `user-adjustable`); `accent` rebuilds the tokens.
+    dark_theme: bool,
+    accent: Option<[u8; 3]>,
+    user_adjustable: bool,
     timeline_left: bool,
     logo: Option<TextureHandle>,
     stage: Stage,
@@ -606,6 +686,15 @@ impl FallbackApp {
         let theme = resolve_theme(&config);
         let shell = config.shell.clone().unwrap_or_default();
         let mode = offered_modes(&config).first().copied().unwrap_or("local");
+        // The toggle state mirrors what resolve_theme resolved (the
+        // system probe's answer counts as pinned for the session).
+        let resolved_dark = !matches!(
+            shell.theme.as_ref().and_then(|theme| theme.mode),
+            Some(shun::config::ThemeMode::Light)
+        ) || matches!(
+            shell.theme.as_ref().and_then(|theme| theme.mode),
+            Some(shun::config::ThemeMode::Dark)
+        );
         Self {
             dir: default_dir(&config, mode).to_string_lossy().into_owned(),
             config,
@@ -614,7 +703,14 @@ impl FallbackApp {
             language,
             cjk_font,
             texts: language.texts(),
+            dark_theme: resolved_dark,
             theme,
+            accent: shell.theme.as_ref().and_then(|theme| theme.accent),
+            user_adjustable: shell
+                .theme
+                .as_ref()
+                .and_then(|theme| theme.user_adjustable)
+                .unwrap_or(false),
             // The side rail is the standard look (the web face renders
             // left too); an explicit `timeline = "top"` restores the
             // horizontal strip.
@@ -1079,11 +1175,51 @@ impl FallbackApp {
             );
             ui.set_min_height(bar_height);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .add(Button::new(RichText::new("×").size(16.0)).frame(false))
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
+                // Caption buttons, Windows style: 40×24 plates, centered
+                // glyph, hover fill (red for close) — no bare × text.
+                let caption = |ui: &mut egui::Ui, glyph: &str, hover_fill: Color32| {
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::new(40.0, 24.0), egui::Sense::click());
+                    if response.hovered() {
+                        ui.painter_at(rect)
+                            .rect_filled(rect, CornerRadius::same(5), hover_fill);
+                    }
+                    let mid = rect.center();
+                    ui.painter_at(rect).galley(
+                        pos2(mid.x - 5.0, mid.y - 7.0),
+                        ui.painter().layout_no_wrap(
+                            glyph.to_string(),
+                            egui::FontId::proportional(13.0),
+                            theme.text_secondary,
+                        ),
+                        theme.text_secondary,
+                    );
+                    response
+                };
+                // Close — right-most, red on hover, white glyph under it.
+                let close = caption(ui, "✕", Color32::from_rgb(232, 17, 35));
+                // Theme toggle — manifest-gated (user-adjustable).
+                let toggle = if self.user_adjustable {
+                    let r = caption(ui, "◐", Color32::from_white_alpha(24));
+                    if r.clicked() {
+                        self.dark_theme = !self.dark_theme;
+                        self.theme = if self.dark_theme {
+                            Theme::dark(self.accent)
+                        } else {
+                            Theme::light(self.accent)
+                        };
+                        ui.ctx().set_visuals(if self.dark_theme {
+                            egui::Visuals::dark()
+                        } else {
+                            egui::Visuals::light()
+                        });
+                    }
+                    r.clicked()
+                } else {
+                    false
+                };
+                let _ = toggle;
+                if close.clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 ui.add_space(8.0);
@@ -1260,30 +1396,62 @@ impl FallbackApp {
     fn language_view(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let texts = self.texts;
-        ui.add_space(4.0);
+        let current = self.language;
+        let zh_offered = self.cjk_font;
+
+        // Vertical centering, deterministic: measure the parts (the same
+        // discipline as the rail's measured label widths) and offset by
+        // (available - content) / 2 — egui's main-align Center nests
+        // unreliably through the pane's fixed-width block.
+        let heading_font = egui::FontId::proportional(22.0);
+        let sub_font = egui::FontId::proportional(13.0);
+        let heading_h = ui
+            .painter()
+            .layout_no_wrap(
+                texts.lang_heading.to_string(),
+                heading_font.clone(),
+                theme.text,
+            )
+            .size()
+            .y;
+        let sub_h = ui
+            .painter()
+            .layout_no_wrap(
+                texts.lang_sub.to_string(),
+                sub_font.clone(),
+                theme.text_secondary,
+            )
+            .size()
+            .y;
+        let combo_h = 32.0f32;
+        let content_h = heading_h + 8.0 + sub_h + 24.0 + combo_h;
+        ui.add_space(((ui.available_height() - content_h) / 2.0).max(0.0));
+
         ui.label(
             RichText::new(texts.lang_heading)
                 .strong()
                 .size(22.0)
                 .color(theme.text),
         );
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         ui.label(
             RichText::new(texts.lang_sub)
                 .size(13.0)
                 .color(theme.text_secondary),
         );
-        ui.add_space(16.0);
+        ui.add_space(24.0);
 
-        let current = self.language;
-        let zh_offered = self.cjk_font;
         let mut picked: Option<FallbackLanguage> = None;
-        // The picker stands alone and centered, matching the webview
-        // face's language step.
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+        // The picker stands alone and centered: computed horizontal
+        // offset (egui's cross-align nests unreliably through the pane's
+        // fixed-width block), widened to match the webview face.
+        let combo_w = 280.0f32;
+        let combo_offset = ((ui.available_width() - combo_w) / 2.0).max(0.0);
+        ui.horizontal(|ui| {
+            ui.add_space(combo_offset);
             egui::ComboBox::from_id_salt("wizard-language")
                 .selected_text(current.autonym())
-                .width(280.0)
+                .width(combo_w)
                 .show_ui(ui, |ui| {
                     let candidates = [
                         (FallbackLanguage::En, true),
@@ -1628,7 +1796,8 @@ impl FallbackApp {
             return;
         }
         let theme = self.theme;
-        ui.separator();
+        // No separator here: the side panel's own divider already draws
+        // the line above the footer — a second one read as a double rule.
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             // Left: the live flow step (wizard-live analog).
@@ -1844,10 +2013,11 @@ impl eframe::App for FallbackApp {
                 .exact_width(200.0)
                 .frame(
                     Frame::default()
+                        // The brightness split: the surface tone against
+                        // the pane's background. No panel stroke — its
+                        // top/bottom hairlines doubled with the footer
+                        // separator into thick lines.
                         .fill(theme.surface)
-                        // The brightness split: a hairline against the
-                        // pane plus the surface/background tone step.
-                        .stroke(Stroke::new(1.0f32, theme.border))
                         .inner_margin(Margin::same(16)),
                 )
                 .show(ctx, |ui| {
