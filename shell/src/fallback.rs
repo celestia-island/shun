@@ -1253,7 +1253,7 @@ impl FallbackApp {
                 // Theme toggle — manifest-gated (user-adjustable). The
                 // bite disc paints in the bar fill (the toggle plate
                 // stays transparent), so hover keeps it readable.
-                let toggle = if self.user_adjustable {
+                if self.user_adjustable {
                     let r = caption(
                         ui,
                         CaptionIcon::ThemeToggle,
@@ -1272,10 +1272,7 @@ impl FallbackApp {
                             egui::Visuals::light()
                         });
                     }
-                    r.clicked()
-                } else {
-                    false
-                };
+                }
                 // Minimize.
                 let minimize = caption(
                     ui,
