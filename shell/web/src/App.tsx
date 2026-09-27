@@ -376,7 +376,13 @@ export default defineComponent({
         .then((flag) => {
           uninstallMode.value = flag;
         })
-        .catch(() => {});
+        // A failed probe (backend not ready, non-Tauri preview) renders
+        // the wizard: defaulting to "uninstall" would strand a normal
+        // install, and null strands EVERYTHING behind the in-flight
+        // guard — the blank-window failure mode.
+        .catch(() => {
+          uninstallMode.value = false;
+        });
       refreshDefaults().catch((err) => { hintKind.value = "error"; hintError.value = String(err); });
       invoke<{ version: string; flavor: string }>("get_identity")
         .then((id) => { identity.value = id; })
