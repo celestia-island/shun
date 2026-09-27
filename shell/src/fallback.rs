@@ -1300,7 +1300,16 @@ impl FallbackApp {
                 ui.add_space(8.0);
             });
         });
-        let drag = ui.interact(ui.max_rect(), ui.id().with("titlebar-drag"), Sense::drag());
+        // The drag zone must not overlap the caption buttons: egui
+        // hit-tests later-registered widgets first, so a full-bar drag
+        // rect registered after the button cluster sits ON TOP of it and
+        // eats every click (buttons only responded at the window's outer
+        // pixel). Shrink the drag rect to the cluster's left edge.
+        let caption_count = if self.user_adjustable { 3 } else { 2 };
+        let mut drag_rect = ui.min_rect();
+        let cluster_left = drag_rect.right() - (CAPTION_W * caption_count as f32 + 12.0);
+        drag_rect.set_right(cluster_left.max(drag_rect.left()));
+        let drag = ui.interact(drag_rect, ui.id().with("titlebar-drag"), Sense::drag());
         if drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
