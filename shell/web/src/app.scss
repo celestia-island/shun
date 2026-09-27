@@ -29,7 +29,7 @@ body {
   // the footer floats bottom-right. (The top inset is hikari's fixed
   // title bar height — the var the component itself documents.)
   position: relative;
-  padding: var(--hk-tb-height, 32px) 0 0;
+  padding: 0;
   overflow: hidden;
 
   h1 {
@@ -497,6 +497,9 @@ body {
 .wizard-layout__pane {
   background: rgb(var(--color-background));
   padding: 8px 28px 0 26px;
+  // Clearance for the fixed hikari title bar (its own root declares
+  // --hk-tb-height; hosts re-declare it — hikari's documented pattern).
+  padding-top: calc(var(--hk-tb-height, 32px) + 8px);
 }
 
 /* The user theme toggle (manifest-gated): pinned top-right, just under
