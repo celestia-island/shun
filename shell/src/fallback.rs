@@ -336,7 +336,6 @@ struct Texts {
     installing_percent: &'static str,
     warn_desktop_blocked: &'static str,
     warn_aumid_blocked: &'static str,
-    language_label: &'static str,
 }
 
 const TEXTS_ZH: Texts = Texts {
@@ -381,7 +380,6 @@ const TEXTS_ZH: Texts = Texts {
     installing_percent: "正在安装…",
     warn_desktop_blocked: "桌面快捷方式被系统策略拦截（安全软件拒绝了 .lnk 写入）；开始菜单快捷方式与卸载注册不受影响",
     warn_aumid_blocked: "任务栏标识（AUMID）写入被系统策略拦截；手动固定的归组可能受影响",
-    language_label: "语言",
 };
 
 const TEXTS_EN: Texts = Texts {
@@ -426,7 +424,6 @@ const TEXTS_EN: Texts = Texts {
     installing_percent: "Installing…",
     warn_desktop_blocked: "Desktop shortcut blocked by system policy (security software denied the .lnk write); the Start-menu shortcut and uninstall registration are unaffected",
     warn_aumid_blocked: "Taskbar identity (AUMID) stamp blocked by system policy; manual pin grouping may be affected",
-    language_label: "Language",
 };
 
 /// Registers a system CJK font as a glyph fallback so the Chinese UI
@@ -1163,27 +1160,49 @@ impl FallbackApp {
                 }
             };
             if vertical {
-                // Deterministic vertical centering: fixed row metrics
-                // and a computed top offset. egui's main-align Center
-                // cannot place a sized-to-content block in one pass, and
-                // measured-two-frame schemes race the screenshot path.
+                // Deterministic centering, both axes: fixed row metrics
+                // give the vertical offset (egui's main-align Center
+                // cannot place a sized-to-content block in one pass), and
+                // the block — all rows spanning one width, so the marker
+                // axis stays aligned — centers horizontally as a unit.
+                // The connector is a PAINTED hairline on that axis: a
+                // text glyph would wander with the label widths.
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let row_height = 30.0f32;
                 let connector_slot = 38.0f32;
                 let n = items.len() as f32;
                 let total = n * row_height + (n - 1.0).max(0.0) * connector_slot;
                 ui.add_space(((ui.available_height() - total) / 2.0).max(0.0));
+                // Horizontal: the block width is the widest label plus
+                // the marker column; a computed left offset centers it —
+                // egui's cross-align nests unreliably through the pane's
+                // fixed-width block.
+                let font = egui::FontId::proportional(14.5);
+                let label_w = items
+                    .iter()
+                    .map(|(_, _, label)| {
+                        ui.painter()
+                            .layout_no_wrap(label.clone(), font.clone(), theme.text)
+                            .size()
+                            .x
+                    })
+                    .fold(0.0f32, f32::max);
+                let marker_w = 16.0f32;
+                let block_w = marker_w + 8.0 + label_w;
+                let left_offset = ((ui.available_width() - block_w) / 2.0).max(0.0);
                 for (index, _) in items.iter().enumerate() {
                     if index > 0 {
-                        // Connector slot: the rail line centered in its
-                        // own fixed-height band.
-                        let band = ui.available_width();
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(band, connector_slot),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.label(RichText::new("│").color(theme.border).small());
-                            },
+                        // Connector slot: the hairline rides the marker
+                        // axis, spanning the slot.
+                        let slot_left = ui.cursor().left() + left_offset + marker_w / 2.0;
+                        let slot_top = ui.cursor().top() + 4.0;
+                        ui.add_space(connector_slot);
+                        ui.painter().line_segment(
+                            [
+                                pos2(slot_left, slot_top),
+                                pos2(slot_left, slot_top + connector_slot - 8.0),
+                            ],
+                            Stroke::new(1.5f32, theme.border),
                         );
                     }
                     let row = ui.available_width();
@@ -1191,6 +1210,7 @@ impl FallbackApp {
                         egui::vec2(row, row_height),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
+                            ui.add_space(left_offset);
                             paint(ui, index);
                         },
                     );
@@ -1258,16 +1278,12 @@ impl FallbackApp {
         let current = self.language;
         let zh_offered = self.cjk_font;
         let mut picked: Option<FallbackLanguage> = None;
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(texts.language_label)
-                    .size(13.0)
-                    .color(theme.text_secondary),
-            );
-            ui.add_space(4.0);
+        // The picker stands alone and centered, matching the webview
+        // face's language step.
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
             egui::ComboBox::from_id_salt("wizard-language")
                 .selected_text(current.autonym())
-                .width(200.0)
+                .width(280.0)
                 .show_ui(ui, |ui| {
                     let candidates = [
                         (FallbackLanguage::En, true),
