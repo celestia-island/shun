@@ -173,10 +173,19 @@ fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
 fn folder_badge(ui: &mut egui::Ui, theme: &Theme, size: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(7), theme.primary_tint());
+    // Neutral plate: the accent-blue tile clashed with the dark pane —
+    // the badge now sits in the surface tone with a hairline border and
+    // a muted glyph.
+    painter.rect_filled(rect, CornerRadius::same(7), theme.surface);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(7),
+        Stroke::new(1.0f32, theme.border),
+        egui::StrokeKind::Inside,
+    );
     let glyph = rect.shrink(6.5);
     let body_top = glyph.top() + glyph.height() * 0.30;
-    let stroke = Stroke::new(1.6f32, theme.primary);
+    let stroke = Stroke::new(1.6f32, theme.text_secondary);
     // Tab: rises from the body's top edge, runs right, folds back down.
     painter.add(egui::Shape::line(
         vec![
@@ -343,7 +352,7 @@ const TEXTS_ZH: Texts = Texts {
     title_suffix: "的交付方式",
     version_prefix: "版本",
     banner_missing: "未检测到 WebView2 运行时（缺失必要环境）—— 已自动切换至离线降级安装界面。安装功能不受影响，界面不带特效。",
-    banner_manual: "已通过命令行参数 --fallback 手动启用离线降级安装界面（离线版本，不带特效）。",
+    banner_manual: "已通过命令行参数 --no-webview 启用离线降级安装界面（离线版本，不带特效）。",
     step_mode: "交付方式",
     step_scope: "安装范围",
     step_license: "许可协议",
@@ -393,7 +402,7 @@ const TEXTS_EN: Texts = Texts {
     title_suffix: "delivery",
     version_prefix: "Version",
     banner_missing: "WebView2 runtime not detected (missing required environment) — switched to the offline fallback installer. Installation is fully functional; the UI carries no effects.",
-    banner_manual: "Offline fallback installer enabled manually via --fallback (the no-effects offline version).",
+    banner_manual: "Offline fallback installer enabled manually via --no-webview (the no-effects offline version).",
     step_mode: "Delivery mode",
     step_scope: "Install scope",
     step_license: "License",
@@ -1157,33 +1166,67 @@ impl FallbackApp {
         ));
         let rail: Box<dyn FnOnce(&mut egui::Ui)> = Box::new(|ui| {
             let items = items.clone();
-            let paint = |ui: &mut egui::Ui| {
-                for (index, (active, done, label)) in items.iter().enumerate() {
-                    if !vertical && index > 0 {
-                        let line_color = if *done { theme.success } else { theme.border };
-                        ui.label(RichText::new("——").color(line_color).small());
-                        ui.add_space(6.0);
-                    } else if vertical && index > 0 {
-                        ui.label(RichText::new("│").color(theme.border).small());
-                    }
-                    let (marker, marker_color, text_color) = if *active {
-                        ("●", theme.primary, theme.text)
-                    } else if *done {
-                        ("●", theme.success, theme.text_secondary)
-                    } else {
-                        ("○", theme.text_tertiary, theme.text_tertiary)
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(marker).color(marker_color).small());
-                        ui.label(RichText::new(label.as_str()).color(text_color).small());
-                    });
-                    ui.add_space(if vertical { 10.0 } else { 0.0 });
+            // One rail item: marker + label. The loop lives with the
+            // caller so the vertical branch controls row geometry.
+            let paint = |ui: &mut egui::Ui, index: usize| {
+                let (active, done, label) = &items[index];
+                if !vertical && index > 0 {
+                    let line_color = if *done { theme.success } else { theme.border };
+                    ui.label(RichText::new("——").color(line_color).small());
+                    ui.add_space(6.0);
+                }
+                let (marker, marker_color, text_color) = if *active {
+                    ("●", theme.primary, theme.text)
+                } else if *done {
+                    ("●", theme.success, theme.text_secondary)
+                } else {
+                    ("○", theme.text_tertiary, theme.text_tertiary)
+                };
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(marker).color(marker_color).small());
+                    ui.label(RichText::new(label.as_str()).color(text_color).small());
+                });
+                if !vertical {
+                    ui.add_space(0.0);
                 }
             };
             if vertical {
-                ui.vertical(paint);
+                // Deterministic vertical centering: fixed row metrics
+                // and a computed top offset. egui's main-align Center
+                // cannot place a sized-to-content block in one pass, and
+                // measured-two-frame schemes race the screenshot path.
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let row_height = 22.0f32;
+                let connector_slot = 30.0f32;
+                let n = items.len() as f32;
+                let total = n * row_height + (n - 1.0).max(0.0) * connector_slot;
+                ui.add_space(((ui.available_height() - total) / 2.0).max(0.0));
+                for (index, _) in items.iter().enumerate() {
+                    if index > 0 {
+                        // Connector slot: the rail line centered in its
+                        // own fixed-height band.
+                        let band = ui.available_width();
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(band, connector_slot),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.label(RichText::new("│").color(theme.border).small());
+                            },
+                        );
+                    }
+                    let row = ui.available_width();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(row, row_height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            paint(ui, index);
+                        },
+                    );
+                }
             } else {
-                ui.horizontal(paint);
+                for (index, _) in items.iter().enumerate() {
+                    paint(ui, index);
+                }
             }
         });
         rail(ui);
@@ -1451,36 +1494,45 @@ impl FallbackApp {
         let theme = self.theme;
         let texts = self.texts;
 
-        // Hero — the h1 of the hikari wizard.
+        // Hero — the h1 of the hikari wizard, left-aligned with the
+        // version line under it (the pane's centered layout would push
+        // the narrow version line to a random-looking right shift).
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(self.config.product.name.as_str())
-                    .strong()
-                    .size(24.0)
-                    .color(theme.text),
-            );
-            ui.label(
-                RichText::new(texts.title_suffix)
-                    .strong()
-                    .size(24.0)
-                    .color(theme.text),
-            );
-        });
-        ui.label(
-            RichText::new(format!(
-                "{} {}{}",
-                texts.version_prefix,
-                self.config.product.version,
-                self.config
-                    .product
-                    .publisher
-                    .as_deref()
-                    .map(|p| format!(" · {p}"))
-                    .unwrap_or_default()
-            ))
-            .color(theme.text_secondary)
-            .size(14.0),
+        let hero_width = ui.available_width();
+        ui.allocate_ui_with_layout(
+            egui::vec2(hero_width, 56.0),
+            egui::Layout::top_down(egui::Align::LEFT),
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(self.config.product.name.as_str())
+                            .strong()
+                            .size(24.0)
+                            .color(theme.text),
+                    );
+                    ui.label(
+                        RichText::new(texts.title_suffix)
+                            .strong()
+                            .size(24.0)
+                            .color(theme.text),
+                    );
+                });
+                ui.label(
+                    RichText::new(format!(
+                        "{} {}{}",
+                        texts.version_prefix,
+                        self.config.product.version,
+                        self.config
+                            .product
+                            .publisher
+                            .as_deref()
+                            .map(|p| format!(" · {p}"))
+                            .unwrap_or_default()
+                    ))
+                    .color(theme.text_secondary)
+                    .size(14.0),
+                );
+            },
         );
         ui.add_space(14.0);
 
@@ -1637,7 +1689,16 @@ impl FallbackApp {
         // registered installs — portable mode writes no shortcuts.
         if self.mode != "portable" && desktop_policy_asks(&self.config) {
             ui.add_space(8.0);
-            ui.checkbox(&mut self.desktop_shortcut, texts.desktop_shortcut);
+            // Left-aligned with the path row above (the pane's centered
+            // layout would float it mid-pane).
+            let row_width = ui.available_width();
+            ui.allocate_ui_with_layout(
+                egui::vec2(row_width, 22.0),
+                egui::Layout::left_to_right(egui::Align::Min),
+                |ui| {
+                    ui.checkbox(&mut self.desktop_shortcut, texts.desktop_shortcut);
+                },
+            );
         }
 
         // The `ask` install-scope policy embeds its choice here when no
@@ -1971,15 +2032,7 @@ impl eframe::App for FallbackApp {
                         .inner_margin(Margin::same(16)),
                 )
                 .show(ctx, |ui| {
-                    ui.with_layout(
-                        // Vertical centering: the rail floats at the
-                        // column's middle, the classic installer look.
-                        egui::Layout::top_down(egui::Align::LEFT)
-                            .with_main_align(egui::Align::Center),
-                        |ui| {
-                            self.timeline(ui, true);
-                        },
-                    );
+                    self.timeline(ui, true);
                 });
         }
 
