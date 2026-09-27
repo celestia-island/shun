@@ -243,8 +243,11 @@ body {
 /* ── license pane ─────────────────────────────────────────────────── */
 
 .license-box {
-  flex: 1;
+  // The cap keeps the tall agreement text from pushing the checkbox and
+  // footer buttons out of the window: the box scrolls internally.
+  flex: 1 1 0;
   min-height: 0;
+  max-height: calc(100vh - 300px);
   min-width: 0;
   border: 1px solid rgb(var(--color-border));
   border-radius: var(--radius-md);
