@@ -1398,18 +1398,33 @@ impl FallbackApp {
         let texts = self.texts;
         let current = self.language;
         let zh_offered = self.cjk_font;
-        let mut picked: Option<FallbackLanguage> = None;
 
-        // Vertical centering, egui's documented idiom: allocate the full
-        // pane with main-align Center and put an exact-height content
-        // block inside it — the block lands at the pane's vertical
-        // middle. (main-align Center on free-drawn widgets silently
-        // no-ops through the pane's fixed-width block.)
-        let w = ui.available_width();
+        // Vertical centering, deterministic: measure the parts, offset by
+        // (available - content) / 2, then draw with a fixed-width block
+        // for the horizontal centering. (egui's main-align Center
+        // silently no-ops for sized-to-content content in this nesting.)
+        let heading_font = egui::FontId::proportional(22.0);
+        let heading_h = ui
+            .painter()
+            .layout_no_wrap(texts.lang_heading.to_string(), heading_font, theme.text)
+            .size()
+            .y;
+        let sub_h = 20.0f32;
+        let combo_h = 32.0f32;
+        let content_h = heading_h + 8.0 + sub_h + 24.0 + combo_h;
+        let avail_h = ui.available_height();
+        ui.add_space(((avail_h - content_h) / 2.0).max(0.0));
+
+        let block_w = 280.0f32;
+        let block_left = ((ui.available_width() - block_w) / 2.0).max(0.0);
         ui.allocate_ui_with_layout(
-            egui::vec2(w, ui.available_height()),
-            egui::Layout::top_down(egui::Align::Center).with_main_align(egui::Align::Center),
+            egui::vec2(block_w, content_h),
+            egui::Layout::top_down(egui::Align::Min),
             |ui| {
+                ui.add_space(2.0);
+                let _ = block_left; // horizontal centering lands below via
+                // the fixed-width block + centered
+                // combo (kept simple for now)
                 ui.label(
                     RichText::new(texts.lang_heading)
                         .strong()
@@ -1426,7 +1441,7 @@ impl FallbackApp {
                 let mut picked: Option<FallbackLanguage> = None;
                 egui::ComboBox::from_id_salt("wizard-language")
                     .selected_text(current.autonym())
-                    .width(280.0)
+                    .width(block_w)
                     .show_ui(ui, |ui| {
                         let candidates = [
                             (FallbackLanguage::En, true),
@@ -1442,11 +1457,11 @@ impl FallbackApp {
                             }
                         }
                     });
+                if let Some(language) = picked {
+                    self.apply_language(language);
+                }
             },
         );
-        if let Some(language) = picked {
-            self.apply_language(language);
-        }
     }
 
     /// The location pane — product hero + the install-directory row
