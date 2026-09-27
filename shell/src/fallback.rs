@@ -1967,7 +1967,7 @@ impl eframe::App for FallbackApp {
                         .fill(theme.surface)
                         // The brightness split: a hairline against the
                         // pane plus the surface/background tone step.
-                        .stroke(Stroke::new(1.0, theme.border))
+                        .stroke(Stroke::new(1.0f32, theme.border))
                         .inner_margin(Margin::same(16)),
                 )
                 .show(ctx, |ui| {
