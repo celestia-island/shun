@@ -1398,76 +1398,52 @@ impl FallbackApp {
         let texts = self.texts;
         let current = self.language;
         let zh_offered = self.cjk_font;
-
-        // Vertical centering, deterministic: measure the parts (the same
-        // discipline as the rail's measured label widths) and offset by
-        // (available - content) / 2 — egui's main-align Center nests
-        // unreliably through the pane's fixed-width block.
-        let heading_font = egui::FontId::proportional(22.0);
-        let sub_font = egui::FontId::proportional(13.0);
-        let heading_h = ui
-            .painter()
-            .layout_no_wrap(
-                texts.lang_heading.to_string(),
-                heading_font.clone(),
-                theme.text,
-            )
-            .size()
-            .y;
-        let sub_h = ui
-            .painter()
-            .layout_no_wrap(
-                texts.lang_sub.to_string(),
-                sub_font.clone(),
-                theme.text_secondary,
-            )
-            .size()
-            .y;
-        let combo_h = 32.0f32;
-        let content_h = heading_h + 8.0 + sub_h + 24.0 + combo_h;
-        ui.add_space(((ui.available_height() - content_h) / 2.0).max(0.0));
-
-        ui.label(
-            RichText::new(texts.lang_heading)
-                .strong()
-                .size(22.0)
-                .color(theme.text),
-        );
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new(texts.lang_sub)
-                .size(13.0)
-                .color(theme.text_secondary),
-        );
-        ui.add_space(24.0);
-
         let mut picked: Option<FallbackLanguage> = None;
-        // The picker stands alone and centered: computed horizontal
-        // offset (egui's cross-align nests unreliably through the pane's
-        // fixed-width block), widened to match the webview face.
-        let combo_w = 280.0f32;
-        let combo_offset = ((ui.available_width() - combo_w) / 2.0).max(0.0);
-        ui.horizontal(|ui| {
-            ui.add_space(combo_offset);
-            egui::ComboBox::from_id_salt("wizard-language")
-                .selected_text(current.autonym())
-                .width(combo_w)
-                .show_ui(ui, |ui| {
-                    let candidates = [
-                        (FallbackLanguage::En, true),
-                        (FallbackLanguage::Zh, zh_offered),
-                    ];
-                    for (language, offered) in candidates {
-                        let response = ui.add_enabled(
-                            offered,
-                            egui::Button::selectable(language == current, language.autonym()),
-                        );
-                        if response.clicked() {
-                            picked = Some(language);
+
+        // Vertical centering, egui's documented idiom: allocate the full
+        // pane with main-align Center and put an exact-height content
+        // block inside it — the block lands at the pane's vertical
+        // middle. (main-align Center on free-drawn widgets silently
+        // no-ops through the pane's fixed-width block.)
+        let w = ui.available_width();
+        ui.allocate_ui_with_layout(
+            egui::vec2(w, ui.available_height()),
+            egui::Layout::top_down(egui::Align::Center).with_main_align(egui::Align::Center),
+            |ui| {
+                ui.label(
+                    RichText::new(texts.lang_heading)
+                        .strong()
+                        .size(22.0)
+                        .color(theme.text),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(texts.lang_sub)
+                        .size(13.0)
+                        .color(theme.text_secondary),
+                );
+                ui.add_space(24.0);
+                let mut picked: Option<FallbackLanguage> = None;
+                egui::ComboBox::from_id_salt("wizard-language")
+                    .selected_text(current.autonym())
+                    .width(280.0)
+                    .show_ui(ui, |ui| {
+                        let candidates = [
+                            (FallbackLanguage::En, true),
+                            (FallbackLanguage::Zh, zh_offered),
+                        ];
+                        for (language, offered) in candidates {
+                            let response = ui.add_enabled(
+                                offered,
+                                egui::Button::selectable(language == current, language.autonym()),
+                            );
+                            if response.clicked() {
+                                picked = Some(language);
+                            }
                         }
-                    }
-                });
-        });
+                    });
+            },
+        );
         if let Some(language) = picked {
             self.apply_language(language);
         }
