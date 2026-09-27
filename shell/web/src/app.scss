@@ -24,8 +24,12 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 44px 28px 20px;
+  // No container padding: the rail plate must sit flush against the
+  // window's left/top/bottom edges; the pane carries its own insets and
+  // the footer floats bottom-right. (The top inset is hikari's fixed
+  // title bar height — the var the component itself documents.)
+  position: relative;
+  padding: var(--hk-tb-height, 32px) 0 0;
   overflow: hidden;
 
   h1 {
@@ -86,6 +90,12 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* The uninstall page's pane hangs directly off .installer (no rail) —
+   restore the container insets the rail layout moved onto the pane. */
+.installer > .wizard-layout__pane {
+  padding: 0 28px 20px;
 }
 
 .wizard-pane {
@@ -417,7 +427,12 @@ body {
 /* ── footer ───────────────────────────────────────────────────────── */
 
 .installer__footer {
-  margin-top: auto;
+  // Out of flow: the rail plate runs the full window height behind it
+  // (the classic installer look — the rail column reaches the bottom
+  // edge), so the footer floats bottom-right above it.
+  position: absolute;
+  bottom: 20px;
+  right: 28px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -460,12 +475,16 @@ body {
   align-items: center;
   background: rgb(var(--color-text) / 0.045);
   border-right: 1px solid rgb(var(--color-border) / 0.8);
+  // The grid gap would push the plate off the pane's edge: pull the
+  // border flush by eating the gap into the plate's own padding.
   margin-right: calc(var(--wizard-gap, 26px) * -1);
+  padding: 20px 0 20px 24px;
   padding-right: var(--wizard-gap, 26px);
 }
 
 .wizard-layout__pane {
   background: rgb(var(--color-background));
+  padding: 8px 28px 0 26px;
 }
 
 /* The user theme toggle (manifest-gated): pinned top-right, just under
