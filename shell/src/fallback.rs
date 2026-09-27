@@ -672,7 +672,6 @@ struct FallbackApp {
 
 /// Shared control metrics for the egui face — one set of heights and
 /// widths every pane draws with, so all products and steps size alike.
-const TITLEBAR_H: f32 = 32.0;
 const CAPTION_W: f32 = 40.0;
 const CAPTION_H: f32 = 28.0;
 const CONTROL_H: f32 = 36.0;
