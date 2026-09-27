@@ -26,10 +26,10 @@ body {
   flex-direction: column;
   // No container padding: the rail plate must sit flush against the
   // window's left/top/bottom edges; the pane carries its own insets and
-  // the footer floats bottom-right. (The 44px top clears the fixed
-  // title bar.)
+  // the footer floats bottom-right. (The top inset is hikari's fixed
+  // title bar height — the var the component itself documents.)
   position: relative;
-  padding: 44px 0 0;
+  padding: var(--hk-tb-height, 32px) 0 0;
   overflow: hidden;
 
   h1 {

@@ -929,7 +929,7 @@ fn system_locale_tag() -> Option<String> {
 /// The OS window title for this run: the saved wizard language wins,
 /// then the system locale, then the zh-Hans default.
 #[cfg(windows)]
-fn os_window_title(config: &ShunConfig, uninstall: bool) -> String {
+pub(crate) fn os_window_title(config: &ShunConfig, uninstall: bool) -> String {
     let saved = load_prefs(&local_appdata(), &config.product.name)
         .language
         .filter(|l| is_wizard_locale(l));
@@ -943,7 +943,7 @@ fn os_window_title(config: &ShunConfig, uninstall: bool) -> String {
 /// preference, system locale, or the zh-Hans floor) → the interpolated
 /// frame title. Pure so the interpolation is testable without owning
 /// the machine's locale.
-fn title_for_tag(tag: &str, config: &ShunConfig, uninstall: bool) -> String {
+pub(crate) fn title_for_tag(tag: &str, config: &ShunConfig, uninstall: bool) -> String {
     let key = license_locale_key(tag);
     let (install, uninstall_title) = WINDOW_TITLES
         .iter()
@@ -955,7 +955,7 @@ fn title_for_tag(tag: &str, config: &ShunConfig, uninstall: bool) -> String {
 }
 
 #[cfg(not(windows))]
-fn os_window_title(config: &ShunConfig, uninstall: bool) -> String {
+pub(crate) fn os_window_title(config: &ShunConfig, uninstall: bool) -> String {
     let template = if uninstall {
         "Uninstall {product}"
     } else {
@@ -1061,7 +1061,6 @@ fn main() {
                     reason,
                     LOGO_KIND.trim(),
                     LOGO_BYTES,
-                    serde_json::from_str(SHUN_STEPS_JSON).expect("embedded wizard pipeline parses"),
                     license_docs(),
                 );
             });

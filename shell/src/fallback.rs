@@ -59,6 +59,7 @@ enum Stage {
 }
 
 /// What the finished worker left behind, for the result view.
+#[derive(Clone)]
 enum Outcome {
     InstallOk,
     UninstallOk,
@@ -125,11 +126,6 @@ impl Theme {
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(190, 140, 30),
         }
-    }
-
-    /// Accent-tinted fill (a selection card at ~14% over the surface).
-    fn primary_tint(&self) -> Color32 {
-        mix(self.surface, self.primary, 0.14)
     }
 
     /// Terminal pane background (a shade between page and surface).
@@ -299,26 +295,21 @@ impl FallbackLanguage {
 }
 
 struct Texts {
-    title_suffix: &'static str,
-    version_prefix: &'static str,
     banner_missing: &'static str,
     banner_manual: &'static str,
-    step_mode: &'static str,
-    step_scope: &'static str,
+    step_language: &'static str,
+    step_location: &'static str,
     step_license: &'static str,
     step_install: &'static str,
     step_done: &'static str,
+    lang_heading: &'static str,
+    lang_sub: &'static str,
+    location_heading: &'static str,
+    titlebar_installer: &'static str,
+    titlebar_uninstall: &'static str,
     next: &'static str,
     back: &'static str,
     license_agree: &'static str,
-    scope_user: &'static str,
-    scope_user_hint: &'static str,
-    scope_machine: &'static str,
-    scope_machine_hint: &'static str,
-    mode_local: &'static str,
-    mode_local_hint: &'static str,
-    mode_portable: &'static str,
-    mode_portable_hint: &'static str,
     dir_label: &'static str,
     browse: &'static str,
     browse_title: &'static str,
@@ -349,26 +340,21 @@ struct Texts {
 }
 
 const TEXTS_ZH: Texts = Texts {
-    title_suffix: "的交付方式",
-    version_prefix: "版本",
     banner_missing: "未检测到 WebView2 运行时（缺失必要环境）—— 已自动切换至离线降级安装界面。安装功能不受影响，界面不带特效。",
     banner_manual: "已通过命令行参数 --no-webview 启用离线降级安装界面（离线版本，不带特效）。",
-    step_mode: "交付方式",
-    step_scope: "安装范围",
+    step_language: "安装语言",
+    step_location: "安装位置",
     step_license: "许可协议",
     step_install: "安装",
     step_done: "完成",
+    lang_heading: "选择安装向导的语言",
+    lang_sub: "向导的其余步骤都将以所选语言显示。",
+    location_heading: "选择安装位置",
+    titlebar_installer: "安装器",
+    titlebar_uninstall: "卸载",
     next: "下一步",
     back: "上一步",
     license_agree: "我已阅读并同意上述全部协议文档",
-    scope_user: "仅为我安装",
-    scope_user_hint: "每用户安装：写入当前用户的注册表与开始菜单，全程无需管理员权限。",
-    scope_machine: "为本机所有用户安装",
-    scope_machine_hint: "机器级安装：写入 HKLM 与全局开始菜单，确认后 Windows 将请求管理员权限（UAC）。",
-    mode_local: "安装到本机",
-    mode_local_hint: "直接 Windows 注册：ARP 卸载条目、开始菜单快捷方式与卸载器。",
-    mode_portable: "便携模式",
-    mode_portable_hint: "绿色免注册：只写 .shun-portable 标记，数据全部就地存放。",
     dir_label: "安装位置",
     browse: "浏览…",
     browse_title: "选择安装位置",
@@ -399,26 +385,21 @@ const TEXTS_ZH: Texts = Texts {
 };
 
 const TEXTS_EN: Texts = Texts {
-    title_suffix: "delivery",
-    version_prefix: "Version",
     banner_missing: "WebView2 runtime not detected (missing required environment) — switched to the offline fallback installer. Installation is fully functional; the UI carries no effects.",
     banner_manual: "Offline fallback installer enabled manually via --no-webview (the no-effects offline version).",
-    step_mode: "Delivery mode",
-    step_scope: "Install scope",
+    step_language: "Language",
+    step_location: "Location",
     step_license: "License",
     step_install: "Install",
     step_done: "Done",
+    lang_heading: "Choose the installer language",
+    lang_sub: "Later steps render in it.",
+    location_heading: "Choose the install location",
+    titlebar_installer: "Installer",
+    titlebar_uninstall: "Uninstall",
     next: "Next",
     back: "Back",
     license_agree: "I have read and agree to all documents above",
-    scope_user: "Install for me only",
-    scope_user_hint: "Per-user install: current user's registry and Start Menu; no administrator needed.",
-    scope_machine: "Install for all users of this PC",
-    scope_machine_hint: "Machine-wide install: HKLM and the all-users Start Menu; Windows will ask for administrator (UAC) on confirm.",
-    mode_local: "Install to this PC",
-    mode_local_hint: "direct Windows registration: ARP entry, start-menu shortcut, uninstaller.",
-    mode_portable: "Portable",
-    mode_portable_hint: "Green install: only a .shun-portable marker, data stays local.",
     dir_label: "Install location",
     browse: "Browse…",
     browse_title: "Choose install location",
@@ -549,14 +530,6 @@ fn desktop_policy_asks(config: &ShunConfig) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether the install target's scope policy is `ask` (the wizard
-/// choice); `user`/`machine` never consult the user.
-fn scope_policy_asks(config: &ShunConfig) -> bool {
-    install_of(config)
-        .map(|install| install.scope == shun::config::ScopePolicy::Ask)
-        .unwrap_or(false)
-}
-
 fn install_of(config: &ShunConfig) -> Option<&shun::config::InstallConfig> {
     config.targets.iter().find_map(|t| match t {
         TargetConfig::Install(install) => Some(install),
@@ -589,7 +562,6 @@ struct FallbackApp {
     /// (default per-user).
     machine: bool,
     /// The resolved wizard pipeline (ordered steps, bodies inlined).
-    steps: Vec<shun::config::ResolvedStep>,
     /// License documents resolved per locale (`shun-license-docs.json`,
     /// shared with the web shell); the license step re-picks from this
     /// map when the language changes, falling back to `steps`.
@@ -631,7 +603,7 @@ impl FallbackApp {
         cjk_font: bool,
         receiver: Receiver<WorkerMsg>,
         logo: Option<TextureHandle>,
-        steps: Vec<shun::config::ResolvedStep>,
+
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
     ) -> Self {
         let theme = resolve_theme(&config);
@@ -655,7 +627,6 @@ impl FallbackApp {
             mode,
             desktop_shortcut: true,
             machine: false,
-            steps,
             license_docs,
             step: 0,
             license_accepted: false,
@@ -959,7 +930,13 @@ const ALL_PHASES: [FlowPhase; 5] = [
 
 /// The egui window title (the screenshot path locates the window by it).
 pub fn window_title(config: &ShunConfig) -> String {
-    format!("{} — shun offline installer", config.product.name)
+    // The same locale resolution the webview face applies to its frame
+    // (saved wizard language → system locale → zh-Hans default); the
+    // English literal below is the non-Windows floor.
+    #[cfg(windows)]
+    return crate::os_window_title(config, false);
+    #[cfg(not(windows))]
+    return format!("{} Installer", config.product.name);
 }
 
 /// Opens a directory in the platform file manager.
@@ -999,7 +976,6 @@ pub fn run(
     reason: FallbackReason,
     logo_kind: &str,
     logo_bytes: &[u8],
-    steps: Vec<shun::config::ResolvedStep>,
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
 ) {
     let title = window_title(&config);
@@ -1063,7 +1039,6 @@ pub fn run(
                 font_found,
                 receiver,
                 logo,
-                steps,
                 license_docs,
             )))
         }),
@@ -1083,7 +1058,8 @@ impl FallbackApp {
     /// band drags the window (double-click toggles nothing — the shell
     /// window is not maximizable).
     fn title_bar(&mut self, ui: &mut egui::Ui) {
-        let theme = &self.theme;
+        let theme = self.theme;
+        let texts = self.texts;
         ui.horizontal(|ui| {
             ui.add_space(10.0);
             let bar_height = 24.0;
@@ -1092,9 +1068,17 @@ impl FallbackApp {
             }
             ui.add_space(6.0);
             ui.label(
-                RichText::new(format!("{} Installer", self.config.product.name))
-                    .color(theme.text_secondary)
-                    .size(13.0),
+                RichText::new(format!(
+                    "{} {}",
+                    self.config.product.name,
+                    if self.uninstalling == Some(true) {
+                        texts.titlebar_uninstall
+                    } else {
+                        texts.titlebar_installer
+                    }
+                ))
+                .color(theme.text_secondary)
+                .size(13.0),
             );
             ui.set_min_height(bar_height);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1114,9 +1098,10 @@ impl FallbackApp {
         }
     }
 
-    /// The HTimeline analog: one marker per wizard step, then install,
-    /// then done. Horizontal under the caption (default) or vertical on
-    /// the left when `shell.timeline = "left"`.
+    /// The rail: the FIXED five wizard steps — language, location,
+    /// license, install, done — the same labels the webview face shows.
+    /// Horizontal under the caption (explicit `timeline = "top"`) or
+    /// vertical on the left (the default).
     fn timeline(&self, ui: &mut egui::Ui, vertical: bool) {
         let theme = &self.theme;
         // A failed run sends the user back to configure.
@@ -1124,46 +1109,33 @@ impl FallbackApp {
             (Stage::Finished, Some(Outcome::Failed(_))) => Stage::Configure,
             (stage, _) => *stage,
         };
-        // The rail lists every pre-install step (localized per kind,
-        // configured title for content steps), then install and done.
-        let preinstall: Vec<(usize, String)> = self
-            .steps
-            .iter()
-            .enumerate()
-            // The terminal install step is the rail's own pushed item —
-            // listing it here would show "install" twice.
-            .filter(|(_, step)| step.kind != shun::config::StepKind::Install)
-            .map(|(index, step)| (index, self.step_label(step).into_owned()))
-            .collect();
+        let labels = [
+            self.texts.step_language.to_owned(),
+            self.texts.step_location.to_owned(),
+            self.texts.step_license.to_owned(),
+            self.texts.step_install.to_owned(),
+            self.texts.step_done.to_owned(),
+        ];
         let active_marker = match current {
-            Stage::Configure => Some(self.step),
+            Stage::Configure => Some(self.step.min(2)),
             _ => None,
         };
         let order_current = match current {
-            Stage::Configure => self.step,
-            Stage::Running => self.steps.len(),
-            Stage::Finished => self.steps.len() + 1,
+            Stage::Configure => self.step.min(2),
+            Stage::Running => 3,
+            Stage::Finished => 4,
         };
-        let mut items: Vec<(bool, bool, String)> = preinstall
+        let items: Vec<(bool, bool, String)> = labels
             .iter()
+            .enumerate()
             .map(|(index, label)| {
                 (
-                    active_marker == Some(*index),
-                    *index < order_current,
+                    active_marker == Some(index),
+                    index < order_current,
                     label.clone(),
                 )
             })
             .collect();
-        items.push((
-            current == Stage::Running,
-            order_current > self.steps.len(),
-            self.texts.step_install.to_owned(),
-        ));
-        items.push((
-            current == Stage::Finished && !matches!(self.outcome, Some(Outcome::Failed(_))),
-            false,
-            self.texts.step_done.to_owned(),
-        ));
         let rail: Box<dyn FnOnce(&mut egui::Ui)> = Box::new(|ui| {
             let items = items.clone();
             // One rail item: marker + label. The loop lives with the
@@ -1183,8 +1155,8 @@ impl FallbackApp {
                     ("○", theme.text_tertiary, theme.text_tertiary)
                 };
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(marker).color(marker_color).small());
-                    ui.label(RichText::new(label.as_str()).color(text_color).small());
+                    ui.label(RichText::new(marker).color(marker_color).size(15.0));
+                    ui.label(RichText::new(label.as_str()).color(text_color).size(14.5));
                 });
                 if !vertical {
                     ui.add_space(0.0);
@@ -1196,8 +1168,8 @@ impl FallbackApp {
                 // cannot place a sized-to-content block in one pass, and
                 // measured-two-frame schemes race the screenshot path.
                 ui.spacing_mut().item_spacing.y = 0.0;
-                let row_height = 22.0f32;
-                let connector_slot = 30.0f32;
+                let row_height = 30.0f32;
+                let connector_slot = 38.0f32;
                 let n = items.len() as f32;
                 let total = n * row_height + (n - 1.0).max(0.0) * connector_slot;
                 ui.add_space(((ui.available_height() - total) / 2.0).max(0.0));
@@ -1232,19 +1204,6 @@ impl FallbackApp {
         rail(ui);
     }
 
-    /// Localized rail label for a step (content steps carry their
-    /// configured title).
-    fn step_label<'a>(&self, step: &'a shun::config::ResolvedStep) -> std::borrow::Cow<'a, str> {
-        use shun::config::StepKind;
-        match step.kind {
-            StepKind::Mode => self.texts.step_mode.into(),
-            StepKind::Scope => self.texts.step_scope.into(),
-            StepKind::License => self.texts.step_license.into(),
-            StepKind::Content => step.title.as_str().into(),
-            StepKind::Install => self.texts.step_install.into(),
-        }
-    }
-
     /// The fallback-reason banner. This is the contract: a
     /// missing-environment install must say so.
     fn banner(&self, ui: &mut egui::Ui) {
@@ -1264,29 +1223,131 @@ impl FallbackApp {
             });
     }
 
-    /// The configure pane: dispatches on the current wizard step's kind.
+    /// The configure pane: dispatches on the fixed wizard steps —
+    /// language → location → license — the same progression the webview
+    /// face renders.
     fn configure_view(&mut self, ui: &mut egui::Ui) {
-        use shun::config::StepKind;
-        match self
-            .steps
-            .get(self.step)
-            .map(|step| step.kind)
-            .unwrap_or(StepKind::Mode)
-        {
-            StepKind::Mode => self.mode_view(ui),
-            StepKind::Scope => self.scope_view(ui),
-            StepKind::License => self.license_view(ui),
-            StepKind::Content => self.content_view(ui),
-            // An install step never renders here (the run takes over),
-            // but a mis-resolved pipeline still shows something sane.
-            StepKind::Install => self.mode_view(ui),
+        match self.step {
+            0 => self.language_view(ui),
+            1 => self.location_view(ui),
+            _ => self.license_view(ui),
         }
     }
 
-    /// The install-scope pane (also embedded in the mode pane when its
-    /// policy is `ask`): user vs machine radio.
-    fn scope_view(&mut self, ui: &mut egui::Ui) {
-        self.scope_choice(ui);
+    /// The language pane — the wizard's opening step, mirroring the
+    /// webview face: heading, sub line, and the picker (the Zh entry is
+    /// only offered when the machine registered a CJK font).
+    fn language_view(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme;
+        let texts = self.texts;
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(texts.lang_heading)
+                .strong()
+                .size(22.0)
+                .color(theme.text),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(texts.lang_sub)
+                .size(13.0)
+                .color(theme.text_secondary),
+        );
+        ui.add_space(16.0);
+
+        let current = self.language;
+        let zh_offered = self.cjk_font;
+        let mut picked: Option<FallbackLanguage> = None;
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(texts.language_label)
+                    .size(13.0)
+                    .color(theme.text_secondary),
+            );
+            ui.add_space(4.0);
+            egui::ComboBox::from_id_salt("wizard-language")
+                .selected_text(current.autonym())
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    let candidates = [
+                        (FallbackLanguage::En, true),
+                        (FallbackLanguage::Zh, zh_offered),
+                    ];
+                    for (language, offered) in candidates {
+                        let response = ui.add_enabled(
+                            offered,
+                            egui::Button::selectable(language == current, language.autonym()),
+                        );
+                        if response.clicked() {
+                            picked = Some(language);
+                        }
+                    }
+                });
+        });
+        if let Some(language) = picked {
+            self.apply_language(language);
+        }
+    }
+
+    /// The location pane — product hero + the install-directory row
+    /// (badge, field, browse) and its hint. The mode cards are gone:
+    /// these products install per-user locally, exactly what the
+    /// webview face shows.
+    fn location_view(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme;
+        let texts = self.texts;
+
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(texts.location_heading)
+                .strong()
+                .size(22.0)
+                .color(theme.text),
+        );
+        ui.add_space(16.0);
+
+        ui.label(
+            RichText::new(texts.dir_label)
+                .size(13.0)
+                .color(theme.text_secondary),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            folder_badge(ui, &theme, 28.0);
+            let browse_width = 84.0;
+            let gap = ui.spacing().item_spacing.x;
+            let input = TextEdit::singleline(&mut self.dir)
+                .desired_width(ui.available_width() - browse_width - gap)
+                .text_color(theme.text);
+            ui.add(input);
+            if ui
+                .add_sized(
+                    Vec2::new(browse_width, 28.0),
+                    Button::new(
+                        RichText::new(texts.browse)
+                            .size(13.0)
+                            .color(theme.text_secondary),
+                    )
+                    .fill(theme.surface)
+                    .stroke(Stroke::new(1.0f32, theme.border))
+                    .corner_radius(CornerRadius::same(6)),
+                )
+                .clicked()
+            {
+                if let Some(picked) = rfd::FileDialog::new()
+                    .set_title(texts.browse_title)
+                    .pick_folder()
+                {
+                    self.dir = nested_dir(&self.config, &picked.to_string_lossy());
+                }
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(self.hint())
+                .size(12.0)
+                .color(theme.text_tertiary),
+        );
     }
 
     /// The license pane: the agreement documents (paged when several
@@ -1310,7 +1371,14 @@ impl FallbackApp {
                     .map(|doc| (doc.title.clone(), doc.body.clone()))
                     .collect(),
                 None => {
-                    let step = self.steps.get(self.step);
+                    // Back-compat: the locale-less pipeline's license step.
+                    let pipeline: Vec<shun::config::ResolvedStep> = serde_json::from_str(
+                        include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json")),
+                    )
+                    .unwrap_or_default();
+                    let step = pipeline
+                        .iter()
+                        .find(|s| s.kind == shun::config::StepKind::License);
                     let licenses = step.map(|s| s.licenses.as_slice()).unwrap_or(&[]);
                     if licenses.is_empty() {
                         // Legacy single-string body: one untitled document.
@@ -1406,319 +1474,6 @@ impl FallbackApp {
         ui.checkbox(&mut self.license_accepted, self.texts.license_agree);
     }
 
-    /// A markdown content step: title + body in a scroll area.
-    fn content_view(&mut self, ui: &mut egui::Ui) {
-        let theme = &self.theme;
-        let step = self.steps.get(self.step);
-        let title = step.map(|s| s.title.as_str()).unwrap_or_default();
-        let body = step.and_then(|s| s.body.as_deref()).unwrap_or_default();
-        if !title.is_empty() {
-            ui.label(RichText::new(title).strong().size(17.0).color(theme.text));
-            ui.add_space(8.0);
-        }
-        Frame::default()
-            .fill(theme.surface)
-            .stroke(Stroke::new(1.0f32, theme.border))
-            .inner_margin(Margin::same(12))
-            .corner_radius(CornerRadius::same(10))
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("content-body")
-                    .auto_shrink([false, false])
-                    .max_height(ui.available_height() - 16.0)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.label(RichText::new(body).size(12.5).color(theme.text_secondary));
-                    });
-            });
-    }
-
-    /// The user/machine radio pair (shared by the standalone scope pane
-    /// and the mode pane's embedded variant).
-    fn scope_choice(&mut self, ui: &mut egui::Ui) {
-        let theme = &self.theme;
-        let texts = self.texts;
-        ui.add_space(4.0);
-        for (is_machine, title, hint) in [
-            (false, texts.scope_user, texts.scope_user_hint),
-            (true, texts.scope_machine, texts.scope_machine_hint),
-        ] {
-            let selected = self.machine == is_machine;
-            let card = Frame::default()
-                .fill(if selected {
-                    theme.primary_tint()
-                } else {
-                    theme.surface
-                })
-                .stroke(if selected {
-                    Stroke::new(1.5f32, theme.primary)
-                } else {
-                    Stroke::new(1.0f32, theme.border)
-                })
-                .inner_margin(Margin::same(12))
-                .corner_radius(CornerRadius::same(10));
-            let inner = card.show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(if selected { "●" } else { "○" })
-                                .color(if selected {
-                                    theme.primary
-                                } else {
-                                    theme.text_tertiary
-                                })
-                                .small(),
-                        );
-                        ui.label(RichText::new(title).strong().size(14.0).color(if selected {
-                            theme.text
-                        } else {
-                            theme.text_secondary
-                        }));
-                    });
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(hint).size(12.0).color(theme.text_tertiary));
-                });
-            });
-            if ui.rect_contains_pointer(inner.response.rect) && inner.response.hovered() {
-                self.machine = is_machine;
-            }
-            ui.add_space(8.0);
-        }
-    }
-
-    /// Mode selection grid + target row (the "mode" pane).
-    fn mode_view(&mut self, ui: &mut egui::Ui) {
-        // Theme is Copy — a value (not a borrow) so the language switch
-        // below can take &mut self while the UI closures still paint.
-        let theme = self.theme;
-        let texts = self.texts;
-
-        // Hero — the h1 of the hikari wizard, left-aligned with the
-        // version line under it (the pane's centered layout would push
-        // the narrow version line to a random-looking right shift).
-        ui.add_space(4.0);
-        let hero_width = ui.available_width();
-        ui.allocate_ui_with_layout(
-            egui::vec2(hero_width, 56.0),
-            egui::Layout::top_down(egui::Align::LEFT),
-            |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(self.config.product.name.as_str())
-                            .strong()
-                            .size(24.0)
-                            .color(theme.text),
-                    );
-                    ui.label(
-                        RichText::new(texts.title_suffix)
-                            .strong()
-                            .size(24.0)
-                            .color(theme.text),
-                    );
-                });
-                ui.label(
-                    RichText::new(format!(
-                        "{} {}{}",
-                        texts.version_prefix,
-                        self.config.product.version,
-                        self.config
-                            .product
-                            .publisher
-                            .as_deref()
-                            .map(|p| format!(" · {p}"))
-                            .unwrap_or_default()
-                    ))
-                    .color(theme.text_secondary)
-                    .size(14.0),
-                );
-            },
-        );
-        ui.add_space(14.0);
-
-        // Language row — the wizard's first question: switching here
-        // swaps the UI copy and the license documents live (and
-        // remembers the choice for the next run). The Zh entry is only
-        // offered when the machine registered a CJK font — the same
-        // "render what the machine can" rule the startup heuristic
-        // follows.
-        let current = self.language;
-        let zh_offered = self.cjk_font;
-        let mut picked: Option<FallbackLanguage> = None;
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(texts.language_label)
-                    .size(13.0)
-                    .color(theme.text_secondary),
-            );
-            ui.add_space(4.0);
-            egui::ComboBox::from_id_salt("wizard-language")
-                .selected_text(current.autonym())
-                .width(160.0)
-                .show_ui(ui, |ui| {
-                    let candidates = [
-                        (FallbackLanguage::En, true),
-                        (FallbackLanguage::Zh, zh_offered),
-                    ];
-                    for (candidate, offered) in candidates {
-                        if !offered {
-                            continue;
-                        }
-                        if ui
-                            .selectable_label(current == candidate, candidate.autonym())
-                            .clicked()
-                        {
-                            picked = Some(candidate);
-                        }
-                    }
-                });
-        });
-        if let Some(candidate) = picked {
-            self.apply_language(candidate);
-        }
-        ui.add_space(6.0);
-
-        // Selection grid: two cards side by side (hikari columns=2),
-        // each allocated an exact equal share of the row.
-        let modes = offered_modes(&self.config);
-        let gap = 8.0;
-        let count = modes.len().max(1) as f32;
-        ui.horizontal(|ui| {
-            for (index, &mode) in modes.iter().enumerate() {
-                if index > 0 {
-                    ui.add_space(gap);
-                }
-                let card_width = (ui.available_width() - gap * (count - index as f32 - 1.0))
-                    / (count - index as f32);
-                let selected = self.mode == mode;
-                let (title, hint) = match mode {
-                    "portable" => (texts.mode_portable, texts.mode_portable_hint),
-                    _ => (texts.mode_local, texts.mode_local_hint),
-                };
-                let card = Frame::default()
-                    .fill(if selected {
-                        theme.primary_tint()
-                    } else {
-                        theme.surface
-                    })
-                    .stroke(if selected {
-                        Stroke::new(1.5f32, theme.primary)
-                    } else {
-                        Stroke::new(1.0f32, theme.border)
-                    })
-                    .inner_margin(Margin::same(12))
-                    .corner_radius(CornerRadius::same(10));
-                let inner = card.show(ui, |ui| {
-                    ui.set_width(card_width);
-                    ui.vertical(|ui| {
-                        ui.add_space(2.0);
-                        ui.label(RichText::new(title).strong().size(15.0).color(if selected {
-                            theme.text
-                        } else {
-                            theme.text_secondary
-                        }));
-                        ui.add_space(4.0);
-                        ui.label(RichText::new(hint).size(12.0).color(theme.text_tertiary));
-                    });
-                });
-                // Clicking anywhere on the card selects the mode.
-                if ui.rect_contains_pointer(inner.response.rect)
-                    && inner.response.hovered()
-                    && !selected
-                {
-                    self.mode = mode;
-                    self.dir = default_dir(&self.config, mode)
-                        .to_string_lossy()
-                        .into_owned();
-                }
-                ui.add_space(8.0);
-            }
-        });
-
-        ui.add_space(14.0);
-
-        // Target row: folder badge + input + browse button pinned right.
-        // The native rfd dialog is the desktop shell's picker backend
-        // (an OS window outside the app — cf. the directory-field note
-        // in docs/en/design/delivery-model.md).
-        ui.label(
-            RichText::new(texts.dir_label)
-                .size(13.0)
-                .color(theme.text_secondary),
-        );
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            folder_badge(ui, &theme, 28.0);
-            let browse_width = 84.0;
-            let gap = ui.spacing().item_spacing.x;
-            let input = TextEdit::singleline(&mut self.dir)
-                .desired_width(ui.available_width() - browse_width - gap)
-                .text_color(theme.text);
-            ui.add(input);
-            if ui
-                .add_sized(
-                    Vec2::new(browse_width, 28.0),
-                    Button::new(
-                        RichText::new(texts.browse)
-                            .size(13.0)
-                            .color(theme.text_secondary),
-                    )
-                    .fill(theme.surface)
-                    .stroke(Stroke::new(1.0f32, theme.border))
-                    .corner_radius(CornerRadius::same(6)),
-                )
-                .clicked()
-            {
-                if let Some(picked) = rfd::FileDialog::new()
-                    .set_title(texts.browse_title)
-                    .pick_folder()
-                {
-                    self.dir = nested_dir(&self.config, &picked.to_string_lossy());
-                }
-            }
-        });
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(self.hint())
-                .size(12.0)
-                .color(theme.text_tertiary),
-        );
-
-        // Desktop-shortcut toggle: only the `ask` policy consults the
-        // wizard (always/never are decided by the config), and only for
-        // registered installs — portable mode writes no shortcuts.
-        if self.mode != "portable" && desktop_policy_asks(&self.config) {
-            ui.add_space(8.0);
-            // Left-aligned with the path row above (the pane's centered
-            // layout would float it mid-pane).
-            let row_width = ui.available_width();
-            ui.allocate_ui_with_layout(
-                egui::vec2(row_width, 22.0),
-                egui::Layout::left_to_right(egui::Align::Min),
-                |ui| {
-                    ui.checkbox(&mut self.desktop_shortcut, texts.desktop_shortcut);
-                },
-            );
-        }
-
-        // The `ask` install-scope policy embeds its choice here when no
-        // standalone scope step is declared.
-        let has_scope_step = self
-            .steps
-            .iter()
-            .any(|step| step.kind == shun::config::StepKind::Scope);
-        if self.mode != "portable" && !has_scope_step && scope_policy_asks(&self.config) {
-            ui.add_space(10.0);
-            ui.label(
-                RichText::new(texts.step_scope)
-                    .strong()
-                    .size(13.0)
-                    .color(theme.text_secondary),
-            );
-            self.scope_choice(ui);
-        }
-    }
-
     /// Progress view (the "install" pane): per-phase rows like the
     /// webview UI (which renders download + extract), then the log.
     fn running_view(&mut self, ui: &mut egui::Ui) {
@@ -1768,11 +1523,16 @@ impl FallbackApp {
 
     /// Result view (the "done" pane or the failure alert).
     fn finished_view(&mut self, ui: &mut egui::Ui) {
-        let theme = &self.theme;
+        let theme = self.theme;
+        let texts = self.texts;
+        let desktop_asks = desktop_policy_asks(&self.config);
         ui.add_space(8.0);
-        match self.outcome.as_ref().expect("Finished implies an outcome") {
+        // Clone the outcome out of self: the pane below mutates the
+        // desktop-shortcut answer while painting.
+        let outcome = self.outcome.clone();
+        match outcome.as_ref().expect("Finished implies an outcome") {
             Outcome::InstallOk | Outcome::UninstallOk => {
-                let (title, path) = match self.outcome.as_ref().expect("checked above") {
+                let (title, path) = match outcome.as_ref().expect("checked above") {
                     Outcome::UninstallOk => (self.texts.done_uninstall, None),
                     _ => (
                         self.texts.done_title,
@@ -1793,6 +1553,12 @@ impl FallbackApp {
                             .size(12.0)
                             .color(theme.text_tertiary),
                     );
+                    // The done-page shortcut answer — the flow created
+                    // none (pinned "never"); the finish button applies it.
+                    if desktop_asks {
+                        ui.add_space(10.0);
+                        ui.checkbox(&mut self.desktop_shortcut, texts.desktop_shortcut);
+                    }
                 });
             }
             Outcome::Failed(err) => {
@@ -1867,10 +1633,9 @@ impl FallbackApp {
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let configuring = self.stage == Stage::Configure;
-                // The last pre-install step carries the action buttons;
-                // intermediate steps walk the pipeline (license steps
-                // gate progression on their checkbox).
-                let on_last_step = self.step + 1 >= self.steps.len().max(1);
+                // The license step (2) carries the install button;
+                // language and location walk the pipeline.
+                let on_last_step = self.step >= 2;
                 let step_blocked = self.step_blocked();
                 let (label, enabled) = match self.stage {
                     Stage::Configure if !on_last_step => (self.texts.next, !step_blocked),
@@ -1918,7 +1683,47 @@ impl FallbackApp {
                                     // the license pager at doc 1.
                                     self.license_doc_index = 0;
                                 }
-                                _ => std::process::exit(0),
+                                _ => {
+                                    // The done page owns the shortcut
+                                    // answer (the manifest pins both
+                                    // launcher policies to "never", so
+                                    // the flow created none): apply it,
+                                    // then close.
+                                    let install =
+                                        self.config.targets.iter().find_map(|t| match t {
+                                            shun::config::TargetConfig::Install(install) => {
+                                                Some(install.clone())
+                                            }
+                                            _ => None,
+                                        });
+                                    if let Some(install) = install {
+                                        let main_exe = install
+                                            .main_exe
+                                            .clone()
+                                            .unwrap_or_else(|| {
+                                                std::path::PathBuf::from(format!(
+                                                    "{}.exe",
+                                                    self.config.product.name
+                                                ))
+                                            })
+                                            .to_string_lossy()
+                                            .into_owned();
+                                        let aumid = install.aumid.clone().unwrap_or_else(|| {
+                                            shun::targets::install::default_aumid(
+                                                self.config.product.publisher.as_deref(),
+                                                &self.config.product.name,
+                                            )
+                                        });
+                                        let _ = shun::targets::shortcuts::apply_shortcut_choices(
+                                            &aumid,
+                                            &main_exe,
+                                            Some(self.desktop_shortcut),
+                                            Some(true),
+                                            self.dir.trim(),
+                                        );
+                                    }
+                                    std::process::exit(0);
+                                }
                             },
                             Stage::Configure if !on_last_step => {
                                 // Moving to another step restarts the
@@ -1983,10 +1788,8 @@ impl FallbackApp {
     /// Whether the current step blocks progression (a license step
     /// without its checkbox ticked).
     fn step_blocked(&self) -> bool {
-        match self.steps.get(self.step).map(|s| s.kind) {
-            Some(shun::config::StepKind::License) => !self.license_accepted,
-            _ => false,
-        }
+        // Step 2 is the license: progression gates on the accept box.
+        self.step >= 2 && !self.license_accepted
     }
 }
 
@@ -2022,7 +1825,7 @@ impl eframe::App for FallbackApp {
         let timeline_left = self.timeline_left;
         if timeline_left {
             egui::SidePanel::left("timeline")
-                .exact_width(176.0)
+                .exact_width(200.0)
                 .frame(
                     Frame::default()
                         .fill(theme.surface)
@@ -2055,11 +1858,7 @@ impl eframe::App for FallbackApp {
                 // documents keep their start-aligned text inside the
                 // block; the running pane centers its bar). A fixed max
                 // width keeps wizard content off the window edges.
-                let align = self
-                    .steps
-                    .get(self.step)
-                    .map(|step| step.align)
-                    .unwrap_or(shun::config::StepAlign::Center);
+                let align = shun::config::StepAlign::Center;
                 let pane = egui::Layout {
                     main_wrap: false,
                     main_dir: egui::Direction::TopDown,
