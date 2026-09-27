@@ -45,7 +45,9 @@ body {
 
 .wizard-layout--left {
   display: grid;
-  grid-template-columns: auto 1fr;
+  // The rail column holds the timeline plus its tinted plate: a floor of
+  // 168px keeps the plate wider than the longest localized step label.
+  grid-template-columns: minmax(168px, auto) 1fr;
   // Clamp the single row to the layout's real height: an auto row would
   // size to the tallest item (the pane), so the rail would be stretched
   // to fit forever and HkTimeline's height-overflow collapse could never
@@ -53,6 +55,7 @@ body {
   // available height and collapse="auto" can fold it when needed.
   grid-template-rows: minmax(0, 1fr);
   gap: 26px;
+  --wizard-gap: 26px;
 
   // The vertical rail is hikari's own these days (full mode stacks the
   // nodes with a node-centered connector; collapse="auto" folds a tall
@@ -447,14 +450,22 @@ body {
 }
 
 
-/* The rail column: without a manifest override it keeps a slight
-   brightness offset from the pane — the classic installer split, readable
-   over any page background or wallpaper layer. */
+/* The rail column: the classic installer split. The tint rides
+   --color-text at low alpha, so it darkens light themes and lightens
+   dark ones automatically; the pane keeps the solid page token so the
+   step reads against gradients and wallpapers too. The rail's content
+   is vertically centered in the column. */
 .wizard-layout__rail {
-  background: rgba(255, 255, 255, 0.035);
-  border-right: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
-  margin: -8px 0 -8px -8px;
-  padding: 8px 0 8px 8px;
+  display: flex;
+  align-items: center;
+  background: rgb(var(--color-text) / 0.045);
+  border-right: 1px solid rgb(var(--color-border) / 0.8);
+  margin-right: calc(var(--wizard-gap, 26px) * -1);
+  padding-right: var(--wizard-gap, 26px);
+}
+
+.wizard-layout__pane {
+  background: rgb(var(--color-background));
 }
 
 /* The user theme toggle (manifest-gated): pinned top-right, just under

@@ -637,7 +637,10 @@ impl FallbackApp {
             cjk_font,
             texts: language.texts(),
             theme,
-            timeline_left: shell.timeline == Some(shun::config::TimelineOrientation::Left),
+            // The side rail is the standard look (the web face renders
+            // left too); an explicit `timeline = "top"` restores the
+            // horizontal strip.
+            timeline_left: shell.timeline != Some(shun::config::TimelineOrientation::Top),
             logo,
             stage: Stage::Configure,
             mode,
@@ -960,6 +963,27 @@ fn open_directory(path: &str) {
 }
 
 /// Runs the fallback wizard. Does not return until the window closes.
+/// The viewport builder carrying the product logo as the window/taskbar
+/// icon — without it the egui face ships the default eframe "e".
+fn icon_viewport_builder(logo_kind: &str, logo_bytes: &[u8]) -> egui::ViewportBuilder {
+    if logo_kind == "none" || logo_bytes.is_empty() {
+        return egui::ViewportBuilder::default();
+    }
+    let icon = image::load_from_memory(logo_bytes).ok().map(|img| {
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        egui::IconData {
+            width,
+            height,
+            rgba: rgba.into_raw(),
+        }
+    });
+    match icon {
+        Some(icon) => egui::ViewportBuilder::default().with_icon(icon),
+        None => egui::ViewportBuilder::default(),
+    }
+}
+
 pub fn run(
     config: ShunConfig,
     payload: ArchivePayload,
@@ -974,7 +998,7 @@ pub fn run(
     // custom chrome (logo + caption + drag + close). This also keeps the
     // `--screenshot` capture aligned with the client area.
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+        viewport: icon_viewport_builder(logo_kind, logo_bytes)
             .with_decorations(false)
             .with_inner_size([800.0, 600.0])
             .with_min_inner_size([640.0, 560.0]),
@@ -1937,13 +1961,25 @@ impl eframe::App for FallbackApp {
         let timeline_left = self.timeline_left;
         if timeline_left {
             egui::SidePanel::left("timeline")
+                .exact_width(176.0)
                 .frame(
                     Frame::default()
                         .fill(theme.surface)
+                        // The brightness split: a hairline against the
+                        // pane plus the surface/background tone step.
+                        .stroke(Stroke::new(1.0f32, theme.border))
                         .inner_margin(Margin::same(16)),
                 )
                 .show(ctx, |ui| {
-                    self.timeline(ui, true);
+                    ui.with_layout(
+                        // Vertical centering: the rail floats at the
+                        // column's middle, the classic installer look.
+                        egui::Layout::top_down(egui::Align::LEFT)
+                            .with_main_align(egui::Align::Center),
+                        |ui| {
+                            self.timeline(ui, true);
+                        },
+                    );
                 });
         }
 
