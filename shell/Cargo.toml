@@ -45,6 +45,10 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_Graphics_Gdi",
   "Win32_UI_WindowsAndMessaging",
   "Win32_Storage_Xps",
+  "Win32_System_Console",
+  "Win32_System_StationsAndDesktops",
+  "Win32_Graphics_Dwm",
+  "Win32_System_Com",
 ] }
 winreg = "0.56.0"
 

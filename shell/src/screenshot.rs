@@ -51,7 +51,7 @@ fn run_capture(hwnd: isize, path: &std::path::Path) {
 }
 
 #[cfg(windows)]
-fn find_window_by_title(title: &str) -> Option<isize> {
+pub(crate) fn find_window_by_title(title: &str) -> Option<isize> {
     use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
 
     let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
@@ -60,7 +60,7 @@ fn find_window_by_title(title: &str) -> Option<isize> {
 }
 
 #[cfg(not(windows))]
-fn find_window_by_title(_title: &str) -> Option<isize> {
+pub(crate) fn find_window_by_title(_title: &str) -> Option<isize> {
     None
 }
 
