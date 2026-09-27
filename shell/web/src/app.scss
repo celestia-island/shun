@@ -472,7 +472,12 @@ body {
    is vertically centered in the column. */
 .wizard-layout__rail {
   display: flex;
+  // The timeline centers in the plate both ways: vertically via
+  // align-items, horizontally by shrinking the rail's child to its
+  // content (the hikari timeline would otherwise span the plate and
+  // hug its left edge).
   align-items: center;
+  justify-content: center;
   background: rgb(var(--color-text) / 0.045);
   border-right: 1px solid rgb(var(--color-border) / 0.8);
   // The grid gap would push the plate off the pane's edge: pull the
@@ -480,6 +485,10 @@ body {
   margin-right: calc(var(--wizard-gap, 26px) * -1);
   padding: 20px 0 20px 24px;
   padding-right: var(--wizard-gap, 26px);
+
+  > * {
+    width: fit-content;
+  }
 }
 
 .wizard-layout__pane {
