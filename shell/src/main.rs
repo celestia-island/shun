@@ -1008,21 +1008,23 @@ fn main() {
         serde_json::from_str(SHUN_CONFIG_JSON).expect("embedded config decodes");
     let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
     let faces = faces_of(&config);
+    // Console first, capabilities after: a GUI-subsystem binary launched
+    // from a terminal holds no std handles until the parent console is
+    // attached (and wired), so the TTY probe must run post-attach —
+    // `--no-gui` from cmd/PowerShell otherwise resolves to the help
+    // text instead of the TUI.
+    let _ = shun::env_probe::attach_parent_console();
     let caps = UiCapabilities::probe();
     let face = resolve_face(&cli, &caps, &faces);
 
     match face {
         Face::Silent => {
-            // GUI-subsystem binaries inherit no console; attach the
-            // parent's so the progress lines reach the invoking terminal.
-            let _ = shun::env_probe::attach_parent_console();
             if let Err(err) = run_headless(&cli, &config, &payload) {
                 eprintln!("shun: {err}");
                 std::process::exit(1);
             }
         }
         Face::Help { message, err } => {
-            let _ = shun::env_probe::attach_parent_console();
             println!("{message}");
             println!();
             print!("{}", Cli::command().render_help());
@@ -1030,7 +1032,6 @@ fn main() {
         }
         Face::Tui => {
             if let Err(err) = tui::run(config, payload, cli.uninstall) {
-                let _ = shun::env_probe::attach_parent_console();
                 eprintln!("shun: {err}");
                 std::process::exit(1);
             }
