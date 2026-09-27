@@ -1116,6 +1116,12 @@ pub fn run(
             // A CJK font is the egui renderer's proxy for "the machine
             // can render the Zh table" (the historical `zh = font_found`).
             let font_found = install_cjk_font(&cc.egui_ctx);
+            // Uniform control height across all egui widgets (combo,
+            // buttons, text fields) — matches the web face's proportions.
+            let mut style = (*cc.egui_ctx.style()).clone();
+            style.spacing.interact_size.y = 36.0;
+            style.spacing.button_padding = egui::vec2(12.0, 8.0);
+            cc.egui_ctx.set_style(style);
             // Language: the remembered preference wins (the same
             // `installer-prefs.json` the web shell writes), then
             // `shell.language`, then what the machine can render.
@@ -1169,7 +1175,7 @@ impl FallbackApp {
         let texts = self.texts;
         ui.horizontal(|ui| {
             ui.add_space(10.0);
-            let bar_height = TITLEBAR_H;
+            let bar_height = 28.0;
             if let Some(logo) = &self.logo {
                 ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(20.0)));
             }
@@ -1199,18 +1205,25 @@ impl FallbackApp {
                     Close,
                 }
                 let dark_now = self.dark_theme;
-                let caption = move |ui: &mut egui::Ui,
-                                    icon: CaptionIcon,
-                                    hover_fill: Color32|
-                      -> egui::Response {
+                let caption = move |ui: &mut egui::Ui, icon: CaptionIcon| -> egui::Response {
                     let (rect, response) = ui
                         .allocate_exact_size(Vec2::new(CAPTION_W, CAPTION_H), egui::Sense::click());
                     let painter = ui.painter_at(rect);
-                    if response.hovered() {
-                        painter.rect_filled(rect, CornerRadius::same(5), hover_fill);
+                    let hovered = response.hovered();
+                    if hovered {
+                        painter.rect_filled(
+                            rect,
+                            CornerRadius::same(5),
+                            mix(theme.background, theme.text, 0.12),
+                        );
                     }
                     let c = rect.center();
-                    let stroke = Stroke::new(1.3f32, theme.text_secondary);
+                    let icon_color = if hovered {
+                        theme.text
+                    } else {
+                        theme.text_secondary
+                    };
+                    let stroke = Stroke::new(1.3f32, icon_color);
                     match icon {
                         CaptionIcon::Minimize => {
                             painter
@@ -1228,12 +1241,8 @@ impl FallbackApp {
                             );
                         }
                         CaptionIcon::ThemeToggle => {
-                            // Sun while dark (click → light); crescent
-                            // while light (click → dark). The crescent's
-                            // bite paints in the bar's fill, so it reads
-                            // cleanly on hover too.
                             if dark_now {
-                                painter.circle_filled(c, 4.5, theme.text_secondary);
+                                painter.circle_filled(c, 4.5, icon_color);
                                 for ray in 0..8 {
                                     let angle = ray as f32 * std::f32::consts::TAU / 8.0;
                                     let dir = egui::vec2(angle.cos(), angle.sin());
@@ -1242,15 +1251,15 @@ impl FallbackApp {
                                             c + dir * egui::vec2(7.0, 7.0),
                                             c + dir * egui::vec2(9.5, 9.5),
                                         ],
-                                        stroke,
+                                        Stroke::new(1.3f32, icon_color),
                                     );
                                 }
                             } else {
-                                painter.circle_filled(c, 5.5, theme.text_secondary);
+                                painter.circle_filled(c, 5.5, icon_color);
                                 painter.circle_filled(
                                     c + egui::vec2(2.5, -1.5),
                                     4.5,
-                                    theme.surface,
+                                    theme.background,
                                 );
                             }
                         }
@@ -1264,25 +1273,17 @@ impl FallbackApp {
                 // Right-to-left row: emit the CLOSE first so it lands
                 // right-most (the Windows convention), minimize to its
                 // left, and the theme toggle left-most of the cluster.
-                let close = caption(ui, CaptionIcon::Close, Color32::from_rgb(232, 17, 35));
+                let close = caption(ui, CaptionIcon::Close);
                 if close.clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                let minimize = caption(
-                    ui,
-                    CaptionIcon::Minimize,
-                    mix(theme.surface, theme.text, 0.12),
-                );
+                let minimize = caption(ui, CaptionIcon::Minimize);
                 if minimize.clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
                 if self.user_adjustable {
-                    let r = caption(
-                        ui,
-                        CaptionIcon::ThemeToggle,
-                        mix(theme.surface, theme.text, 0.12),
-                    );
+                    let r = caption(ui, CaptionIcon::ThemeToggle);
                     if r.clicked() {
                         self.dark_theme = !self.dark_theme;
                         self.theme = if self.dark_theme {
@@ -2113,8 +2114,8 @@ impl eframe::App for FallbackApp {
             .frame(Frame::default().fill(theme.surface).inner_margin(Margin {
                 left: 0,
                 right: 10,
-                top: 8,
-                bottom: 8,
+                top: 4,
+                bottom: 4,
             }))
             .show(ctx, |ui| {
                 self.title_bar(ui);
