@@ -78,7 +78,11 @@ body {
   // top edge. Rail-only — the standalone uninstall pane has no rail and
   // must center without the offset.
   .wizard-layout__pane {
-    padding-top: calc(var(--hk-timeline-node-size, 24px) / 2);
+    // Title-bar clearance rides on top of the node alignment offset —
+    // without the tb term the fixed hikari bar covers the heading.
+    padding-top: calc(
+      var(--hk-tb-height, 32px) + var(--hk-timeline-node-size, 24px) / 2
+    );
   }
 }
 

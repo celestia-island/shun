@@ -2153,8 +2153,14 @@ impl eframe::App for FallbackApp {
                     self.timeline(ui, false);
                     ui.add_space(10.0);
                 }
-                self.banner(ui);
-                ui.add_space(12.0);
+                // The degradation banner is information, not decoration:
+                // show it only when the runtime forced the fallback (no
+                // WebView2). A deliberate --no-webview launch needs no
+                // warning about itself.
+                if self.reason == FallbackReason::MissingWebview2 {
+                    self.banner(ui);
+                    ui.add_space(12.0);
+                }
                 // Every pane centers its content block — horizontally
                 // always, vertically too (content panes that read as
                 // documents keep their start-aligned text inside the
