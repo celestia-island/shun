@@ -1082,6 +1082,12 @@ pub fn run(
             .with_min_inner_size([640.0, 560.0]),
         ..Default::default()
     };
+    // Windows 11: round the frameless window's corners via DWM (a no-op
+    // on Windows 10). The native title resolves through the same locale
+    // rules as the drawn caption.
+    #[cfg(windows)]
+    let fallback_title = window_title(&config);
+    round_window_corners(&fallback_title);
     let result = eframe::run_native(
         &title,
         options,
@@ -1177,11 +1183,12 @@ impl FallbackApp {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // Caption buttons, Windows style: 40×24 plates, centered
                 // VECTOR glyphs (egui's default fonts carry no caption
-                // dingbats — drawn strokes and discs render everywhere),
-                // hover fill (red for close).
+                // dingbats — strokes and discs render everywhere), hover
+                // fill (red for close).
                 enum CaptionIcon {
-                    Close,
+                    Minimize,
                     ThemeToggle,
+                    Close,
                 }
                 let dark_now = self.dark_theme;
                 let caption = move |ui: &mut egui::Ui,
@@ -1197,6 +1204,10 @@ impl FallbackApp {
                     let c = rect.center();
                     let stroke = Stroke::new(1.3f32, theme.text_secondary);
                     match icon {
+                        CaptionIcon::Minimize => {
+                            painter
+                                .line_segment([pos2(c.x - 5.0, c.y), pos2(c.x + 5.0, c.y)], stroke);
+                        }
                         CaptionIcon::Close => {
                             let d = 4.5f32;
                             painter.line_segment(
@@ -1209,10 +1220,12 @@ impl FallbackApp {
                             );
                         }
                         CaptionIcon::ThemeToggle => {
-                            // Sun when dark (click → light); crescent
-                            // moon when light (click → dark).
+                            // Sun while dark (click → light); crescent
+                            // while light (click → dark). The crescent's
+                            // bite paints in the bar's fill, so it reads
+                            // cleanly on hover too.
                             if dark_now {
-                                painter.circle_filled(c, 5.0, theme.text_secondary);
+                                painter.circle_filled(c, 4.5, theme.text_secondary);
                                 for ray in 0..8 {
                                     let angle = ray as f32 * std::f32::consts::TAU / 8.0;
                                     let dir = egui::vec2(angle.cos(), angle.sin());
@@ -1225,9 +1238,6 @@ impl FallbackApp {
                                     );
                                 }
                             } else {
-                                // Crescent: main disc, then the bite
-                                // painted in the bar's fill (the
-                                // plate stays transparent).
                                 painter.circle_filled(c, 5.5, theme.text_secondary);
                                 painter.circle_filled(
                                     c + egui::vec2(2.5, -1.5),
@@ -1239,13 +1249,16 @@ impl FallbackApp {
                     }
                     response
                 };
-                // Theme toggle — manifest-gated (user-adjustable). Shows
-                // the sun while dark (click → light) and the crescent
-                // while light (click → dark); the bite disc paints in the
-                // bar's own fill, so it reads cleanly on hover too.
+
+                // Theme toggle — manifest-gated (user-adjustable). The
+                // bite disc paints in the bar fill (the toggle plate
+                // stays transparent), so hover keeps it readable.
                 let toggle = if self.user_adjustable {
-                    let hover = theme.surface;
-                    let r = caption(ui, CaptionIcon::ThemeToggle, hover);
+                    let r = caption(
+                        ui,
+                        CaptionIcon::ThemeToggle,
+                        mix(theme.surface, theme.text, 0.12),
+                    );
                     if r.clicked() {
                         self.dark_theme = !self.dark_theme;
                         self.theme = if self.dark_theme {
@@ -1263,8 +1276,19 @@ impl FallbackApp {
                 } else {
                     false
                 };
-                let _ = toggle;
-                // Close — right-most, red on hover.
+                // Minimize.
+                let minimize = caption(
+                    ui,
+                    CaptionIcon::Minimize,
+                    mix(theme.surface, theme.text, 0.12),
+                );
+                if minimize.clicked() {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                // Close — right-most... wait, right_to_left: this is
+                // left-most of the cluster; keep order [toggle, minimize,
+                // close] by emitting close LAST in the RTL row.
                 let close = caption(ui, CaptionIcon::Close, Color32::from_rgb(232, 17, 35));
                 if close.clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1363,16 +1387,16 @@ impl FallbackApp {
                 if *done {
                     ui.painter()
                         .circle_filled(center, circle_d / 2.0, theme.primary);
-                    let (l, r) = (center.x - 4.5, center.x + 4.0);
-                    let (ty, by) = (cy + 0.5, cy - 3.5);
-                    ui.painter().line_segment(
-                        [pos2(l, ty), pos2(cx - 1.0, by)],
-                        Stroke::new(1.6_f32, Color32::WHITE),
-                    );
-                    ui.painter().line_segment(
-                        [pos2(cx - 1.0, by), pos2(r, ty - 4.0)],
-                        Stroke::new(1.6_f32, Color32::WHITE),
-                    );
+                    // A proper check: mid-left → bottom-middle → top-right.
+                    let pts = [
+                        pos2(cx - 4.5, cy + 0.5),
+                        pos2(cx - 1.0, cy + 4.0),
+                        pos2(cx + 4.5, cy - 4.0),
+                    ];
+                    ui.painter()
+                        .line_segment([pts[0], pts[1]], Stroke::new(1.8_f32, Color32::WHITE));
+                    ui.painter()
+                        .line_segment([pts[1], pts[2]], Stroke::new(1.8_f32, Color32::WHITE));
                 } else {
                     ui.painter().circle_stroke(
                         center,
@@ -1417,15 +1441,15 @@ impl FallbackApp {
                     if *done {
                         ui.painter()
                             .circle_filled(pos2(cx, cy), circle_d / 2.0, theme.primary);
-                        let (l, r) = (cx - 4.5, cx + 4.0);
-                        ui.painter().line_segment(
-                            [pos2(l, cy + 0.5), pos2(cx - 1.0, cy - 3.5)],
-                            Stroke::new(1.6_f32, Color32::WHITE),
-                        );
-                        ui.painter().line_segment(
-                            [pos2(cx - 1.0, cy - 3.5), pos2(r, cy + 0.5)],
-                            Stroke::new(1.6_f32, Color32::WHITE),
-                        );
+                        let pts = [
+                            pos2(cx - 4.5, cy + 0.5),
+                            pos2(cx - 1.0, cy + 4.0),
+                            pos2(cx + 4.5, cy - 4.0),
+                        ];
+                        ui.painter()
+                            .line_segment([pts[0], pts[1]], Stroke::new(1.8_f32, Color32::WHITE));
+                        ui.painter()
+                            .line_segment([pts[1], pts[2]], Stroke::new(1.8_f32, Color32::WHITE));
                     } else {
                         ui.painter().circle_stroke(
                             pos2(cx, cy),
@@ -2170,4 +2194,29 @@ impl eframe::App for FallbackApp {
                 );
             });
     }
+}
+
+/// Windows 11 DWM corner rounding for the frameless fallback window
+/// (a no-op on Windows 10, which keeps square corners). The window is
+/// located by its exact native title once it exists.
+#[cfg(windows)]
+fn round_window_corners(title: &str) {
+    let title = title.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        if let Some(hwnd) = crate::screenshot::find_window_by_title(&title) {
+            const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+            const DWMWCP_ROUND: u32 = 2;
+            // SAFETY: plain dwmapi call with our own window handle and a
+            // 4-byte attribute.
+            unsafe {
+                windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+                    hwnd as *mut core::ffi::c_void,
+                    DWMWA_WINDOW_CORNER_PREFERENCE,
+                    &DWMWCP_ROUND as *const u32 as *const core::ffi::c_void,
+                    4,
+                );
+            }
+        }
+    });
 }
