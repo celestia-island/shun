@@ -670,6 +670,14 @@ struct FallbackApp {
     receiver: Receiver<WorkerMsg>,
 }
 
+/// Shared control metrics for the egui face — one set of heights and
+/// widths every pane draws with, so all products and steps size alike.
+const TITLEBAR_H: f32 = 32.0;
+const CAPTION_W: f32 = 40.0;
+const CAPTION_H: f32 = 28.0;
+const CONTROL_H: f32 = 36.0;
+const COMBO_W: f32 = 380.0;
+
 impl FallbackApp {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -1161,7 +1169,7 @@ impl FallbackApp {
         let texts = self.texts;
         ui.horizontal(|ui| {
             ui.add_space(10.0);
-            let bar_height = 24.0;
+            let bar_height = TITLEBAR_H;
             if let Some(logo) = &self.logo {
                 ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(20.0)));
             }
@@ -1195,8 +1203,8 @@ impl FallbackApp {
                                     icon: CaptionIcon,
                                     hover_fill: Color32|
                       -> egui::Response {
-                    let (rect, response) =
-                        ui.allocate_exact_size(Vec2::new(40.0, 24.0), egui::Sense::click());
+                    let (rect, response) = ui
+                        .allocate_exact_size(Vec2::new(CAPTION_W, CAPTION_H), egui::Sense::click());
                     let painter = ui.painter_at(rect);
                     if response.hovered() {
                         painter.rect_filled(rect, CornerRadius::same(5), hover_fill);
@@ -1253,6 +1261,22 @@ impl FallbackApp {
                 // Theme toggle — manifest-gated (user-adjustable). The
                 // bite disc paints in the bar fill (the toggle plate
                 // stays transparent), so hover keeps it readable.
+                // Right-to-left row: emit the CLOSE first so it lands
+                // right-most (the Windows convention), minimize to its
+                // left, and the theme toggle left-most of the cluster.
+                let close = caption(ui, CaptionIcon::Close, Color32::from_rgb(232, 17, 35));
+                if close.clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                let minimize = caption(
+                    ui,
+                    CaptionIcon::Minimize,
+                    mix(theme.surface, theme.text, 0.12),
+                );
+                if minimize.clicked() {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
                 if self.user_adjustable {
                     let r = caption(
                         ui,
@@ -1272,23 +1296,6 @@ impl FallbackApp {
                             egui::Visuals::light()
                         });
                     }
-                }
-                // Minimize.
-                let minimize = caption(
-                    ui,
-                    CaptionIcon::Minimize,
-                    mix(theme.surface, theme.text, 0.12),
-                );
-                if minimize.clicked() {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                }
-                // Close — right-most... wait, right_to_left: this is
-                // left-most of the cluster; keep order [toggle, minimize,
-                // close] by emitting close LAST in the RTL row.
-                let close = caption(ui, CaptionIcon::Close, Color32::from_rgb(232, 17, 35));
-                if close.clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 ui.add_space(8.0);
             });
@@ -1519,12 +1526,12 @@ impl FallbackApp {
             .size()
             .y;
         let sub_h = 20.0f32;
-        let combo_h = 32.0f32;
+        let combo_h = CONTROL_H;
         let content_h = heading_h + 8.0 + sub_h + 24.0 + combo_h;
         let avail_h = ui.available_height();
         ui.add_space(((avail_h - content_h) / 2.0).max(0.0));
 
-        let block_w = 280.0f32;
+        let block_w = COMBO_W;
         let block_left = ((ui.available_width() - block_w) / 2.0).max(0.0);
         // The block centers horizontally in the pane (the webview face's
         // language step centers its picker the same way); its CONTENT is
