@@ -2037,16 +2037,6 @@ impl FallbackApp {
         response
     }
 
-    /// A group label above a chip row (hikari's micro-headers): muted
-    /// secondary text at the small size. Generic across panes.
-    fn section_label(ui: &mut egui::Ui, theme: Theme, text: &str) {
-        ui.label(
-            RichText::new(text)
-                .size(12.0)
-                .color(theme.text_secondary),
-        );
-    }
-
     /// A hikari quick-pick chip: lucide icon + mono label in a soft
     /// pill, one click target. Unwritable candidates dim and swap to
     /// the alert glyph; `accent` paints the steer-to highlight. The
@@ -2541,60 +2531,6 @@ impl FallbackApp {
             },
         );
 
-        // Quick candidates: the config-driven chips — kind → icon,
-        // unwritable dims and swaps to the alert glyph, the accent
-        // highlights the first writable candidate while the current
-        // path fails its probe (all web-face behaviors). The group
-        // carries the shared 常用路径-style heading (i18n quick_title).
-        ui.add_space(14.0);
-        Self::section_label(ui, theme, texts.quick_title.as_str());
-        let first_writable = self
-            .candidates
-            .iter()
-            .find(|(_, writable, _)| *writable)
-            .map(|(_, _, path)| path.clone());
-        let accent_target = (self.dir_writable == Some(false))
-            .then(|| first_writable.clone())
-            .flatten();
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 70.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                for (kind, writable, path) in self.candidates.clone() {
-                    let accent = accent_target.as_deref() == Some(path.as_str());
-                    let label = match kind.as_str() {
-                        "appdata" => "AppData".to_string(),
-                        "program-files" => "Program Files".to_string(),
-                        _ => path.clone(),
-                    };
-                    let icon = if writable {
-                        match kind.as_str() {
-                            "appdata" => &icons.app_window,
-                            _ => &icons.hard_drive,
-                        }
-                    } else {
-                        &icons.alert
-                    };
-                    let clicked = Self::quick_chip(
-                        ui,
-                        theme,
-                        &icons,
-                        icon,
-                        &label,
-                        writable,
-                        accent,
-                    );
-                    if clicked {
-                        self.dir = shun::wizard::pad_root_dir(&self.config, &path);
-                        self.probed_dir.clear();
-                    }
-                }
-                });
-            },
-        );
-
         // Hint + the unwritable warning + the product/flavor line.
         ui.add_space(12.0);
         ui.allocate_ui_with_layout(
@@ -2608,10 +2544,14 @@ impl FallbackApp {
                 );
                 if self.dir_writable == Some(false) {
                     ui.add_space(6.0);
-                    let warn = if first_writable.is_some() {
-                        texts.warn_unwritable
+                    let has_writable = self
+                        .candidates
+                        .iter()
+                        .any(|(_, writable, _)| *writable);
+                    let warn = if has_writable {
+                        texts.warn_unwritable.clone()
                     } else {
-                        texts.warn_no_writable
+                        texts.warn_no_writable.clone()
                     };
                     ui.label(RichText::new(warn).size(13.0).color(theme.error));
                 }
@@ -2654,6 +2594,15 @@ impl FallbackApp {
                         .inner_margin(Margin::same(6))
                         .show(ui, |ui| {
                             ui.set_width(field_w - 12.0);
+                            // Two-level picker (user direction): each
+                            // drive is a group header; its config-driven
+                            // default candidates nest beneath it. Click
+                            // either — both land on pad_root_dir, the
+                            // typed remainder survives a drive switch.
+                            egui::ScrollArea::vertical()
+                                .id_salt(egui::Id::new("drive-picker-scroll"))
+                                .max_height(9.0 * 30.0)
+                                .show(ui, |ui| {
                             for (mount, kind, label) in self.drives.clone() {
                                 let kind_label = match kind.as_str() {
                                     "removable" => texts.kind_removable.clone(),
@@ -2669,6 +2618,7 @@ impl FallbackApp {
                                     }
                                     _ => kind_label.to_string(),
                                 };
+                                let drive_active = self.dir.starts_with(&mount);
                                 let (row, row_resp) = ui.allocate_exact_size(
                                     egui::vec2(ui.available_width(), 30.0),
                                     egui::Sense::click(),
@@ -2678,7 +2628,7 @@ impl FallbackApp {
                                         .set_cursor_icon(egui::CursorIcon::PointingHand);
                                 }
                                 let rp = ui.painter_at(row);
-                                if row_resp.hovered() || self.dir.starts_with(&mount) {
+                                if row_resp.hovered() || drive_active {
                                     rp.rect_filled(
                                         row,
                                         CornerRadius::same(8),
@@ -2690,7 +2640,11 @@ impl FallbackApp {
                                     egui::Align2::LEFT_CENTER,
                                     &mount,
                                     egui::FontId::monospace(13.0),
-                                    theme.text,
+                                    if drive_active {
+                                        theme.primary
+                                    } else {
+                                        theme.text
+                                    },
                                 );
                                 rp.text(
                                     pos2(row.right() - 10.0, row.center().y),
@@ -2699,23 +2653,106 @@ impl FallbackApp {
                                     egui::FontId::proportional(11.0),
                                     theme.text_secondary,
                                 );
-                                if row_resp.clicked() {
+                                let switch_drive = |dir: &mut String, mount: &str| {
                                     // PathField's contract: strip the old
                                     // prefix, keep the typed remainder.
                                     let old_mount = self
                                         .drives
                                         .iter()
-                                        .find(|(m, _, _)| self.dir.starts_with(m))
+                                        .find(|(m, _, _)| dir.starts_with(m))
                                         .map(|(m, _, _)| m.clone())
                                         .unwrap_or_default();
-                                    let rest = self
-                                        .dir
+                                    let rest = dir
                                         .strip_prefix(old_mount.as_str())
                                         .map(|r| r.trim_start_matches(['\\', '/']))
-                                        .unwrap_or("");
-                                    self.dir = format!("{mount}{rest}");
+                                        .unwrap_or("")
+                                        .to_string();
+                                    *dir = format!("{mount}{rest}");
+                                };
+                                if row_resp.clicked() {
+                                    switch_drive(&mut self.dir, &mount);
+                                    self.probed_dir.clear();
+                                }
+                                // The drive's config-driven defaults,
+                                // indented beneath the group header.
+                                for (ckind, cwritable, cpath) in self.candidates.clone() {
+                                    if !cpath
+                                        .get(..mount.len())
+                                        .map_or(false, |prefix| {
+                                            prefix.eq_ignore_ascii_case(&mount)
+                                        })
+                                    {
+                                        continue;
+                                    }
+                                    let clabel = match ckind.as_str() {
+                                        "appdata" => "AppData".to_string(),
+                                        "program-files" => "Program Files".to_string(),
+                                        _ => cpath.clone(),
+                                    };
+                                    let (crow, crow_resp) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), 30.0),
+                                        egui::Sense::click(),
+                                    );
+                                    if crow_resp.hovered() {
+                                        ui.ctx().set_cursor_icon(
+                                            egui::CursorIcon::PointingHand,
+                                        );
+                                    }
+                                    let icon = if cwritable {
+                                        match ckind.as_str() {
+                                            "appdata" => &icons.app_window,
+                                            _ => &icons.hard_drive,
+                                        }
+                                    } else {
+                                        &icons.alert
+                                    };
+                                    let icon_tint = if cwritable {
+                                        theme.text
+                                    } else {
+                                        theme.text_secondary.gamma_multiply(0.55)
+                                    };
+                                    let crp = ui.painter_at(crow);
+                                    if crow_resp.hovered() {
+                                        crp.rect_filled(
+                                            crow,
+                                            CornerRadius::same(8),
+                                            mix(theme.background, theme.primary, 0.08),
+                                        );
+                                    }
+                                    crp.image(
+                                        icon.id(),
+                                        egui::Rect::from_center_size(
+                                            pos2(crow.left() + 26.0, crow.center().y),
+                                            egui::vec2(13.0, 13.0),
+                                        ),
+                                        egui::Rect::from_min_max(
+                                            pos2(0.0, 0.0),
+                                            pos2(1.0, 1.0),
+                                        ),
+                                        icon_tint,
+                                    );
+                                    crp.text(
+                                        pos2(crow.left() + 38.0, crow.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        &clabel,
+                                        egui::FontId::monospace(12.0),
+                                        if cwritable {
+                                            theme.text
+                                        } else {
+                                            theme.text_secondary
+                                        },
+                                    );
+                                    if crow_resp.clicked() {
+                                        self.dir = shun::wizard::pad_root_dir(
+                                            &self.config,
+                                            &cpath,
+                                        );
+                                        self.probed_dir.clear();
+                                        self.drive_open = false;
+                                    }
                                 }
                             }
+                                });
                         });
                     popup_rect = popup.response.rect;
                 });
