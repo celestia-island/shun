@@ -1,13 +1,10 @@
 import { computed, defineComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
-  AppWindow,
   CheckCircle2,
   Moon,
   ChevronLeft,
   ChevronRight,
-  HardDrive,
   Sun,
-  TriangleAlert,
   XCircle,
 } from "lucide-vue-next";
 import {
@@ -103,11 +100,6 @@ interface FlowEventPayload {
 // Quick-candidate row: label + glyph per candidate kind; drive candidates
 // show the path itself (a row of drive roots reads better than a bare
 // "磁盘"). The two product nouns are locale-independent.
-const CANDIDATE_META: Record<string, { label: string; icon: typeof HardDrive }> = {
-  appdata: { label: "AppData", icon: AppWindow },
-  "program-files": { label: "Program Files", icon: HardDrive },
-  drive: { label: "", icon: HardDrive },
-};
 
 // Step keys in rail order (language leads, the wizard's first step); the
 // labels resolve from the string table per render so a locale switch
@@ -796,7 +788,12 @@ export default defineComponent({
                 modelValue={dir.value}
                 disabled={running.value}
                 drives={drives.value}
+                candidates={candidates.value}
                 labels={s.pathField}
+                {...{ "onPick-candidate": (path: string) => {
+                  dir.value = path;
+                  void applyNestRootDir(path).catch(() => {});
+                } }}
                 onUpdate:modelValue={(v: string) => (dir.value = v)}
                 onBrowse={browse}
                 onBlur={() => {
@@ -806,35 +803,6 @@ export default defineComponent({
                   }
                 }}
               />
-              <p class="wizard-target__quick-title">{s.target.quickTitle}</p>
-              <div class="wizard-target__quick">
-                {candidates.value.map((candidate) => {
-                  const meta = CANDIDATE_META[candidate.kind] ?? CANDIDATE_META.drive;
-                  const Icon = candidate.writable ? meta.icon : TriangleAlert;
-                  // While the current path fails the probe, steer the
-                  // user to the first location the install would accept.
-                  const accent =
-                    dirWritable.value === false &&
-                    candidate.writable &&
-                    candidate.path === firstWritableCandidate.value?.path;
-                  return (
-                    <HkButton
-                      key={candidate.path}
-                      variant="ghost"
-                      size="sm"
-                      class={[
-                        "wizard-target__quick-candidate",
-                        candidate.writable ? "" : "wizard-target__quick-candidate--dim",
-                        accent ? "wizard-target__quick-candidate--accent" : "",
-                      ]}
-                      onClick={() => void applyNestRootDir(candidate.path).catch(() => {})}
-                    >
-                      <Icon size={13} />
-                      {candidate.kind === "drive" ? candidate.path : meta.label}
-                    </HkButton>
-                  );
-                })}
-              </div>
               <p class="wizard-target__hint">
                 {hintKind.value === "error" ? hintError.value : s.target.hintLocal}
               </p>

@@ -2471,7 +2471,7 @@ impl FallbackApp {
                         );
                     }
                     ui.painter().text(
-                        pos2(chip.left() + 12.0, chip.center().y),
+                        pos2(chip.left() + 12.0, chip.center().y + 1.5),
                         egui::Align2::LEFT_CENTER,
                         &mount,
                         egui::FontId::monospace(13.0),

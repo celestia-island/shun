@@ -41,14 +41,20 @@ export default defineComponent({
     modelValue: { type: String, default: "" },
     disabled: { type: Boolean, default: false },
     drives: { type: Array as PropType<DriveInfo[]>, default: () => [] },
-    /** Localized labels (browse button, picker chrome, drive kinds) —
-     *  resolved by the host from the wizard locale each render. */
+    /** The backend's config-driven default locations; grouped beneath
+     *  their drive inside the picker popup (user direction: the chips
+     *  row is retired — the picker is the single surface). */
+    candidates: {
+      type: Array as PropType<{ kind: string; path: string; writable: boolean }[]>,
+      default: () => [],
+    },
     labels: { type: Object as PropType<PathFieldStrings>, required: true },
   },
   emits: {
     "update:modelValue": (_value: string) => true,
     browse: () => true,
     blur: (_e: FocusEvent) => true,
+    "pick-candidate": (_path: string) => true,
   },
   setup(props, { emit }) {
     /** The mount the current value starts with, longest match first
@@ -66,14 +72,37 @@ export default defineComponent({
       return matches[0] ?? "";
     });
 
-    const options = computed<readonly HkAffixOption[]>(() =>
-      props.drives.map((drive) => ({
-        key: drive.mount,
-        label: drive.mount,
-        meta: props.labels.kinds[drive.kind] ?? props.labels.kinds.unknown,
-        keywords: drive.label ?? "",
-      })),
-    );
+    const options = computed<readonly HkAffixOption[]>(() => {
+      const rows: HkAffixOption[] = [];
+      for (const drive of props.drives) {
+        rows.push({
+          key: `mount:${drive.mount}`,
+          label: drive.mount,
+          meta: props.labels.kinds[drive.kind] ?? props.labels.kinds.unknown,
+          keywords: drive.label ?? "",
+        });
+        // The drive's default locations, keyed to the full candidate
+        // path and indented visually by an ideographic space.
+        const mount = drive.mount.toUpperCase();
+        for (const candidate of props.candidates) {
+          if (!candidate.path.toUpperCase().startsWith(mount)) continue;
+          const label =
+            candidate.kind === "appdata"
+              ? "AppData"
+              : candidate.kind === "program-files"
+                ? "Program Files"
+                : candidate.path;
+          rows.push({
+            key: `candidate:${candidate.path}`,
+            label: `　${label}`,
+            meta: props.labels.kinds[drive.kind] ?? props.labels.kinds.unknown,
+            keywords: `${label} ${candidate.path}`,
+            disabled: !candidate.writable,
+          });
+        }
+      }
+      return rows;
+    });
 
     /** What the input box shows: the modelValue minus the chip's mount
      *  (and any leftover separators) — the drive itself is displayed once,
@@ -146,7 +175,14 @@ export default defineComponent({
                 title={props.labels.pickerTitle}
                 searchPlaceholder={props.labels.searchPlaceholder}
                 emptyText={props.labels.emptyText}
-                onSelect={pickMount}
+                onSelect={(key: unknown) => {
+                  const k = String(key);
+                  if (k.startsWith("candidate:")) {
+                    emit("pick-candidate", k.slice("candidate:".length));
+                  } else {
+                    pickMount(k);
+                  }
+                }}
               >
                 {{
                   chip: () => (
