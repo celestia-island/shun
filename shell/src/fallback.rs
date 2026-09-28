@@ -2106,9 +2106,12 @@ impl FallbackApp {
         let row_w = width.unwrap_or(ui.available_width());
         let (row, response) = ui.allocate_exact_size(vec2(row_w, 22.0), egui::Sense::click());
         let response = Self::hand(response);
-        let painter = ui.painter_at(row);
+        // The plate sits 4pt off the row's left edge and the paint rect
+        // widens 4pt to match: the ring's anti-aliased arc needs real
+        // clearance or the clip shaves its left side flat.
+        let painter = ui.painter_at(row.expand(4.0));
         let plate = egui::Rect::from_min_size(
-            pos2(row.left(), row.center().y - 9.0),
+            pos2(row.left() + 4.0, row.center().y - 9.0),
             egui::vec2(18.0, 18.0),
         );
         let c = plate.center();
@@ -2132,7 +2135,7 @@ impl FallbackApp {
             painter.circle_stroke(c, 8.25, Stroke::new(1.5f32, ring));
         }
         painter.text(
-            pos2(row.left() + 26.0, row.center().y),
+            pos2(row.left() + 28.0, row.center().y),
             egui::Align2::LEFT_CENTER,
             label,
             egui::FontId::proportional(13.0),
@@ -2356,7 +2359,7 @@ impl FallbackApp {
         ui.add_space(4.0);
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), ui.available_height()),
-            egui::Layout::top_down(egui::Align::Min),
+            egui::Layout::top_down(egui::Align::Min).with_main_align(egui::Align::Center),
             |ui| {
                 ui.label(
                     RichText::new(texts.location_heading)
@@ -3231,12 +3234,13 @@ impl FallbackApp {
                     .clicked()
                 };
                 if configuring {
+                    // An INSTALLER'S configure steps never offer
+                    // uninstall — there is nothing installed yet. The
+                    // action appears on the done page (and the
+                    // standalone uninstaller face) only.
                     if self.step > 0 && ghost(ui, self.texts.back.as_str()) {
                         self.license_doc_index = 0;
                         self.step -= 1;
-                    }
-                    if on_last_step && ghost(ui, self.texts.uninstall.as_str()) {
-                        self.spawn_worker(ctx, true);
                     }
                 } else if self.stage == Stage::Finished
                     && matches!(self.outcome, Some(Outcome::InstallOk))
