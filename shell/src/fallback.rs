@@ -673,7 +673,7 @@ struct FallbackApp {
 /// Shared control metrics for the egui face — one set of heights and
 /// widths every pane draws with, so all products and steps size alike.
 const CAPTION_W: f32 = 40.0;
-const CAPTION_H: f32 = 28.0;
+const CAPTION_H: f32 = 22.0;
 const CONTROL_H: f32 = 36.0;
 const COMBO_W: f32 = 380.0;
 
@@ -1174,9 +1174,9 @@ impl FallbackApp {
         let texts = self.texts;
         ui.horizontal(|ui| {
             ui.add_space(10.0);
-            let bar_height = 28.0;
+            let bar_height = 22.0;
             if let Some(logo) = &self.logo {
-                ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(20.0)));
+                ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(16.0)));
             }
             ui.add_space(6.0);
             ui.label(
@@ -2113,8 +2113,8 @@ impl eframe::App for FallbackApp {
             .frame(Frame::default().fill(theme.surface).inner_margin(Margin {
                 left: 0,
                 right: 10,
-                top: 4,
-                bottom: 4,
+                top: 3,
+                bottom: 3,
             }))
             .show(ctx, |ui| {
                 self.title_bar(ui);
