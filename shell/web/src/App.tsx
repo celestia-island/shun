@@ -976,18 +976,28 @@ export default defineComponent({
             title={s.title}
             subtitle={identity.value ? `v${identity.value.version}` : ""}
             showMaximize={false}
+            // The light/dark toggle rides the caption's custom actions,
+            // left of minimize — the same seat the egui face gives it.
+            customActions={
+              theme.value?.userAdjustable
+                ? [
+                    {
+                      id: "theme",
+                      label: s.themeToggle,
+                      icon:
+                        themeMode.value === "dark" ? (
+                          <Sun size={14} />
+                        ) : (
+                          <Moon size={14} />
+                        ),
+                    },
+                  ]
+                : []
+            }
+            onAction={(id: string) => {
+              if (id === "theme") toggleTheme();
+            }}
           />
-          {theme.value?.userAdjustable && (
-            <HkButton
-              variant="ghost"
-              size="sm"
-              class="installer__theme-toggle"
-              ariaLabel={s.themeToggle}
-              onClick={toggleTheme}
-            >
-              {themeMode.value === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-            </HkButton>
-          )}
           <main class="installer" style={pageStyle.value}>
             <div class="wizard-layout wizard-layout--left">
               <div class="wizard-layout__rail" style={railStyle.value}>

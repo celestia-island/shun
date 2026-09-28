@@ -102,7 +102,10 @@ impl Theme {
             text: Color32::from_white_alpha(230),
             text_secondary: Color32::from_white_alpha(153),
             text_tertiary: Color32::from_white_alpha(115),
-            primary: accent.map_or(Color32::from_rgb(0, 120, 200), |[r, g, b]| {
+            // hikari's current default scheme line: light rides the
+            // default theme's pink (synthwave84's light primary), dark
+            // the token fallback blue (tokyo-night's 122 162 247).
+            primary: accent.map_or(Color32::from_rgb(122, 162, 247), |[r, g, b]| {
                 Color32::from_rgb(r, g, b)
             }),
             on_primary: Color32::from_white_alpha(235),
@@ -122,7 +125,10 @@ impl Theme {
             text: Color32::from_rgb(30, 40, 55),
             text_secondary: Color32::from_rgb(90, 100, 115),
             text_tertiary: Color32::from_rgb(90, 100, 115),
-            primary: accent.map_or(Color32::from_rgb(0, 120, 200), |[r, g, b]| {
+            // hikari's current default scheme line: light rides the
+            // default theme's pink (synthwave84's light primary), dark
+            // the token fallback blue (tokyo-night's 122 162 247).
+            primary: accent.map_or(Color32::from_rgb(255, 107, 157), |[r, g, b]| {
                 Color32::from_rgb(r, g, b)
             }),
             on_primary: Color32::from_rgb(255, 255, 255),
@@ -218,13 +224,15 @@ fn resolve_theme(config: &ShunConfig) -> Theme {
     // A manifest background (solid or gradient) tints the base tokens:
     // egui has no gradient fill, so gradients mix to their midpoint —
     // honest approximation, zero extra infrastructure.
-    // Same semantics as the webview shell (App.tsx applyTheme): an
-    // unset mode defaults to dark — the installer ships dark — and only
-    // an explicit `system` follows the OS preference.
+    // Same semantics as hikari's useTheme: an unset mode defaults to
+    // dark — the installer ships dark — `system` resolves from the SUN
+    // (the solar clock refines it as fixes land and time passes), and
+    // explicit light/dark pin.
     let mut theme = match shell.theme.as_ref().and_then(|theme| theme.mode) {
         Some(shun::config::ThemeMode::Light) => Theme::light(accent),
         Some(shun::config::ThemeMode::System) => {
-            if system_prefers_light() {
+            let (lat, lng) = solar::timezone_estimate();
+            if solar::prefers_light(lat, lng) {
                 Theme::light(accent)
             } else {
                 Theme::dark(accent)
@@ -298,20 +306,157 @@ fn gradient_midpoint(spec: &shun::config::BackgroundSpec) -> Option<Color32> {
     ))
 }
 
-/// Windows "apps use light theme" probe; non-Windows assumes dark.
-#[cfg(windows)]
-fn system_prefers_light() -> bool {
-    use winreg::RegKey;
-    const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
-    RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey(KEY)
-        .and_then(|key| key.get_value::<u32, _>("AppsUseLightTheme"))
-        .is_ok_and(|light| light == 1)
-}
+// ── The solar theme clock — ported 1:1 from hikari's useSolarTime.ts ────
+//
+// `system` theme mode resolves day/night from the SUN, not the OS
+// preference: the sun's altitude at the device's coordinates decides
+// (day → light, dusk/night → dark). Coordinates cascade like hikari's:
+// the Windows location service fix when one lands, else the first-paint
+// estimate (hikari's default latitude + the timezone-offset longitude).
+// The clock re-evaluates every five minutes, so dawn and dusk flip the
+// face while it sits open.
+mod solar {
+    const DEG: f64 = core::f64::consts::PI / 180.0;
+    const RAD: f64 = 180.0 / core::f64::consts::PI;
 
-#[cfg(not(windows))]
-fn system_prefers_light() -> bool {
-    false
+    fn to_julian_date(unix_ms: i64) -> f64 {
+        unix_ms as f64 / 86_400_000.0 + 2_440_587.5
+    }
+
+    fn greenwich_sidereal_time(jd: f64) -> f64 {
+        let t = (jd - 2_451_545.0) / 36_525.0;
+        let mut theta = (280.460_618_37
+            + 360.985_647_366_29 * (jd - 2_451_545.0)
+            + 0.000_387_933 * t * t
+            - t * t * t / 38_710_000.0)
+            % 360.0;
+        if theta < 0.0 {
+            theta += 360.0;
+        }
+        theta
+    }
+
+    /// Sun declination (radians) and right ascension (degrees).
+    fn sun_equatorial(jd: f64) -> (f64, f64) {
+        let t = (jd - 2_451_545.0) / 36_525.0;
+        let l0 = (280.466_46 + 36_000.769_83 * t) % 360.0;
+        let m = ((357.529_11 + 35_999.050_29 * t) % 360.0) * DEG;
+        let c = (1.914_6 - 0.004_817 * t) * m.sin() + (0.019_993 - 0.000_101 * t) * (2.0 * m).sin();
+        let mut sun_lon = (l0 + c) % 360.0;
+        if sun_lon < 0.0 {
+            sun_lon += 360.0;
+        }
+        let omega = (125.04 - 1_934.136 * t) * DEG;
+        let lambda = sun_lon * DEG - 0.005_69 * DEG - 0.004_78 * DEG * omega.sin();
+        let epsilon = (23.439_291 - 0.013_004 * t) * DEG;
+        let decl = (epsilon.sin() * lambda.sin()).asin();
+        let ra = (epsilon.cos() * lambda.sin()).atan2(lambda.cos());
+        (decl, ra * RAD)
+    }
+
+    /// The sun's altitude in degrees at the given coordinates right now.
+    pub(crate) fn solar_altitude(lat_deg: f64, lng_deg: f64) -> f64 {
+        let unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let jd = to_julian_date(unix_ms);
+        let (decl, ra) = sun_equatorial(jd);
+        let mut ha = greenwich_sidereal_time(jd) + lng_deg - ra;
+        ha = (((ha + 180.0) % 360.0) + 360.0) % 360.0 - 180.0;
+        let (lat_r, ha_r) = (lat_deg * DEG, ha * DEG);
+        (lat_r.sin() * decl.sin() + lat_r.cos() * decl.cos() * ha_r.cos()).asin() * RAD
+    }
+
+    /// hikari's bands: day above +6°, civil twilight in between, night
+    /// below −6°. Light only in full day — matching `useTheme`'s
+    /// `resolveEffectiveMode` (day → light, dusk/night → dark).
+    pub(crate) fn prefers_light(lat_deg: f64, lng_deg: f64) -> bool {
+        solar_altitude(lat_deg, lng_deg) > 6.0
+    }
+
+    /// First-paint estimate: hikari's default latitude plus the
+    /// timezone-offset longitude (offset minutes / 4 = degrees).
+    pub(crate) fn timezone_estimate() -> (f64, f64) {
+        (31.23, f64::from(local_utc_offset_minutes()) / 4.0)
+    }
+
+    /// Windows location service fix resolved on a worker thread — the
+    /// native slot for hikari's geolocation provider. `None` when the
+    /// service is off, permission is denied, or no fix lands in time.
+    #[cfg(windows)]
+    pub(crate) fn spawn_fix_resolver() -> std::sync::mpsc::Receiver<Option<(f64, f64)>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(winrt_fix());
+        });
+        rx
+    }
+
+    #[cfg(windows)]
+    fn winrt_fix() -> Option<(f64, f64)> {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        // The WinRT call needs an initialized apartment; the UI thread
+        // keeps its own — init MTA here.
+        unsafe {
+            windows_sys::Win32::System::Com::CoInitializeEx(
+                std::ptr::null(),
+                windows_sys::Win32::System::Com::COINIT_MULTITHREADED as u32,
+            );
+        }
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let fix = (|| -> Option<(f64, f64)> {
+                use windows::Devices::Geolocation::Geolocator;
+                let op = Geolocator::new().ok()?.GetGeopositionAsync().ok()?;
+                let position = op.get().ok()?;
+                let basic = position
+                    .Coordinate()
+                    .ok()?
+                    .Point()
+                    .ok()?
+                    .Position()
+                    .ok()?;
+                Some((basic.Latitude, basic.Longitude))
+            })();
+            let _ = tx.send(fix);
+        });
+        // A wedged service must not hold the theme clock hostage: the
+        // worker leaks (one short-lived stack), the face keeps the
+        // timezone estimate.
+        rx.recv_timeout(Duration::from_secs(4)).ok().flatten()
+    }
+
+    #[cfg(not(windows))]
+    pub(crate) fn spawn_fix_resolver() -> std::sync::mpsc::Receiver<Option<(f64, f64)>> {
+        let (_, rx) = std::sync::mpsc::channel();
+        rx
+    }
+
+    /// Minutes east of UTC (DST-adjusted) for the longitude estimate.
+    #[cfg(windows)]
+    fn local_utc_offset_minutes() -> i32 {
+        use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+        unsafe {
+            let mut tz: TIME_ZONE_INFORMATION = std::mem::zeroed();
+            // 1 = standard time active, 2 = daylight; the active bias
+            // rides along. Bias is minutes WEST (UTC = local + Bias).
+            let state = GetTimeZoneInformation(&mut tz);
+            let mut bias = tz.Bias;
+            if state == 2 {
+                bias += tz.DaylightBias;
+            } else if state == 1 {
+                bias += tz.StandardBias;
+            }
+            -bias
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn local_utc_offset_minutes() -> i32 {
+        480 // UTC+8 — the estimate's honest default
+    }
 }
 
 // ── UI copy: the i18n strings of the web shell (shell/web/src/i18n.ts) ──
@@ -625,6 +770,17 @@ struct FallbackApp {
     /// The pinned light/dark state behind the title-bar toggle (the
     /// manifest's `user-adjustable`); `accent` rebuilds the tokens.
     dark_theme: bool,
+    /// Set when the user toggles: the pinned mode wins for the session
+    /// and the solar clock stops flipping it (hikari's `setMode`).
+    mode_pinned: bool,
+    /// The Windows location fix once it lands; `None` keeps the
+    /// timezone estimate driving the solar clock.
+    geo: Option<(f64, f64)>,
+    geo_rx: Receiver<Option<(f64, f64)>>,
+    /// The solar clock's last verdict and tick time — re-evaluated
+    /// every five minutes so dawn/dusk flip a `system`-mode face.
+    solar_dark: Option<bool>,
+    last_solar_tick: std::time::Instant,
     accent: Option<[u8; 3]>,
     user_adjustable: bool,
     timeline_left: bool,
@@ -692,12 +848,14 @@ impl FallbackApp {
         logo: Option<TextureHandle>,
 
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
+        geo_rx: Receiver<Option<(f64, f64)>>,
     ) -> Self {
         let theme = resolve_theme(&config);
         let shell = config.shell.clone().unwrap_or_default();
         let mode = offered_modes(&config).first().copied().unwrap_or("local");
         // The toggle state mirrors what resolve_theme resolved (the
-        // system probe's answer counts as pinned for the session).
+        // solar clock's first-paint verdict counts for the session
+        // until the user pins — or the clock itself flips it).
         let resolved_dark = !matches!(
             shell.theme.as_ref().and_then(|theme| theme.mode),
             Some(shun::config::ThemeMode::Light)
@@ -714,6 +872,11 @@ impl FallbackApp {
             cjk_font,
             texts: language.texts(),
             dark_theme: resolved_dark,
+            mode_pinned: false,
+            geo: None,
+            geo_rx,
+            solar_dark: None,
+            last_solar_tick: std::time::Instant::now(),
             theme,
             accent: shell.theme.as_ref().and_then(|theme| theme.accent),
             user_adjustable: shell
@@ -751,6 +914,53 @@ impl FallbackApp {
     /// documents and the document pager all follow, and the choice is
     /// remembered for the next run — unless the selected mode is
     /// portable, in which case nothing leaves this process.
+    /// Rebuild the tokens + egui visuals for a light/dark flip — the
+    /// one path both the caption toggle and the solar clock go through.
+    fn apply_mode(&mut self, ctx: &Context, dark: bool) {
+        self.dark_theme = dark;
+        self.theme = if dark {
+            Theme::dark(self.accent)
+        } else {
+            Theme::light(self.accent)
+        };
+        ctx.set_visuals(if dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        });
+    }
+
+    /// The theme clock (hikari's `useTheme`): while the manifest leaves
+    /// the mode on `system` and the user hasn't pinned a side, the sun
+    /// decides — re-evaluated when the location fix lands and every
+    /// five minutes after, so dawn and dusk flip the face live.
+    fn tick_solar_clock(&mut self, ctx: &Context) {
+        let mut got_fix = false;
+        while let Ok(fix) = self.geo_rx.try_recv() {
+            self.geo = fix;
+            got_fix = true;
+        }
+        let pinned = matches!(
+            self.config
+                .shell
+                .as_ref()
+                .and_then(|t| t.theme.as_ref())
+                .and_then(|t| t.mode),
+            Some(shun::config::ThemeMode::Light) | Some(shun::config::ThemeMode::Dark)
+        ) || self.mode_pinned;
+        let due = self.last_solar_tick.elapsed().as_secs() >= 300;
+        if pinned || (!got_fix && !due) {
+            return;
+        }
+        self.last_solar_tick = std::time::Instant::now();
+        let (lat, lng) = self.geo.unwrap_or_else(solar::timezone_estimate);
+        let dark = !solar::prefers_light(lat, lng);
+        if self.solar_dark != Some(dark) {
+            self.solar_dark = Some(dark);
+            self.apply_mode(ctx, dark);
+        }
+    }
+
     fn apply_language(&mut self, language: FallbackLanguage) {
         if self.language == language {
             return;
@@ -1152,6 +1362,10 @@ pub fn run(
                 });
             let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
             let (_sender, receiver) = channel::<WorkerMsg>();
+            // The theme clock's geolocation fix — resolved off-thread so
+            // a slow or unavailable location service never delays the
+            // first frame (the estimate covers until it lands).
+            let geo_rx = solar::spawn_fix_resolver();
             Ok(Box::new(FallbackApp::new(
                 config,
                 payload,
@@ -1161,6 +1375,7 @@ pub fn run(
                 receiver,
                 logo,
                 license_docs,
+                geo_rx,
             )))
         }),
     );
@@ -1247,12 +1462,15 @@ impl FallbackApp {
                     let painter = ui.painter_at(rect);
                     let close = matches!(icon, CaptionIcon::Close);
                     let hovered = response.hovered();
-                    if hovered {
-                        let fill = if close {
-                            Color32::from_rgb(0xe8, 0x11, 0x23)
-                        } else {
-                            mix(theme.background, theme.primary, 0.12)
-                        };
+                    let active = response.is_pointer_button_down_on();
+                    // The SCSS's 0.12s background transition, immediate
+                    // mode's way: animate the hover toward its fill and
+                    // paint the fade. Pressed steps the wash up (and the
+                    // close plate to its lighter #f1707a).
+                    let hover_t = ui
+                        .ctx()
+                        .animate_bool_with_time(response.id.with("hover"), hovered, 0.12);
+                    if hover_t > 0.0 || active {
                         let radius = if close {
                             egui::CornerRadius {
                                 nw: 0,
@@ -1263,12 +1481,25 @@ impl FallbackApp {
                         } else {
                             CornerRadius::ZERO
                         };
+                        let fill = if close {
+                            if active {
+                                Color32::from_rgb(0xf1, 0x70, 0x7a)
+                            } else {
+                                mix(
+                                    theme.background,
+                                    Color32::from_rgb(0xe8, 0x11, 0x23),
+                                    hover_t,
+                                )
+                            }
+                        } else {
+                            mix(theme.background, theme.primary, 0.12 * hover_t + f32::from(active) * 0.08)
+                        };
                         painter.rect_filled(rect, radius, fill);
                     }
                     let c = rect.center();
-                    let icon_color = if hovered && close {
+                    let icon_color = if close && (hovered || active) {
                         Color32::WHITE
-                    } else if hovered {
+                    } else if hovered || active {
                         theme.text
                     } else {
                         theme.text_secondary
@@ -1340,17 +1571,11 @@ impl FallbackApp {
                 if self.user_adjustable {
                     let r = caption(ui, CaptionIcon::ThemeToggle);
                     if r.clicked() {
-                        self.dark_theme = !self.dark_theme;
-                        self.theme = if self.dark_theme {
-                            Theme::dark(self.accent)
-                        } else {
-                            Theme::light(self.accent)
-                        };
-                        ui.ctx().set_visuals(if self.dark_theme {
-                            egui::Visuals::dark()
-                        } else {
-                            egui::Visuals::light()
-                        });
+                        // A manual toggle pins the side for the session
+                        // (hikari's `setMode`): the solar clock stands
+                        // down until the process restarts.
+                        self.mode_pinned = true;
+                        self.apply_mode(ui.ctx(), !self.dark_theme);
                     }
                 }
                 });
@@ -1566,6 +1791,62 @@ impl FallbackApp {
     /// The configure pane: dispatches on the fixed wizard steps —
     /// language → location → license — the same progression the webview
     /// face renders.
+    /// The hikari checkbox, drawn round like the web face's: a filled
+    /// accent disc with a white check when on, a hairline ring that
+    /// tints toward the accent on hover when off. The whole row
+    /// (plate + label) is one click target. `width` pins the row —
+    /// `None` spans the pane (form rows), a width centers the answer
+    /// inside the done page's hero.
+    fn circle_checkbox(
+        ui: &mut egui::Ui,
+        theme: Theme,
+        checked: &mut bool,
+        label: &str,
+        width: Option<f32>,
+    ) {
+        let on = *checked;
+        let row_w = width.unwrap_or(ui.available_width());
+        let (row, response) = ui.allocate_exact_size(vec2(row_w, 22.0), egui::Sense::click());
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let painter = ui.painter_at(row);
+        let plate = egui::Rect::from_min_size(
+            pos2(row.left(), row.center().y - 9.0),
+            egui::vec2(18.0, 18.0),
+        );
+        let c = plate.center();
+        if on {
+            painter.circle_filled(c, 9.0, theme.primary);
+            let stroke = Stroke::new(1.8f32, theme.on_primary);
+            painter.line_segment(
+                [pos2(c.x - 3.6, c.y + 0.4), pos2(c.x - 1.0, c.y + 3.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [pos2(c.x - 1.0, c.y + 3.0), pos2(c.x + 4.2, c.y - 2.8)],
+                stroke,
+            );
+        } else {
+            let ring = if response.hovered() {
+                theme.primary
+            } else {
+                theme.border
+            };
+            painter.circle_stroke(c, 8.25, Stroke::new(1.5f32, ring));
+        }
+        painter.text(
+            pos2(row.left() + 26.0, row.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(13.0),
+            theme.text,
+        );
+        if response.clicked() {
+            *checked = !on;
+        }
+    }
+
     fn configure_view(&mut self, ui: &mut egui::Ui) {
         match self.step {
             0 => self.language_view(ui),
@@ -1683,7 +1964,9 @@ impl FallbackApp {
             let gap = ui.spacing().item_spacing.x;
             let input = TextEdit::singleline(&mut self.dir)
                 .desired_width(ui.available_width() - browse_width - gap)
-                .text_color(theme.text);
+                .text_color(theme.text)
+                // The webview face renders the path in its mono face.
+                .font(egui::FontId::monospace(13.0));
             ui.add(input);
             if ui
                 .add_sized(
@@ -1776,18 +2059,26 @@ impl FallbackApp {
             .inner_margin(Margin::same(12))
             .corner_radius(CornerRadius::same(10))
             .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("license-body")
-                    .auto_shrink([false, false])
-                    .max_height(ui.available_height() - 44.0)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        if let Some(title) = title {
-                            ui.label(RichText::new(title).strong().size(15.0).color(theme.text));
-                            ui.add_space(6.0);
-                        }
-                        ui.label(RichText::new(body).size(12.5).color(theme.text_secondary));
-                    });
+                // Documents read left-aligned regardless of the pane's
+                // centered text alignment — like the webview card.
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("license-body")
+                        .auto_shrink([false, false])
+                        .max_height(ui.available_height() - 44.0)
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            if let Some(title) = title {
+                                ui.label(
+                                    RichText::new(title).strong().size(15.0).color(theme.text),
+                                );
+                                ui.add_space(6.0);
+                            }
+                            ui.label(
+                                RichText::new(body).size(12.5).color(theme.text_secondary),
+                            );
+                        });
+                });
             });
         // Pager for multi-document licenses: [<] left, the position
         // indicator centered between, [>] right (disabled at the ends).
@@ -1836,7 +2127,7 @@ impl FallbackApp {
             });
         }
         ui.add_space(8.0);
-        ui.checkbox(&mut self.license_accepted, self.texts.license_agree);
+        Self::circle_checkbox(ui, self.theme, &mut self.license_accepted, self.texts.license_agree, None);
     }
 
     /// Progress view (the "install" pane): per-phase rows like the
@@ -1904,15 +2195,42 @@ impl FallbackApp {
                         Some(self.dir.trim().trim_end_matches('\\').to_string()),
                     ),
                 };
-                ui.vertical(|ui| {
-                    ui.add_space(12.0);
-                    ui.label(RichText::new("√").size(34.0).color(theme.success));
-                    ui.label(RichText::new(title).strong().size(18.0).color(theme.text));
+                // hikari's done hero: a centered column — green ring
+                // check, the success headline in the success color, the
+                // install path in monospace, then the hint and the
+                // shortcut answers.
+                ui.add_space(16.0);
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
+                    let painter = ui.painter_at(rect);
+                    let c = rect.center();
+                    let stroke = Stroke::new(3.0f32, theme.success);
+                    painter.circle_stroke(c, 24.0, stroke);
+                    painter.line_segment(
+                        [pos2(c.x - 9.0, c.y + 1.0), pos2(c.x - 2.5, c.y + 8.0)],
+                        stroke,
+                    );
+                    painter.line_segment(
+                        [pos2(c.x - 2.5, c.y + 8.0), pos2(c.x + 10.0, c.y - 7.0)],
+                        stroke,
+                    );
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(format!("✓ {title}"))
+                            .strong()
+                            .size(18.0)
+                            .color(theme.success),
+                    );
                     if let Some(path) = path {
-                        ui.add_space(6.0);
-                        ui.label(RichText::new(path).size(13.0).color(theme.text_secondary));
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(path)
+                                .size(13.0)
+                                .color(theme.text_secondary)
+                                .font(egui::FontId::monospace(13.0)),
+                        );
                     }
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                     ui.label(
                         RichText::new(self.hint())
                             .size(12.0)
@@ -1921,8 +2239,14 @@ impl FallbackApp {
                     // The done-page shortcut answer — the flow created
                     // none (pinned "never"); the finish button applies it.
                     if desktop_asks {
-                        ui.add_space(10.0);
-                        ui.checkbox(&mut self.desktop_shortcut, texts.desktop_shortcut);
+                        ui.add_space(12.0);
+                        Self::circle_checkbox(
+                            ui,
+                            theme,
+                            &mut self.desktop_shortcut,
+                            texts.desktop_shortcut,
+                            Some(320.0),
+                        );
                     }
                 });
             }
@@ -2118,11 +2442,13 @@ impl FallbackApp {
                 // Ghost buttons to the left of the primary: back while
                 // walking steps; uninstall on the last configure step and
                 // after a successful install; open-folder on success.
+                // hikari's secondary actions are bare text — no border
+                // box — with the muted color carrying the hierarchy.
                 let ghost = |ui: &mut egui::Ui, label: &str| {
                     ui.add(
                         Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
                             .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::new(1.0f32, theme.border))
+                            .stroke(Stroke::NONE)
                             .corner_radius(CornerRadius::same(8))
                             .min_size(Vec2::new(88.0, 30.0)),
                     )
@@ -2162,6 +2488,7 @@ impl FallbackApp {
 impl eframe::App for FallbackApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.drain_worker();
+        self.tick_solar_clock(ctx);
         let theme = self.theme;
 
         // ── Caption bar (frameless chrome): one flat HkTitleBar band.

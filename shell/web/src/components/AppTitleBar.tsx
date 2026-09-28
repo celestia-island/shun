@@ -21,6 +21,15 @@ export default defineComponent({
     title: { type: String, default: "WoWSP" },
     subtitle: { type: String, default: "" },
     showMaximize: { type: Boolean, default: true },
+    /** Extra caption icon buttons rendered left of minimize — the
+     *  theme toggle rides this (ids come back through `action`). */
+    customActions: {
+      type: Array as () => { id: string; label: string; icon?: unknown }[],
+      default: () => [],
+    },
+  },
+  emits: {
+    action: (_id: string) => true,
   },
   setup(props) {
     const maximized = ref(false);
@@ -75,8 +84,10 @@ export default defineComponent({
           subtitle={props.subtitle}
           maximized={maximized.value}
           showMaximize={props.showMaximize}
+          customActions={props.customActions}
           onMinimize={() => win?.minimize().catch(() => {})}
           onClose={() => win?.close().catch(() => {})}
+          onAction={(id: string) => emit("action", id)}
           // upstream declares the emit as kebab-case "toggle-maximize";
           // under plain tsc the JSX key must match it verbatim (spread form,
           // since a quoted key is not a valid JSX attribute name).
