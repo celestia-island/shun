@@ -651,23 +651,89 @@ const TEXTS_EN: Texts = Texts {
 /// renders. Returns `false` when none is found (the UI falls back to
 /// English strings). Only single-file `.ttf` fonts are probed — egui
 /// cannot index `.ttc` collections.
-fn install_cjk_font(ctx: &Context) -> bool {
-    const CJK_FONTS: [&str; 4] = [
+/// Loads the SAME families the web face's font stack names, from the
+/// OS: Segoe UI for Latin (the stack's first Windows-resident face),
+/// Microsoft YaHei for CJK (the browser's zh fallback), Consolas for
+/// the mono family. Glyph fallback then works like the browser's:
+/// Latin renders in Segoe, Han glyphs fall through to YaHei. egui has
+/// no weight selection yet (strong() keeps the regular face — no
+/// worse than the bundled fonts), and FontData's face index picks the
+/// right name out of the msyh TTC collection. Returns whether a
+/// CJK-capable font landed: the Chinese UI is only offered when it
+/// did. Anything missing falls through to the legacy SimHei probe and
+/// finally egui's bundled fonts.
+fn install_system_fonts(ctx: &Context) -> bool {
+    let mut fonts = FontDefinitions::default();
+
+    // (path, face index, registry name) — order matters: the family
+    // list is a glyph-fallback chain, so Latin must precede CJK.
+    const FACES: [(&str, u32, &str); 3] = [
+        (r"C:\Windows\Fonts\segoeui.ttf", 0, "segoe-ui"),
+        (r"C:\Windows\Fonts\msyh.ttc", 0, "ms-yahei"),
+        (r"C:\Windows\Fonts\consola.ttf", 0, "consolas"),
+    ];
+    let mut loaded = std::collections::BTreeSet::new();
+    for (path, index, name) in FACES {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        fonts.font_data.insert(
+            name.to_string(),
+            egui::FontData {
+                font: bytes.into(),
+                index,
+                tweak: Default::default(),
+            }
+            .into(),
+        );
+        loaded.insert(name);
+    }
+
+    // Family chains: [Segoe UI, Microsoft YaHei, ..egui defaults] for
+    // proportional text, [Consolas, Microsoft YaHei, ..] for mono —
+    // the browser's fallback dance, one layer at a time.
+    let chain = |fonts: &mut FontDefinitions, family: FontFamily, names: &[&str]| {
+        let list = fonts.families.entry(family).or_default();
+        for (position, name) in names.iter().enumerate() {
+            if loaded.contains(name) {
+                list.insert(position, name.to_string());
+            }
+        }
+    };
+    chain(
+        &mut fonts,
+        FontFamily::Proportional,
+        &["segoe-ui", "ms-yahei"],
+    );
+    chain(&mut fonts, FontFamily::Monospace, &["consolas", "ms-yahei"]);
+    let system_cjk = loaded.contains("ms-yahei");
+
+    if system_cjk {
+        ctx.set_fonts(fonts);
+        return true;
+    }
+
+    // Legacy probe: no Segoe/YaHei (stripped-down Windows or another
+    // OS) — the old SimHei-family CJK fallback still applies, so zh
+    // stays offerable when any CJK face exists.
+    for path in [
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\deng.ttf",
         r"C:\Windows\Fonts\simfang.ttf",
         r"C:\Windows\Fonts\simkai.ttf",
-    ];
-    for path in CJK_FONTS {
+    ] {
         let Ok(bytes) = std::fs::read(path) else {
             continue;
         };
-        let mut fonts = FontDefinitions::default();
         fonts
             .font_data
-            .insert("cjk".into(), FontData::from_owned(bytes).into());
+            .insert("cjk".into(), egui::FontData::from_owned(bytes).into());
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
-            fonts.families.entry(family).or_default().push("cjk".into());
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .push("cjk".into());
         }
         ctx.set_fonts(fonts);
         return true;
@@ -1403,7 +1469,7 @@ pub fn run(
             cc.egui_ctx.set_visuals(visuals);
             // A CJK font is the egui renderer's proxy for "the machine
             // can render the Zh table" (the historical `zh = font_found`).
-            let font_found = install_cjk_font(&cc.egui_ctx);
+            let font_found = install_system_fonts(&cc.egui_ctx);
             // Uniform control height across all egui widgets (combo,
             // buttons, text fields) — matches the web face's proportions.
             let mut style = (*cc.egui_ctx.style()).clone();
@@ -1516,6 +1582,10 @@ impl FallbackApp {
                         .size(10.0),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // HkTitleBar's buttons are FLUSH — 46pt plates touching.
+                // Zero egui's automatic item spacing or every pair of
+                // plates grows an 8pt gap the web face doesn't have.
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 // Caption plates, HkTitleBar geometry: full-band-height
                 // 46pt rectangles flush to the window edge, VECTOR
                 // glyphs (egui's default fonts carry no caption

@@ -8,6 +8,14 @@ body {
   overflow: hidden;
 }
 
+/* The language panel must fit BELOW the fixed caption: a taller surface
+   flips top and slides under the titlebar band (z 100001), which clips
+   its first rows. 280px keeps the bottom placement on a 600pt window —
+   longer lists scroll inside the panel instead. */
+:root {
+  --hk-select-panel-max-height: 280px;
+}
+
 body {
   /* Ambient glow over the token background — tints of the app primary /
      secondary hues, so the surface stays coherent in dark mode. */
