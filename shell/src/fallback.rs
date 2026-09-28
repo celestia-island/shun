@@ -2276,11 +2276,19 @@ impl FallbackApp {
                                 .inner_margin(Margin::same(6))
                                 .show(ui, |ui| {
                                     ui.set_width(block_w - 12.0);
+                                    // HkSelect's capped panel: the list
+                                    // scrolls internally past six rows
+                                    // instead of stacking to the pane's
+                                    // full height.
+                                    egui::ScrollArea::vertical()
+                                        .id_salt(resp.id.with("popup-scroll"))
+                                        .max_height(6.0 * 30.0)
+                                        .show(ui, |ui| {
                                     for (code, autonym) in labels.iter() {
                                         let language = code.clone();
                                         let selected = language == current;
                                         let (row, row_resp) = ui.allocate_exact_size(
-                                            egui::vec2(ui.available_width(), 34.0),
+                                            egui::vec2(ui.available_width(), 30.0),
                                             egui::Sense::click(),
                                         );
                                         if row_resp.hovered() {
@@ -2314,6 +2322,7 @@ impl FallbackApp {
                                             picked = Some(language);
                                         }
                                     }
+                                        });
                                 });
                             popup_rect = popup.response.rect;
                         });
@@ -2661,7 +2670,7 @@ impl FallbackApp {
                                     _ => kind_label.to_string(),
                                 };
                                 let (row, row_resp) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), 34.0),
+                                    egui::vec2(ui.available_width(), 30.0),
                                     egui::Sense::click(),
                                 );
                                 if row_resp.hovered() {
