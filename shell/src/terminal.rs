@@ -32,11 +32,16 @@ struct Line {
 }
 
 /// Terminal state + renderer. The pane collapses behind its header row;
-/// new lines snap the view back to the tail, quiet stretches leave the
-/// user's scroll position alone. Scrollback is bounded.
+/// new lines snap the view back to the fresh end (top when newest-first,
+/// tail when oldest-first), quiet stretches leave the user's scroll
+/// position alone. Scrollback is bounded.
 pub struct Terminal {
     lines: Vec<Line>,
     open: bool,
+    /// The manifest's `shell.log-order`: `true` renders chronologically
+    /// (oldest first, tail-pinned); the default mirrors the web pane —
+    /// newest first, top-pinned.
+    oldest_first: bool,
     /// Line count at the last render — a delta means fresh output.
     seen: usize,
 }
@@ -44,18 +49,24 @@ pub struct Terminal {
 const MAX_LINES: usize = 2000;
 
 impl Terminal {
-    /// A terminal that starts `open` (the installer's default) or
-    /// collapsed.
-    pub fn new(open: bool) -> Self {
+    /// A terminal that starts `open` or collapsed. Both faces default
+    /// collapsed (the web pane's `expanded = false`); error lines force
+    /// the drawer open wherever they land.
+    pub fn new(open: bool, oldest_first: bool) -> Self {
         Self {
             lines: Vec::new(),
             open,
+            oldest_first,
             seen: 0,
         }
     }
 
-    /// Appends a line.
+    /// Appends a line. An error always surfaces: it opens the drawer
+    /// even from collapsed (the web pane's `logExpanded` rule).
     pub fn push(&mut self, kind: LineKind, text: String) {
+        if matches!(kind, LineKind::Error) {
+            self.open = true;
+        }
         self.lines.push(Line { kind, text });
         let len = self.lines.len();
         if len > MAX_LINES {
@@ -135,8 +146,17 @@ impl Terminal {
                             }
                             let fresh = self.seen != self.lines.len();
                             self.seen = self.lines.len();
+                            // Newest-first renders the list reversed and
+                            // pins the fresh end at the TOP; oldest-first
+                            // stays chronological and pins the tail —
+                            // the web pane's two orders, verbatim.
+                            let order = if self.oldest_first {
+                                self.lines.iter().collect::<Vec<&Line>>()
+                            } else {
+                                self.lines.iter().rev().collect::<Vec<&Line>>()
+                            };
                             let mut last: Option<Response> = None;
-                            for line in &self.lines {
+                            for line in order {
                                 let (glyph, color) = match line.kind {
                                     LineKind::Echo => (" ", theme.terminal_fg()),
                                     LineKind::Step => ("»", theme.text_secondary),
@@ -157,7 +177,11 @@ impl Terminal {
                             }
                             if fresh {
                                 if let Some(last) = last {
-                                    last.scroll_to_me(Some(Align::BOTTOM));
+                                    last.scroll_to_me(Some(if self.oldest_first {
+                                        Align::BOTTOM
+                                    } else {
+                                        Align::TOP
+                                    }));
                                 }
                             }
                         });

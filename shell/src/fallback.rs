@@ -92,6 +92,11 @@ pub(crate) struct Theme {
     /// The manifest's terminal-pane background (a solid or a gradient's
     /// midpoint), when the theme declares one.
     pub(crate) terminal_bg_override: Option<Color32>,
+    /// The rail layer's flat fill (`shell.theme.rail-background`) — a
+    /// gradient mixes to its midpoint.
+    pub(crate) rail_bg_override: Option<Color32>,
+    /// The content pane's flat fill (`shell.theme.pane-background`).
+    pub(crate) pane_bg_override: Option<Color32>,
 }
 
 impl Theme {
@@ -118,6 +123,8 @@ impl Theme {
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(230, 170, 50),
             terminal_bg_override: None,
+            rail_bg_override: None,
+            pane_bg_override: None,
         }
     }
 
@@ -139,6 +146,8 @@ impl Theme {
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(190, 140, 30),
             terminal_bg_override: None,
+            rail_bg_override: None,
+            pane_bg_override: None,
         }
     }
 
@@ -247,11 +256,18 @@ fn resolve_theme(config: &ShunConfig) -> Theme {
     // gradient mixes to its midpoint (egui paints flat fills). Panes and
     // the rail then derive from it, so the whole face shifts with the
     // manifest's theme.
-    let background = shell
-        .theme
-        .as_ref()
-        .and_then(|theme| theme.background.as_ref());
-    match background {
+    apply_theme_layers(&mut theme, &shell);
+    theme
+}
+
+/// Applies the manifest's background layers onto a base token set —
+/// shared by the startup resolution AND every mode flip (a flip rebuilds
+/// the base tokens and must re-tint, or the manifest background would
+/// silently vanish the first time the sun or the user changes sides).
+/// Wallpapers have no egui renderer — the face stays on the token
+/// background (the banner already says "no effects").
+fn apply_theme_layers(theme: &mut Theme, shell: &shun::config::ShellUiConfig) {
+    match shell.theme.as_ref().and_then(|t| t.background.as_ref()) {
         Some(shun::config::BackgroundSpec::Color(color)) => {
             if let Some(rgba) = css_color_to32(color) {
                 theme.background = rgba;
@@ -266,11 +282,20 @@ fn resolve_theme(config: &ShunConfig) -> Theme {
                 theme.terminal_bg_override = Some(mix(mid, theme.text, 0.1));
             }
         }
-        // Wallpapers have no egui renderer — the face stays on the
-        // token background (the banner already says "no effects").
         _ => {}
     }
-    theme
+    // The rail/pane layers: a configured color (or a gradient's
+    // midpoint) becomes the layer's flat fill — egui's honest
+    // approximation of the web face's per-layer CSS.
+    let flat = |spec: Option<&shun::config::BackgroundSpec>| -> Option<Color32> {
+        match spec {
+            Some(shun::config::BackgroundSpec::Color(color)) => css_color_to32(color),
+            Some(spec @ shun::config::BackgroundSpec::Gradient { .. }) => gradient_midpoint(spec),
+            _ => None,
+        }
+    };
+    theme.rail_bg_override = flat(shell.theme.as_ref().and_then(|t| t.rail_background.as_ref()));
+    theme.pane_bg_override = flat(shell.theme.as_ref().and_then(|t| t.pane_background.as_ref()));
 }
 
 /// Parses the CSS color shapes the theme accepts for egui fills:
@@ -1120,7 +1145,16 @@ impl FallbackApp {
             license_doc_index: 0,
             progress: None,
             overall: None,
-            terminal: crate::terminal::Terminal::new(true),
+            // The log drawer mirrors the web pane's defaults: collapsed
+            // until opened (or forced by an error line), newest-first
+            // unless the manifest pins `shell.log-order = "oldest"`.
+            terminal: crate::terminal::Terminal::new(
+                false,
+                matches!(
+                    shell.log_order,
+                    Some(shun::config::LogOrder::Oldest)
+                ),
+            ),
             log_level: shell.log_level.unwrap_or(shun::config::LogVerbosity::All),
             phases_done: Vec::new(),
             phase_active: None,
@@ -1141,11 +1175,20 @@ impl FallbackApp {
     /// one path both the caption toggle and the solar clock go through.
     fn apply_mode(&mut self, ctx: &Context, dark: bool) {
         self.dark_theme = dark;
-        self.theme = if dark {
-            Theme::dark(self.accent)
+        let accent = self.accent;
+        let mut theme = if dark {
+            Theme::dark(accent)
         } else {
-            Theme::light(self.accent)
+            Theme::light(accent)
         };
+        // The rebuilt tokens re-tint from the manifest's layers — a side
+        // flip must not drop the configured background (the same
+        // application the startup resolution runs).
+        apply_theme_layers(
+            &mut theme,
+            &self.config.shell.clone().unwrap_or_default(),
+        );
+        self.theme = theme;
         ctx.set_visuals(if dark {
             egui::Visuals::dark()
         } else {
@@ -3678,8 +3721,12 @@ impl eframe::App for FallbackApp {
                     Frame::default()
                         // The brightness split, web-face direction: the
                         // rail sits a shade DARKER than the pane's page
-                        // background (the old surface fill inverted it).
-                        .fill(mix(theme.background, theme.text, 0.04))
+                        // background (the old surface fill inverted it);
+                        // a manifest `rail-background` overrides the
+                        // split outright.
+                        .fill(theme.rail_bg_override.unwrap_or_else(|| {
+                            mix(theme.background, theme.text, 0.04)
+                        }))
                         .inner_margin(Margin::same(16)),
                 )
                 .show(ctx, |ui| {
@@ -3691,7 +3738,9 @@ impl eframe::App for FallbackApp {
         egui::CentralPanel::default()
             .frame(
                 Frame::default()
-                    .fill(theme.background)
+                    // The pane layer: the token background, or the
+                    // manifest's `pane-background` when it declares one.
+                    .fill(theme.pane_bg_override.unwrap_or(theme.background))
                     .inner_margin(Margin::symmetric(20, 12)),
             )
             .show(ctx, |ui| {
