@@ -672,7 +672,7 @@ struct FallbackApp {
 
 /// Shared control metrics for the egui face — one set of heights and
 /// widths every pane draws with, so all products and steps size alike.
-const CAPTION_W: f32 = 40.0;
+const CAPTION_W: f32 = 34.0;
 // 26pt plates in a 26pt strip: the band totals 32pt with the panel
 // margins — the native Windows 11 caption proportion at any DPI.
 const CAPTION_H: f32 = 26.0;
@@ -1246,10 +1246,10 @@ impl FallbackApp {
                     match icon {
                         CaptionIcon::Minimize => {
                             painter
-                                .line_segment([pos2(c.x - 5.0, c.y), pos2(c.x + 5.0, c.y)], stroke);
+                                .line_segment([pos2(c.x - 4.0, c.y), pos2(c.x + 4.0, c.y)], stroke);
                         }
                         CaptionIcon::Close => {
-                            let d = 4.5f32;
+                            let d = 4.0f32;
                             painter.line_segment(
                                 [pos2(c.x - d, c.y - d), pos2(c.x + d, c.y + d)],
                                 stroke,
@@ -1261,23 +1261,23 @@ impl FallbackApp {
                         }
                         CaptionIcon::ThemeToggle => {
                             if dark_now {
-                                painter.circle_filled(c, 4.5, icon_color);
+                                painter.circle_filled(c, 3.8, icon_color);
                                 for ray in 0..8 {
                                     let angle = ray as f32 * std::f32::consts::TAU / 8.0;
                                     let dir = egui::vec2(angle.cos(), angle.sin());
                                     painter.line_segment(
                                         [
-                                            c + dir * egui::vec2(7.0, 7.0),
-                                            c + dir * egui::vec2(9.5, 9.5),
+                                            c + dir * egui::vec2(6.0, 6.0),
+                                            c + dir * egui::vec2(8.0, 8.0),
                                         ],
                                         Stroke::new(1.3f32, icon_color),
                                     );
                                 }
                             } else {
-                                painter.circle_filled(c, 5.5, icon_color);
+                                painter.circle_filled(c, 4.6, icon_color);
                                 painter.circle_filled(
-                                    c + egui::vec2(2.5, -1.5),
-                                    4.5,
+                                    c + egui::vec2(2.0, -1.2),
+                                    3.8,
                                     theme.background,
                                 );
                             }
