@@ -2466,7 +2466,7 @@ impl FallbackApp {
                     ui.painter().image(
                         icons.chevron.id(),
                         egui::Rect::from_center_size(
-                            pos2(chip.right() - 14.0, chip.center().y),
+                            pos2(chip.right() - 14.0, chip.center().y - 1.0),
                             egui::vec2(12.0, 12.0),
                         ),
                         egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
@@ -2647,7 +2647,7 @@ impl FallbackApp {
                                     },
                                 );
                                 rp.text(
-                                    pos2(row.right() - 10.0, row.center().y),
+                                    pos2(row.right() - 10.0, row.center().y - 0.5),
                                     egui::Align2::RIGHT_CENTER,
                                     meta,
                                     egui::FontId::proportional(11.0),
@@ -2719,10 +2719,20 @@ impl FallbackApp {
                                             mix(theme.background, theme.primary, 0.08),
                                         );
                                     }
+                                    // Baseline-true pairing: the icon rides
+                                    // the label's own baseline (the shared
+                                    // helper), one consistent 10pt gap to
+                                    // its right.
+                                    let icon_center = Self::icon_center_for(
+                                        &crp,
+                                        &clabel,
+                                        egui::FontId::monospace(12.0),
+                                        pos2(crow.left() + 24.0, crow.center().y),
+                                    );
                                     crp.image(
                                         icon.id(),
                                         egui::Rect::from_center_size(
-                                            pos2(crow.left() + 26.0, crow.center().y),
+                                            icon_center,
                                             egui::vec2(13.0, 13.0),
                                         ),
                                         egui::Rect::from_min_max(
@@ -2732,7 +2742,7 @@ impl FallbackApp {
                                         icon_tint,
                                     );
                                     crp.text(
-                                        pos2(crow.left() + 38.0, crow.center().y),
+                                        pos2(crow.left() + 42.0, crow.center().y),
                                         egui::Align2::LEFT_CENTER,
                                         &clabel,
                                         egui::FontId::monospace(12.0),
