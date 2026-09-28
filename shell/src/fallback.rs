@@ -1557,6 +1557,11 @@ pub fn run(
             // A CJK font is the egui renderer's proxy for "the machine
             // can render the Zh table" (the historical `zh = font_found`).
             let font_found = install_system_fonts(&cc.egui_ctx);
+            // Chrome copy is not content: dragging across headings and
+            // labels must not paint selection bands (the path input
+            // keeps its selection — only LABELS are gated here).
+            cc.egui_ctx
+                .style_mut(|style| style.interaction.selectable_labels = false);
             // Uniform control height across all egui widgets (combo,
             // buttons, text fields) — matches the web face's proportions.
             let mut style = (*cc.egui_ctx.style()).clone();
@@ -1996,6 +2001,113 @@ impl FallbackApp {
     /// The configure pane: dispatches on the fixed wizard steps —
     /// language → location → license — the same progression the webview
     /// face renders.
+    /// A hikari ghost button: borderless lucide icon + label with a
+    /// soft hover wash (the quick-candidate/browse seat). The icon
+    /// centers on the label's optical middle — the galley box includes
+    /// descender space, so a raw box-center would sit the glyph high.
+    /// Generic: any (icon, label) pair, any pane.
+    fn ghost_icon_button(
+        ui: &mut egui::Ui,
+        theme: Theme,
+        icons: &CaptionIcons,
+        icon: &TextureHandle,
+        label: &str,
+        min_w: f32,
+        h: f32,
+    ) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(vec2(min_w, h), egui::Sense::click());
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let painter = ui.painter_at(rect);
+        let hover_t = ui
+            .ctx()
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+        if hover_t > 0.0 {
+            painter.rect_filled(
+                rect,
+                CornerRadius::same(10),
+                mix(theme.background, theme.text, 0.05 * hover_t),
+            );
+        }
+        let font = egui::FontId::proportional(13.0);
+        let galley = painter.layout_no_wrap(label.to_string(), font, theme.text);
+        let content_w = 14.0 + 6.0 + galley.size().x;
+        let left = rect.left() + ((rect.width() - content_w) / 2.0).max(0.0);
+        let text_cy = rect.center().y + 0.5;
+        painter.image(
+            icon.id(),
+            egui::Rect::from_center_size(
+                pos2(left + 7.0, text_cy),
+                egui::vec2(14.0, 14.0),
+            ),
+            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            theme.text,
+        );
+        painter.galley(
+            pos2(left + 20.0, text_cy - galley.size().y / 2.0),
+            galley,
+            theme.text,
+        );
+        response
+    }
+
+    /// A hikari quick-pick chip: lucide icon + mono label in a soft
+    /// pill, one click target. Unwritable candidates dim and swap to
+    /// the alert glyph; `accent` paints the steer-to highlight. The
+    /// icon aligns to the label's optical middle (see
+    /// [`Self::ghost_icon_button`]). Returns true on click.
+    fn quick_chip(
+        ui: &mut egui::Ui,
+        theme: Theme,
+        icons: &CaptionIcons,
+        icon: &TextureHandle,
+        label: &str,
+        writable: bool,
+        accent: bool,
+    ) -> bool {
+        let chip_w = 42.0 + label.len() as f32 * 7.5;
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(chip_w, 28.0), egui::Sense::click());
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let painter = ui.painter_at(rect);
+        if accent || response.hovered() {
+            painter.rect_filled(
+                rect,
+                CornerRadius::same(8),
+                mix(theme.background, theme.primary, if accent { 0.15 } else { 0.08 }),
+            );
+        }
+        let font = egui::FontId::monospace(12.0);
+        let galley = painter.layout_no_wrap(
+            label.to_string(),
+            font,
+            if writable { theme.text } else { theme.text_secondary },
+        );
+        let text_cy = rect.center().y + 0.5;
+        let icon_tint = if writable {
+            theme.text
+        } else {
+            theme.text_secondary.gamma_multiply(0.55)
+        };
+        painter.image(
+            icon.id(),
+            egui::Rect::from_center_size(
+                pos2(rect.left() + 15.0, text_cy),
+                egui::vec2(13.0, 13.0),
+            ),
+            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            icon_tint,
+        );
+        painter.galley(
+            pos2(rect.left() + 26.0, text_cy - galley.size().y / 2.0),
+            galley,
+            if writable { theme.text } else { theme.text_secondary },
+        );
+        response.clicked()
+    }
+
     /// The hikari checkbox, drawn round like the web face's: a filled
     /// accent disc with a white check when on, a hairline ring that
     /// tints toward the accent on hover when off. The whole row
@@ -2284,7 +2396,7 @@ impl FallbackApp {
         // ── The path field row: [drive chip | mono path] + browse ──
         let browse_w = 96.0f32;
         let row_w = ui.available_width();
-        let field_w = row_w - browse_w - 10.0;
+        let field_w = row_w - browse_w - 16.0;
         let field_h = 44.0f32;
         let mut chip_clicked = false;
         let mut chip_rect_out = egui::Rect::ZERO;
@@ -2292,7 +2404,7 @@ impl FallbackApp {
             egui::vec2(row_w, field_h),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.spacing_mut().item_spacing.x = 16.0;
             let (field_rect, _) =
                 ui.allocate_exact_size(egui::vec2(field_w, field_h), egui::Sense::hover());
         let painter = ui.painter_at(field_rect);
@@ -2408,44 +2520,17 @@ impl FallbackApp {
             self.dir = format!("{mount}{rest_edit}");
         }
 
-        // Browse: ghost button with the lucide folder glyph.
-        let (browse_rect, browse_resp) =
-            ui.allocate_exact_size(egui::vec2(browse_w, field_h), egui::Sense::click());
-        if browse_resp.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        let bp = ui.painter_at(browse_rect);
-        let browse_hover =
-            ui.ctx()
-                .animate_bool_with_time(browse_resp.id.with("hover"), browse_resp.hovered(), 0.12);
-        if browse_hover > 0.0 {
-            bp.rect_filled(
-                browse_rect,
-                CornerRadius::same(10),
-                mix(theme.background, theme.text, 0.05 * browse_hover),
-            );
-        }
-        bp.rect_stroke(
-            browse_rect,
-            CornerRadius::same(10),
-            Stroke::new(1.0, border_idle),
-            egui::StrokeKind::Middle,
-        );
-        bp.image(
-            icons.folder.id(),
-            egui::Rect::from_center_size(
-                pos2(browse_rect.left() + 22.0, browse_rect.center().y),
-                egui::vec2(14.0, 14.0),
-            ),
-            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            theme.text,
-        );
-        bp.text(
-            pos2(browse_rect.left() + 34.0, browse_rect.center().y),
-            egui::Align2::LEFT_CENTER,
+        // Browse: the shared ghost button — borderless, icon and label
+        // on one optical line, and the row's spacing keeps it off the
+        // field.
+        let browse_resp = Self::ghost_icon_button(
+            ui,
+            theme,
+            &icons,
+            &icons.folder,
             texts.browse,
-            egui::FontId::proportional(13.0),
-            theme.text,
+            browse_w,
+            field_h,
         );
         if browse_resp.clicked() {
             if let Some(picked) =
@@ -2483,24 +2568,6 @@ impl FallbackApp {
                         "program-files" => "Program Files".to_string(),
                         _ => path.clone(),
                     };
-                    let chip_w = 42.0 + label.len() as f32 * 7.5;
-                    let (rect, resp) = ui
-                        .allocate_exact_size(egui::vec2(chip_w, 28.0), egui::Sense::click());
-                    if resp.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                    let painter = ui.painter_at(rect);
-                    if accent || resp.hovered() {
-                        painter.rect_filled(
-                            rect,
-                            CornerRadius::same(8),
-                            mix(
-                                theme.background,
-                                theme.primary,
-                                if accent { 0.15 } else { 0.08 },
-                            ),
-                        );
-                    }
                     let icon = if writable {
                         match kind.as_str() {
                             "appdata" => &icons.app_window,
@@ -2509,32 +2576,16 @@ impl FallbackApp {
                     } else {
                         &icons.alert
                     };
-                    let icon_tint = if writable {
-                        theme.text
-                    } else {
-                        theme.text_secondary.gamma_multiply(0.5)
-                    };
-                    painter.image(
-                        icon.id(),
-                        egui::Rect::from_center_size(
-                            pos2(rect.left() + 15.0, rect.center().y),
-                            egui::vec2(13.0, 13.0),
-                        ),
-                        egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                        icon_tint,
-                    );
-                    painter.text(
-                        pos2(rect.left() + 26.0, rect.center().y),
-                        egui::Align2::LEFT_CENTER,
+                    let clicked = Self::quick_chip(
+                        ui,
+                        theme,
+                        &icons,
+                        icon,
                         &label,
-                        egui::FontId::monospace(12.0),
-                        if writable {
-                            theme.text
-                        } else {
-                            theme.text_secondary
-                        },
+                        writable,
+                        accent,
                     );
-                    if resp.clicked() {
+                    if clicked {
                         self.dir = shun::wizard::pad_root_dir(&self.config, &path);
                         self.probed_dir.clear();
                     }
