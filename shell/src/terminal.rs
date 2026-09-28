@@ -70,6 +70,11 @@ impl Terminal {
 
     /// Renders the collapsible pane; `title`/`expand`/`collapse` come
     /// from the caller's i18n table.
+    /// One slim card: the header row (toggle + count), and — only when
+    /// expanded — the capped scroll body inside the SAME frame, so a
+    /// collapsed log collapses to a 34pt strip instead of an empty
+    /// stretched box. Left-aligned content regardless of the pane's
+    /// centered step alignment.
     pub fn render(
         &mut self,
         ui: &mut Ui,
@@ -78,16 +83,17 @@ impl Terminal {
         expand: &str,
         collapse: &str,
     ) -> Response {
-        let header = Frame::default()
+        let body_h = 180.0f32;
+        Frame::default()
             .fill(theme.surface)
             .stroke(Stroke::new(1.0f32, theme.border))
-            .corner_radius(CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(8))
+            .corner_radius(CornerRadius::same(10))
+            .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     let label = if self.open { collapse } else { expand };
-                    if ui
+                    let toggle = ui
                         .add(
                             egui::Button::new(
                                 egui::RichText::new(label)
@@ -96,8 +102,8 @@ impl Terminal {
                             )
                             .frame(false),
                         )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if toggle.clicked()
                     {
                         self.open = !self.open;
                         if self.open {
@@ -111,25 +117,14 @@ impl Terminal {
                             .color(theme.text_tertiary),
                     );
                 });
-            });
-        let response = header.response;
-        let _ = header;
-
-        if self.open {
-            let fresh = self.seen != self.lines.len();
-            self.seen = self.lines.len();
-            Frame::default()
-                .fill(theme.terminal_bg())
-                .stroke(Stroke::new(1.0f32, theme.border))
-                .corner_radius(CornerRadius::same(8))
-                .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_min_height(140.0);
-                    ScrollArea::vertical()
+                if self.open {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical()
                         .id_salt("install-terminal")
-                        .auto_shrink([false, false])
+                        .auto_shrink([false, true])
+                        .max_height(body_h)
                         .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
                             if self.lines.is_empty() {
                                 ui.label(
                                     egui::RichText::new("…")
@@ -138,6 +133,8 @@ impl Terminal {
                                 );
                                 return;
                             }
+                            let fresh = self.seen != self.lines.len();
+                            self.seen = self.lines.len();
                             let mut last: Option<Response> = None;
                             for line in &self.lines {
                                 let (glyph, color) = match line.kind {
@@ -164,8 +161,8 @@ impl Terminal {
                                 }
                             }
                         });
-                });
-        }
-        response
+                }
+            })
+            .response
     }
 }

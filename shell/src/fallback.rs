@@ -3005,7 +3005,7 @@ impl FallbackApp {
                     );
                     ui.add_space(10.0);
                     ui.label(
-                        RichText::new(format!("✓ {title}"))
+                        RichText::new(title)
                             .strong()
                             .size(18.0)
                             .color(theme.success),
@@ -3224,7 +3224,7 @@ impl FallbackApp {
                     Self::hand(ui.add(
                         Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
                             .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::NONE)
+                            .stroke(Stroke::new(1.0f32, theme.border))
                             .corner_radius(CornerRadius::same(8))
                             .min_size(Vec2::new(88.0, 30.0)),
                     ))
