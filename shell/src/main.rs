@@ -459,6 +459,32 @@ fn get_identity(state: State<'_, AppState>) -> Identity {
     }
 }
 
+/// The manifest's product logo for the web face's chrome — the same
+/// embedded bytes the egui face renders. `None` when the manifest
+/// ships no logo (the frontend keeps its stock placeholder).
+#[derive(Serialize)]
+struct LogoView {
+    /// Image format id: `webp` / `png` / `jpg`.
+    kind: String,
+    /// The image bytes, base64 (IPC is JSON).
+    data: String,
+}
+
+#[tauri::command]
+fn get_logo() -> Option<LogoView> {
+    let kind = LOGO_KIND.trim();
+    match kind {
+        "webp" | "png" | "jpg" | "jpeg" => {
+            use base64::Engine as _;
+            Some(LogoView {
+                kind: if kind == "jpg" { "jpeg".into() } else { kind.into() },
+                data: base64::engine::general_purpose::STANDARD.encode(LOGO_BYTES),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// One document of the license step: a titled markdown block.
 #[derive(Serialize, Clone)]
 struct LicenseDoc {
@@ -1114,6 +1140,7 @@ fn run_tauri(cli: Cli, config: ShunConfig, payload: ArchivePayload, uninstall_mo
             list_drives,
             check_dir_writable,
             get_identity,
+            get_logo,
             get_license_docs,
             get_shell_prefs,
             get_saved_language,

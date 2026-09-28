@@ -564,7 +564,7 @@ const TEXTS_ZH: Texts = Texts {
     banner_manual: "已通过命令行参数 --no-webview 启用离线降级安装界面（离线版本，不带特效）。",
     step_language: "安装语言",
     step_location: "安装位置",
-    step_license: "许可协议",
+    step_license: "用户协议",
     step_install: "安装",
     step_done: "完成",
     lang_heading: "选择安装向导的语言",
@@ -1689,7 +1689,8 @@ impl FallbackApp {
         // HkTimeline's segment tone: the border at 30% over the page.
         let border_soft = mix(theme.background, theme.border, 0.3);
         // Block width: circle + gap + the widest localized label.
-        let font = egui::FontId::proportional(14.5);
+        // The web rail's label rides --text-sm (13px), not body size.
+        let font = egui::FontId::proportional(13.0);
         let label_w = items
             .iter()
             .map(|(_, _, label)| {

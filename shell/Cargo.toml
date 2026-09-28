@@ -17,6 +17,10 @@ base64 = "^0.22"
 shun = { path = ".." }
 tauri-build = "^2"
 serde_json = "^1"
+# The exe-resource ICO is generated from the manifest's product logo at
+# build time (see build.rs `write_logo_ico`) — decode the source logo,
+# encode the multi-size ICO.
+image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "webp", "ico"] }
 
 [dependencies]
 # Argument face + the TUI renderer.
@@ -35,6 +39,7 @@ resvg = "0.45"
 rfd = "0.17.2"
 serde.workspace = true
 serde_json = "^1"
+base64 = "^0.22"
 shun = { path = ".." }
 
 # Direct (non-workspace) deps — a demo shell should build lean.

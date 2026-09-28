@@ -236,6 +236,10 @@ export default defineComponent({
     }
 
     const identity = ref<{ version: string; flavor: string } | null>(null);
+    // The manifest's product logo as a data URL — the same embedded
+    // bytes the egui face renders; falls back to the stock placeholder
+    // when the manifest ships no logo (or the probe fails).
+    const logoUrl = ref<string>("/logo.webp");
     // Theme backgrounds from the delivery manifest: the page/rail/pane
     // CSS layers (solid, gradient, wallpaper data URLs) — the rail sits
     // at a slight brightness offset from the pane unless explicitly
@@ -387,6 +391,11 @@ export default defineComponent({
       refreshDefaults().catch((err) => { hintKind.value = "error"; hintError.value = String(err); });
       invoke<{ version: string; flavor: string }>("get_identity")
         .then((id) => { identity.value = id; })
+        .catch(() => {});
+      invoke<{ kind: string; data: string } | null>("get_logo")
+        .then((logo) => {
+          if (logo) logoUrl.value = `data:image/${logo.kind};base64,${logo.data}`;
+        })
         .catch(() => {});
       invoke<{ product: { name: string } }>("get_config")
         .then((view) => {
@@ -667,7 +676,7 @@ export default defineComponent({
         return (
           <>
             <AppTitleBar
-              icon="/logo.webp"
+              icon={logoUrl.value}
               title={s.title}
               subtitle={identity.value ? `v${identity.value.version}` : ""}
               showMaximize={false}
@@ -696,7 +705,7 @@ export default defineComponent({
             </section>
           ) : uninstallPhase.value === "running" || uninstallPhase.value === "repairing" ? (
             <section class="wizard-pane wizard-pane--center wizard-uninstall">
-              <img src="/logo.webp" alt="" class="wizard-logo" />
+              <img src={logoUrl.value} alt="" class="wizard-logo" />
               <HkProgressBar status="loading" size="md" />
               <p class="wizard-step">
                 {uninstallPhase.value === "repairing" ? s.uninstall.repairing : s.uninstall.uninstalling}
@@ -740,7 +749,7 @@ export default defineComponent({
         return (
           <>
             <HkWallpaperBackdrop />
-            <AppTitleBar icon="/logo.webp" title={s.uninstallTitle} showMaximize={false} />
+            <AppTitleBar icon={logoUrl.value} title={s.uninstallTitle} showMaximize={false} />
             <main class="installer" style={pageStyle.value}>
               <div class="wizard-layout__pane">{uninstallPane}</div>
             </main>
@@ -884,7 +893,7 @@ export default defineComponent({
         ) : step.value === "install" ? (
           <section class="wizard-pane wizard-pane--install">
             <div class="wizard-install__main">
-              <img src="/logo.webp" alt="" class="wizard-logo" />
+              <img src={logoUrl.value} alt="" class="wizard-logo" />
               <p class="wizard-pane__title">{product.value}</p>
               <HkProgressBar
                 status="loading"
@@ -973,7 +982,7 @@ export default defineComponent({
         <>
           <HkWallpaperBackdrop />
           <AppTitleBar
-            icon="/logo.webp"
+            icon={logoUrl.value}
             title={s.title}
             subtitle={identity.value ? `v${identity.value.version}` : ""}
             showMaximize={false}
