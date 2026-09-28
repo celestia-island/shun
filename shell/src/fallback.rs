@@ -498,6 +498,8 @@ struct Texts {
     license_agree: String,
     license_title: String,
     license_sub: String,
+    agree_install: String,
+    agree_install_wait: String,
     dir_label: String,
     browse: String,
     browse_title: String,
@@ -969,6 +971,9 @@ struct FallbackApp {
     /// page through [`shun::config::ResolvedStep::licenses`]); reset
     /// whenever the wizard moves to another step.
     license_doc_index: usize,
+    /// When the license step was entered — the web face's three-second
+    /// minimum-read countdown runs from here.
+    license_entered: Option<std::time::Instant>,
     /// Current progress step + percent (`None` while indeterminate).
     progress: Option<(String, Option<u8>)>,
     /// Overall run completion 0-100 (phase-weighted), `None` before the
@@ -1090,6 +1095,7 @@ impl FallbackApp {
             license_docs,
             step: 0,
             license_accepted: false,
+            license_entered: None,
             lang_combo_open: false,
             license_doc_index: 0,
             progress: None,
@@ -2359,20 +2365,16 @@ impl FallbackApp {
         // wrap spread apart). The sub rides the manifest's product name
         // via %PRODUCT%.
         ui.add_space(4.0);
-        // Vertical centering needs an explicit full-height max_rect +
-        // main_align Center: allocate_ui_with_layout paints from the
-        // cursor and ignores main-axis alignment entirely.
-        let pane_rect = egui::Rect::from_min_max(
-            pos2(ui.cursor().left(), ui.min_rect().top()),
-            pos2(ui.max_rect().right(), ui.max_rect().bottom()),
-        );
-        ui.allocate_new_ui(
-            egui::UiBuilder::new()
-                .max_rect(pane_rect)
-                .layout(
-                    egui::Layout::top_down(egui::Align::Min)
-                        .with_main_align(egui::Align::Center),
-                ),
+        // Vertical centering, deterministic like the language step:
+        // the content height is known (heading + field + hint bands),
+        // so the top offset is (available - content) / 2. egui's
+        // main_align on allocate_new_ui never moves the cursor.
+        let pane_h = ui.available_height();
+        let content_h = 320.0f32; // heading + field + hint bands
+        ui.add_space(((pane_h - content_h) / 2.0).max(0.0));
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), content_h),
+            egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.label(
                     RichText::new(texts.location_heading)
@@ -3158,9 +3160,34 @@ impl FallbackApp {
                 // language and location walk the pipeline.
                 let on_last_step = self.step >= 2;
                 let step_blocked = self.step_blocked();
+                // The license step's minimum-read countdown (web
+                // parity): the primary stays disabled for the first
+                // three seconds of the step, relabeling each second.
+                let countdown = if configuring && on_last_step {
+                    match self.license_entered {
+                        Some(entered) => {
+                            3u32.saturating_sub(entered.elapsed().as_secs() as u32)
+                        }
+                        None => 0,
+                    }
+                } else {
+                    0
+                };
+                if countdown > 0 {
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+                }
                 let (label, enabled) = match self.stage {
                     Stage::Configure if !on_last_step => (self.texts.next.clone(), !step_blocked),
-                    Stage::Configure => (self.texts.install.clone(), !step_blocked),
+                    Stage::Configure => (
+                        if countdown > 0 {
+                            self.texts
+                                .agree_install_wait
+                                .replace("{N}", &countdown.to_string())
+                        } else {
+                            self.texts.agree_install.clone()
+                        },
+                        !step_blocked && countdown == 0,
+                    ),
                     Stage::Running => (
                         match self.uninstalling {
                             Some(true) => self.texts.uninstalling.clone(),
@@ -3233,6 +3260,12 @@ impl FallbackApp {
                                 // license pager at its first document.
                                 self.license_doc_index = 0;
                                 self.step += 1;
+                                // Arriving on the license step arms its
+                                // minimum-read countdown.
+                                if self.step >= 2 {
+                                    self.license_entered =
+                                        Some(std::time::Instant::now());
+                                }
                             }
                             _ => self.spawn_worker(ctx, uninstalling),
                         }
@@ -3274,6 +3307,9 @@ impl FallbackApp {
                     // standalone uninstaller face) only.
                     if self.step > 0 && ghost(ui, self.texts.back.as_str()) {
                         self.license_doc_index = 0;
+                        if self.step >= 2 {
+                            self.license_entered = None;
+                        }
                         self.step -= 1;
                     }
                 } else if self.stage == Stage::Finished

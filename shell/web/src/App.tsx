@@ -825,7 +825,7 @@ export default defineComponent({
             </div>
           </section>
         ) : step.value === "mode" ? (
-          <section class="wizard-pane">
+          <section class="wizard-pane wizard-pane--center">
             <h1>{s.mode.title}</h1>
             <p class="wizard-sub">{s.mode.sub}</p>
 
