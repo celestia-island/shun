@@ -673,7 +673,9 @@ struct FallbackApp {
 /// Shared control metrics for the egui face — one set of heights and
 /// widths every pane draws with, so all products and steps size alike.
 const CAPTION_W: f32 = 40.0;
-const CAPTION_H: f32 = 22.0;
+// 26pt plates in a 26pt strip: the band totals 32pt with the panel
+// margins — the native Windows 11 caption proportion at any DPI.
+const CAPTION_H: f32 = 26.0;
 const CONTROL_H: f32 = 36.0;
 const COMBO_W: f32 = 380.0;
 
@@ -1079,6 +1081,12 @@ pub fn run(
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
 ) {
     let title = window_title(&config);
+    // DPI contract: the whole face is designed in logical points. The
+    // ONLY place actual DPI enters is egui's pixels_per_point — eframe
+    // picks the monitor scale once and applies it as a single uniform
+    // scale when tessellating; layout code never reads the scale factor
+    // (no PhysicalSize / scale math anywhere in this crate), so the
+    // chrome keeps the designed proportions on every display.
     // Frameless like the hikari shell: the title bar below draws the
     // custom chrome (logo + caption + drag + close). This also keeps the
     // `--screenshot` capture aligned with the client area.
