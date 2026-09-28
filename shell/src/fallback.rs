@@ -103,10 +103,12 @@ impl Theme {
             text: Color32::from_white_alpha(230),
             text_secondary: Color32::from_white_alpha(153),
             text_tertiary: Color32::from_white_alpha(115),
-            // hikari's current default scheme line: light rides the
-            // default theme's pink (synthwave84's light primary), dark
-            // the token fallback blue (tokyo-night's 122 162 247).
-            primary: accent.map_or(Color32::from_rgb(122, 162, 247), |[r, g, b]| {
+            // The web face's theme.scss tokens are the configured
+            // default — blue in BOTH modes (its dark block only flips
+            // text/border/surfaces). hikari's own no-config fallback
+            // (the default theme's daytime pink) only exists where no
+            // tokens ship at all, which never happens here.
+            primary: accent.map_or(Color32::from_rgb(0, 120, 200), |[r, g, b]| {
                 Color32::from_rgb(r, g, b)
             }),
             on_primary: Color32::from_white_alpha(235),
@@ -126,10 +128,8 @@ impl Theme {
             text: Color32::from_rgb(30, 40, 55),
             text_secondary: Color32::from_rgb(90, 100, 115),
             text_tertiary: Color32::from_rgb(90, 100, 115),
-            // hikari's current default scheme line: light rides the
-            // default theme's pink (synthwave84's light primary), dark
-            // the token fallback blue (tokyo-night's 122 162 247).
-            primary: accent.map_or(Color32::from_rgb(255, 107, 157), |[r, g, b]| {
+            // Mirror the web face's light token: --color-primary 0 120 200.
+            primary: accent.map_or(Color32::from_rgb(0, 120, 200), |[r, g, b]| {
                 Color32::from_rgb(r, g, b)
             }),
             on_primary: Color32::from_rgb(255, 255, 255),
@@ -692,6 +692,7 @@ mod lucide {
     pub(crate) const X: &str = r#"<path d="M6 6l12 12M18 6L6 18"/>"#;
     pub(crate) const SUN: &str = r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>"#;
     pub(crate) const MOON: &str = r#"<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>"#;
+    pub(crate) const CHEVRON_DOWN: &str = r#"<path d="m6 9 6 6 6-6"/>"#;
 }
 
 /// The caption's four glyph textures (white strokes — tinted per state
@@ -702,6 +703,8 @@ struct CaptionIcons {
     x: TextureHandle,
     sun: TextureHandle,
     moon: TextureHandle,
+    /// The select trigger's dropdown arrow (HkSelect's ChevronDown).
+    chevron: TextureHandle,
 }
 
 impl CaptionIcons {
@@ -722,6 +725,7 @@ impl CaptionIcons {
             x: render("x", lucide::X),
             sun: render("sun", lucide::SUN),
             moon: render("moon", lucide::MOON),
+            chevron: render("chevron-down", lucide::CHEVRON_DOWN),
         }
     }
 }
@@ -882,6 +886,8 @@ struct FallbackApp {
     step: usize,
     /// The license checkbox (`license` steps gate progression on it).
     license_accepted: bool,
+    /// The language step's HkSelect-style dropdown state.
+    lang_combo_open: bool,
     /// Which license document the pane shows (multi-document licenses
     /// page through [`shun::config::ResolvedStep::licenses`]); reset
     /// whenever the wizard moves to another step.
@@ -978,6 +984,7 @@ impl FallbackApp {
             license_docs,
             step: 0,
             license_accepted: false,
+            lang_combo_open: false,
             license_doc_index: 0,
             progress: None,
             overall: None,
@@ -1677,8 +1684,10 @@ impl FallbackApp {
             .collect();
 
         let circle_d = 24.0f32;
-        let connector_h = 26.0f32;
+        let connector_h = 24.0f32;
         let label_gap = 12.0f32;
+        // HkTimeline's segment tone: the border at 30% over the page.
+        let border_soft = mix(theme.background, theme.border, 0.3);
         // Block width: circle + gap + the widest localized label.
         let font = egui::FontId::proportional(14.5);
         let label_w = items
@@ -1691,6 +1700,45 @@ impl FallbackApp {
             })
             .fold(0.0f32, f32::max);
         let block_w = circle_d + label_gap + label_w;
+        // The three HkTimeline node states, drawn per the SCSS: done =
+        // primary fill with a white check; active = primary 15% wash
+        // under a 2px primary ring with the primary number; pending =
+        // surface fill under a 2px hairline ring with the muted number.
+        let paint_node = |painter: &egui::Painter, center: egui::Pos2, active: bool, done: bool, number: usize| {
+            let r = circle_d / 2.0;
+            if done {
+                painter.circle_filled(center, r, theme.primary);
+                let stroke = Stroke::new(2.0_f32, theme.on_primary);
+                painter.line_segment(
+                    [pos2(center.x - 4.0, center.y + 0.5), pos2(center.x - 1.0, center.y + 3.5)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [pos2(center.x - 1.0, center.y + 3.5), pos2(center.x + 4.5, center.y - 3.5)],
+                    stroke,
+                );
+            } else if active {
+                painter.circle_filled(center, r, mix(theme.background, theme.primary, 0.15));
+                painter.circle_stroke(center, r - 1.0, Stroke::new(2.0_f32, theme.primary));
+                painter.text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    number.to_string(),
+                    egui::FontId::proportional(12.0),
+                    theme.primary,
+                );
+            } else {
+                painter.circle_filled(center, r, theme.surface);
+                painter.circle_stroke(center, r - 1.0, Stroke::new(2.0_f32, border_soft));
+                painter.text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    number.to_string(),
+                    egui::FontId::proportional(12.0),
+                    theme.text_secondary,
+                );
+            }
+        };
 
         if vertical {
             // Deterministic centering, both axes: computed vertical
@@ -1705,51 +1753,30 @@ impl FallbackApp {
             let mut cursor_y = ui.cursor().top() + top;
             for (index, (active, done, label)) in items.iter().enumerate() {
                 let cy = cursor_y + circle_d / 2.0;
-                // Connector BEFORE the circle (between previous and this).
+                // Connector BEFORE the circle — it belongs to the row
+                // above, so its color follows the previous step's status
+                // (completed bonds ride the primary, everything else the
+                // soft border), exactly like [data-el=connector].
                 if index > 0 {
-                    let seg_top = cursor_y - connector_h;
+                    let prev_done = items[index - 1].1;
                     ui.painter().line_segment(
-                        [pos2(cx, seg_top + 2.0), pos2(cx, cy - circle_d / 2.0 - 2.0)],
-                        Stroke::new(1.5_f32, theme.border),
+                        [
+                            pos2(cx, cursor_y - connector_h + 2.0),
+                            pos2(cx, cy - circle_d / 2.0 - 2.0),
+                        ],
+                        Stroke::new(2.0_f32, if prev_done { theme.primary } else { border_soft }),
                     );
                 }
-                // Circle: done = filled primary with a stroked check;
-                // active = ring + number; pending = muted ring + number.
-                let center = pos2(cx, cy);
-                if *done {
-                    ui.painter()
-                        .circle_filled(center, circle_d / 2.0, theme.primary);
-                    // A proper check: mid-left → bottom-middle → top-right.
-                    let pts = [
-                        pos2(cx - 4.5, cy + 0.5),
-                        pos2(cx - 1.0, cy + 4.0),
-                        pos2(cx + 4.5, cy - 4.0),
-                    ];
-                    ui.painter()
-                        .line_segment([pts[0], pts[1]], Stroke::new(1.8_f32, Color32::WHITE));
-                    ui.painter()
-                        .line_segment([pts[1], pts[2]], Stroke::new(1.8_f32, Color32::WHITE));
-                } else {
-                    ui.painter().circle_stroke(
-                        center,
-                        circle_d / 2.0 - 1.0,
-                        Stroke::new(1.5_f32, theme.primary),
-                    );
-                    ui.painter().text(
-                        center,
-                        egui::Align2::CENTER_CENTER,
-                        (index + 1).to_string(),
-                        egui::FontId::proportional(12.5),
-                        theme.primary,
-                    );
-                }
-                // Label beside the circle, vertically centered.
+                paint_node(ui.painter(), pos2(cx, cy), *active, *done, index + 1);
+                // Label beside the circle, vertically centered. Active
+                // and completed labels read in the strong text tone;
+                // pending ones stay muted.
                 ui.painter().text(
                     pos2(left + circle_d + label_gap, cy),
                     egui::Align2::LEFT_CENTER,
                     label.as_str(),
                     font.clone(),
-                    if *active {
+                    if *active || *done {
                         theme.text
                     } else {
                         theme.text_secondary
@@ -1760,47 +1787,28 @@ impl FallbackApp {
         } else {
             // Horizontal strip: circle + label side by side per step.
             ui.horizontal(|ui| {
-                // (Active state is conveyed by the label weight above; the
-                // horizontal strip only distinguishes done vs pending.)
-                for (index, (_active, done, label)) in items.iter().enumerate() {
+                for (index, (active, done, label)) in items.iter().enumerate() {
                     if index > 0 {
-                        let line_color = if *done { theme.success } else { theme.border };
-                        ui.label(RichText::new("——").color(line_color).small());
+                        let prev_done = items[index - 1].1;
+                        ui.label(RichText::new("——").color(if prev_done {
+                            theme.primary
+                        } else {
+                            border_soft
+                        }).small());
                         ui.add_space(6.0);
                     }
                     let cy = ui.cursor().top() + 12.0;
                     let cx = ui.cursor().left() + circle_d / 2.0;
-                    if *done {
-                        ui.painter()
-                            .circle_filled(pos2(cx, cy), circle_d / 2.0, theme.primary);
-                        let pts = [
-                            pos2(cx - 4.5, cy + 0.5),
-                            pos2(cx - 1.0, cy + 4.0),
-                            pos2(cx + 4.5, cy - 4.0),
-                        ];
-                        ui.painter()
-                            .line_segment([pts[0], pts[1]], Stroke::new(1.8_f32, Color32::WHITE));
-                        ui.painter()
-                            .line_segment([pts[1], pts[2]], Stroke::new(1.8_f32, Color32::WHITE));
-                    } else {
-                        ui.painter().circle_stroke(
-                            pos2(cx, cy),
-                            circle_d / 2.0 - 1.0,
-                            Stroke::new(1.5_f32, theme.primary),
-                        );
-                        ui.painter().text(
-                            pos2(cx, cy),
-                            egui::Align2::CENTER_CENTER,
-                            (index + 1).to_string(),
-                            egui::FontId::proportional(12.5),
-                            theme.primary,
-                        );
-                    }
+                    paint_node(ui.painter(), pos2(cx, cy), *active, *done, index + 1);
                     // Reserve the circle's box, then the label beside it.
                     ui.allocate_exact_size(Vec2::new(circle_d, circle_d), egui::Sense::hover());
                     ui.label(
                         RichText::new(label.as_str())
-                            .color(theme.text_secondary)
+                            .color(if *active || *done {
+                                theme.text
+                            } else {
+                                theme.text_secondary
+                            })
                             .size(14.0),
                     );
                 }
@@ -1896,6 +1904,7 @@ impl FallbackApp {
     fn language_view(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let texts = self.texts;
+        let icons = self.caption_icons.clone();
         let current = self.language;
         let zh_offered = self.cjk_font;
 
@@ -1939,26 +1948,128 @@ impl FallbackApp {
                         .color(theme.text_secondary),
                 );
                 ui.add_space(24.0);
+                // HkSelect trigger parity: a 44pt surface row with a
+                // hairline border (text at 14%), 10pt radius, the
+                // selection CENTERED like the SCSS's text-align, and the
+                // lucide chevron at the inline end. Hover lifts the
+                // border to the primary; open pins it.
+                let combo_h = 44.0f32;
+                let border_idle = mix(theme.background, theme.text, 0.14);
+                let (rect, resp) =
+                    ui.allocate_exact_size(egui::vec2(block_w, combo_h), egui::Sense::click());
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                let painter = ui.painter_at(rect);
+                let open = self.lang_combo_open;
+                let hover_t = ui
+                    .ctx()
+                    .animate_bool_with_time(resp.id.with("hover"), resp.hovered() || open, 0.12);
+                let border = mix(border_idle, theme.primary, hover_t);
+                painter.rect_filled(rect, CornerRadius::same(10), theme.surface);
+                painter.rect_stroke(
+                    rect,
+                    CornerRadius::same(10),
+                    Stroke::new(1.0, border),
+                    egui::StrokeKind::Middle,
+                );
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    current.autonym(),
+                    egui::FontId::proportional(14.0),
+                    theme.text,
+                );
+                painter.image(
+                    icons.chevron.id(),
+                    egui::Rect::from_center_size(
+                        pos2(rect.right() - 24.0, rect.center().y),
+                        egui::vec2(16.0, 16.0),
+                    ),
+                    egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    theme.text_secondary,
+                );
+                if resp.clicked() {
+                    self.lang_combo_open = !open;
+                }
                 let mut picked: Option<FallbackLanguage> = None;
-                egui::ComboBox::from_id_salt("wizard-language")
-                    .selected_text(current.autonym())
-                    .width(block_w)
-                    .show_ui(ui, |ui| {
-                        let candidates = [
-                            (FallbackLanguage::En, true),
-                            (FallbackLanguage::Zh, zh_offered),
-                        ];
-                        for (language, offered) in candidates {
-                            let response = ui.add_enabled(
-                                offered,
-                                egui::Button::selectable(language == current, language.autonym()),
-                            );
-                            if response.clicked() {
-                                picked = Some(language);
-                            }
-                        }
-                    });
+                if self.lang_combo_open {
+                    let mut popup_rect = rect;
+                    egui::Area::new(resp.id.with("popup"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(rect.left_bottom() + egui::vec2(0.0, 4.0))
+                        .show(ui.ctx(), |ui| {
+                            let popup = egui::Frame::default()
+                                .fill(theme.surface)
+                                .stroke(Stroke::new(1.0, border_idle))
+                                .shadow(egui::Shadow {
+                                    offset: [0, 8],
+                                    blur: 24,
+                                    color: Color32::from_black_alpha(40),
+                                    ..Default::default()
+                                })
+                                .corner_radius(CornerRadius::same(10))
+                                .inner_margin(Margin::same(6))
+                                .show(ui, |ui| {
+                                    ui.set_width(block_w - 12.0);
+                                    let candidates = [
+                                        (FallbackLanguage::En, true),
+                                        (FallbackLanguage::Zh, zh_offered),
+                                    ];
+                                    for (language, offered) in candidates {
+                                        let selected = language == current;
+                                        let (row, row_resp) = ui.allocate_exact_size(
+                                            egui::vec2(ui.available_width(), 34.0),
+                                            egui::Sense::click(),
+                                        );
+                                        if row_resp.hovered() {
+                                            ui.ctx()
+                                                .set_cursor_icon(egui::CursorIcon::PointingHand);
+                                        }
+                                        let rp = ui.painter_at(row);
+                                        if selected || row_resp.hovered() {
+                                            rp.rect_filled(
+                                                row,
+                                                CornerRadius::same(8),
+                                                mix(
+                                                    theme.background,
+                                                    theme.primary,
+                                                    if selected { 0.12 } else { 0.08 },
+                                                ),
+                                            );
+                                        }
+                                        rp.text(
+                                            row.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            language.autonym(),
+                                            egui::FontId::proportional(14.0),
+                                            if selected {
+                                                theme.primary
+                                            } else {
+                                                theme.text
+                                            },
+                                        );
+                                        if row_resp.clicked() && offered {
+                                            picked = Some(language);
+                                        }
+                                    }
+                                });
+                            popup_rect = popup.response.rect;
+                        });
+                    // Click anywhere outside the trigger and the popup
+                    // closes — the HkSelect behavior.
+                    let hover_pos = ui.input(|i| i.pointer.hover_pos());
+                    let outside = ui.input(|i| i.pointer.any_click())
+                        && !resp.clicked()
+                        && hover_pos.map_or(true, |p| {
+                            !popup_rect.contains(p) && !rect.contains(p)
+                        });
+                    if outside {
+                        self.lang_combo_open = false;
+                    }
+                }
                 if let Some(language) = picked {
+                    self.lang_combo_open = false;
                     self.apply_language(language);
                 }
             },
@@ -2551,11 +2662,10 @@ impl eframe::App for FallbackApp {
                 .exact_width(200.0)
                 .frame(
                     Frame::default()
-                        // The brightness split: the surface tone against
-                        // the pane's background. No panel stroke — its
-                        // top/bottom hairlines doubled with the footer
-                        // separator into thick lines.
-                        .fill(theme.surface)
+                        // The brightness split, web-face direction: the
+                        // rail sits a shade DARKER than the pane's page
+                        // background (the old surface fill inverted it).
+                        .fill(mix(theme.background, theme.text, 0.04))
                         .inner_margin(Margin::same(16)),
                 )
                 .show(ctx, |ui| {

@@ -165,11 +165,74 @@ fn main() {
         });
     std::fs::write(out_dir.join("shun-logo-kind.txt"), kind).expect("write logo kind");
 
+    // 3b. The webview face's exe/window icon follows the manifest too:
+    //     the product logo re-encoded as a multi-size ICO and embedded
+    //     as the Windows exe resource (Explorer, the pre-first-paint
+    //     taskbar icon, and any shortcut pointing at the setup exe).
+    //     Without it tauri-build stamps its generic icon while the egui
+    //     face (`ViewportBuilder::with_icon`) follows the manifest —
+    //     the two faces would disagree.
+    let mut windows_attributes =
+        tauri_build::WindowsAttributes::new().app_manifest(include_str!("app.manifest"));
+    if kind != "none" {
+        let ico = out_dir.join("shun-logo.ico");
+        write_logo_ico(&std::fs::read(out_dir.join("shun-logo.bin")).expect("logo bytes"), &ico);
+        windows_attributes = windows_attributes.window_icon_path(&ico);
+    }
+
     // 4. Embed the application manifest (comctl32 v6 + per-monitor DPI).
-    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(
-        tauri_build::WindowsAttributes::new().app_manifest(include_str!("app.manifest")),
-    ))
-    .expect("tauri-build failed");
+    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows_attributes))
+        .expect("tauri-build failed");
+}
+
+/// Re-encodes the product logo as a multi-size PNG-framed ICO. The logo
+/// is letterboxed onto a square canvas (taskbar slots are square) and
+/// scaled to the classic size ladder so Explorer never upscales.
+fn write_logo_ico(bytes: &[u8], to: &Path) {
+    use image::ExtendedColorType;
+    use image::codecs::ico::{IcoEncoder, IcoFrame};
+    use image::imageops::FilterType;
+
+    let logo = image::load_from_memory(bytes).unwrap_or_else(|e| {
+        panic!("the product logo does not decode as an image: {e}")
+    });
+    let mut frames = Vec::new();
+    for size in [16u32, 24, 32, 48, 64, 128, 256] {
+        let square = square_rgba(&logo, size, FilterType::Lanczos3);
+        frames.push(
+            IcoFrame::as_png(
+                square.as_raw(),
+                size,
+                size,
+                ExtendedColorType::Rgba8,
+            )
+            .expect("logo frame encodes as PNG"),
+        );
+    }
+    let file = std::fs::File::create(to).expect("create the logo ICO");
+    IcoEncoder::new(file)
+        .encode_images(&frames)
+        .expect("the logo ICO encodes");
+}
+
+/// Letterboxes `logo` onto a `size`×`size` RGBA canvas (the longest side
+/// scales to `size`, the rest stays transparent).
+fn square_rgba(
+    logo: &image::DynamicImage,
+    size: u32,
+    filter: image::imageops::FilterType,
+) -> image::RgbaImage {
+    let (width, height) = (logo.width(), logo.height());
+    let scaled = if width >= height {
+        logo.resize_exact(size, (size * height / width).max(1), filter)
+    } else {
+        logo.resize_exact((size * width / height).max(1), size, filter)
+    };
+    let mut canvas = image::RgbaImage::new(size, size);
+    let x = (size - scaled.width()) / 2;
+    let y = (size - scaled.height()) / 2;
+    image::imageops::overlay(&mut canvas, &scaled, x.into(), y.into());
+    canvas
 }
 
 /// Rewrites every wallpaper `BackgroundSpec::Image` in the theme into a
