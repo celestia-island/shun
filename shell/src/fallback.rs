@@ -476,7 +476,10 @@ mod solar {
 /// One locale's wizard copy — deserialized straight from
 /// shell/strings/wizard-strings.json, the SINGLE authored source both
 /// faces render from (the web i18n exports it via `pnpm dump-strings`).
+// serde(default): a JSON key missing from a locale degrades to an
+// empty string instead of panicking the face at startup.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
 struct Texts {
     banner_missing: String,
     banner_manual: String,
