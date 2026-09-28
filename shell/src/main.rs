@@ -36,7 +36,6 @@ use shun::config::{ResolvedLicenseDoc, ShunConfig, TargetConfig, UiFace};
 use shun::env_probe::UiCapabilities;
 use shun::flow::FlowEvent;
 use shun::payload::ArchivePayload;
-use shun::targets::install::WizardAnswers;
 use shun::wizard::{InstallRequest, WizardCore};
 use tauri::{Emitter, Manager, State};
 
@@ -658,6 +657,7 @@ async fn set_shortcuts(
     tauri::async_runtime::spawn_blocking(move || {
         shun::targets::shortcuts::apply_shortcut_choices(
             &shun::wizard::shortcut_aumid_for(&config),
+            &config.product.name,
             &main_exe,
             desktop,
             menu,
@@ -692,6 +692,8 @@ async fn start_install(
         mode,
         dir,
         language,
+        // The hikari wizard exposes no scope toggle — per-user only.
+        machine: false,
     };
     tauri::async_runtime::spawn_blocking(move || {
         let core = WizardCore::new(config, BTreeMap::new());
@@ -747,34 +749,16 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     let machine = cli.scope.as_deref() == Some("machine");
 
     // The elevation gate for machine scope happens before any flow work;
-    // it needs an InstallContext, so build the same one the flow would.
+    // it needs an InstallContext, so build the shared one.
     if !cli.uninstall && machine {
-        let install = config
-            .targets
-            .iter()
-            .find_map(|t| match t {
-                TargetConfig::Install(install) => Some(install.clone()),
-                _ => None,
-            })
-            .ok_or("this configuration declares no install target")?;
-        let mut ctx = shun::targets::install::InstallContext::new(
-            config.product.name.clone(),
-            config.product.version.clone(),
-            PathBuf::from(&dir),
+        let ctx = shun::wizard::elevation_context(
+            config,
+            &dir,
             portable,
-        );
-        ctx.publisher = config.product.publisher.clone();
-        ctx.main_exe = install.main_exe.clone();
-        ctx.apply_config(
-            &install,
-            WizardAnswers {
-                desktop_shortcut: !cli.no_desktop,
-                start_menu_shortcut: true,
-                launch_after_install: false,
-                machine: true,
-            },
-        );
-        ctx.language = cli.language.clone();
+            true,
+            cli.language.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
         ensure_elevated_for(&ctx, &cli.mode, &dir, !cli.no_desktop, false)?;
     }
 
@@ -806,6 +790,9 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
         mode: cli.mode.clone(),
         dir,
         language: cli.language.clone(),
+        // The gate above already re-launched elevated for machine scope;
+        // reaching here with the flag set means this IS the elevated copy.
+        machine,
     };
     shun::wizard::run_install(&core, payload, &request, &mut print_event)?;
     // Headless runs never see the done page: apply the conventional
@@ -814,6 +801,7 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     if !portable {
         let _ = shun::targets::shortcuts::apply_shortcut_choices(
             &shun::wizard::shortcut_aumid_for(config),
+            &config.product.name,
             &core.main_exe(),
             Some(!cli.no_desktop),
             Some(true),
@@ -1135,6 +1123,24 @@ fn run_tauri(cli: Cli, config: ShunConfig, payload: ArchivePayload, uninstall_mo
             let _ = (&screenshot, delay);
             if let Some(window) = app.get_webview_window("installer") {
                 let _ = window.set_title(&native_title);
+                // Frameless windows lose BOTH the rounded corners and
+                // the shadow until DWMWCP_ROUND lands — the same hint
+                // the egui face applies to its own window.
+                #[cfg(windows)]
+                if let Ok(hwnd) = window.hwnd() {
+                    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+                    const DWMWCP_ROUND: u32 = 2;
+                    // SAFETY: plain dwmapi call with our own window
+                    // handle and a 4-byte attribute.
+                    unsafe {
+                        windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+                            hwnd.0,
+                            DWMWA_WINDOW_CORNER_PREFERENCE,
+                            &DWMWCP_ROUND as *const u32 as *const core::ffi::c_void,
+                            4,
+                        );
+                    }
+                }
             }
             Ok(())
         })

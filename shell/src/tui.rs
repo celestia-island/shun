@@ -282,6 +282,8 @@ pub fn run(
                             mode: "local".into(),
                             dir: core.state.dir.trim().to_string(),
                             language: Some(core.state.locale.clone()),
+                            // The TUI exposes no scope toggle — per-user.
+                            machine: false,
                         };
                         worker = Some(std::thread::spawn(move || {
                             shun::wizard::run_install(&install_core, &payload, &request, &mut {

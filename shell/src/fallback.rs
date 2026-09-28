@@ -20,6 +20,7 @@
 //! The banner states why the fallback is running — a missing-runtime
 //! install must say so, not silently degrade.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 
@@ -28,9 +29,9 @@ use egui::{
     Layout, Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2, pos2, vec2,
 };
 use shun::config::{ShunConfig, TargetConfig};
-use shun::flow::{Flow, FlowEvent, FlowPhase};
+use shun::flow::{FlowEvent, FlowPhase};
 use shun::payload::ArchivePayload;
-use shun::targets::install::{InstallContext, InstallFlow, WindowsRegistration, uninstall};
+use shun::wizard::{InstallRequest, WizardCore};
 
 /// Why the fallback UI is running — drives the banner text.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -677,6 +678,80 @@ fn install_cjk_font(ctx: &Context) -> bool {
 /// The embedded product logo, decoded to an egui texture (like the
 /// hikari title bar's icon prop). `None` when the manifest declares no
 /// logo or the bytes do not decode.
+// ── Lucide caption icons — the webview face's exact icon set ────────────
+//
+// HkTitleBar embeds lucide SVGs inline (lucide-vue-next at 14px,
+// stroke-width 1.75, round caps). The egui face rasterizes the SAME
+// path data (resvg) once at startup and tints the textures per state,
+// so both faces draw pixel-identical glyphs from one source.
+
+/// The lucide glyph bodies, verbatim from HkTitleBar.tsx / the lucide
+/// set: minus, x, sun, moon.
+mod lucide {
+    pub(crate) const MINUS: &str = r#"<path d="M5 12h14"/>"#;
+    pub(crate) const X: &str = r#"<path d="M6 6l12 12M18 6L6 18"/>"#;
+    pub(crate) const SUN: &str = r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>"#;
+    pub(crate) const MOON: &str = r#"<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>"#;
+}
+
+/// The caption's four glyph textures (white strokes — tinted per state
+/// at draw time, like `stroke="currentColor"`).
+#[derive(Clone)]
+struct CaptionIcons {
+    minus: TextureHandle,
+    x: TextureHandle,
+    sun: TextureHandle,
+    moon: TextureHandle,
+}
+
+impl CaptionIcons {
+    fn load(ctx: &Context) -> Self {
+        let render = |name: &str, body: &str| {
+            let svg = format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" \
+                 viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"1.75\" \
+                 stroke-linecap=\"round\" stroke-linejoin=\"round\">{body}</svg>"
+            );
+            // 28px raster drawn at 14 logical pt — crisp at 2× DPI.
+            let image = render_svg(&svg, 28.0)
+                .unwrap_or_else(|| panic!("lucide icon {name} must rasterize"));
+            ctx.load_texture(format!("lucide-{name}"), image, egui::TextureOptions::LINEAR)
+        };
+        Self {
+            minus: render("minus", lucide::MINUS),
+            x: render("x", lucide::X),
+            sun: render("sun", lucide::SUN),
+            moon: render("moon", lucide::MOON),
+        }
+    }
+}
+
+/// Rasterizes an SVG string at `px` square into an egui image.
+fn render_svg(svg: &str, px: f32) -> Option<egui::ColorImage> {
+    let opt = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_str(svg, &opt).ok()?;
+    let size = tree.size();
+    let transform = resvg::tiny_skia::Transform::from_scale(
+        px / size.width(),
+        px / size.height(),
+    );
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(px as u32, px as u32)?;
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    // tiny-skia stores premultiplied alpha; egui wants it straight.
+    let pixels: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [px as usize, px as usize],
+        &pixels,
+    ))
+}
+
 fn load_logo(ctx: &Context, kind: &str, bytes: &[u8]) -> Option<TextureHandle> {
     if kind == "none" || bytes.is_empty() {
         return None;
@@ -781,10 +856,14 @@ struct FallbackApp {
     /// every five minutes so dawn/dusk flip a `system`-mode face.
     solar_dark: Option<bool>,
     last_solar_tick: std::time::Instant,
+    /// The DWM round/shadow hint is applied once, on the first frame.
+    dwm_rounded: bool,
     accent: Option<[u8; 3]>,
     user_adjustable: bool,
     timeline_left: bool,
     logo: Option<TextureHandle>,
+    /// The lucide caption glyphs (loaded once; tinted per state).
+    caption_icons: CaptionIcons,
     stage: Stage,
     mode: &'static str,
     dir: String,
@@ -849,6 +928,7 @@ impl FallbackApp {
 
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
         geo_rx: Receiver<Option<(f64, f64)>>,
+        caption_icons: CaptionIcons,
     ) -> Self {
         let theme = resolve_theme(&config);
         let shell = config.shell.clone().unwrap_or_default();
@@ -877,6 +957,7 @@ impl FallbackApp {
             geo_rx,
             solar_dark: None,
             last_solar_tick: std::time::Instant::now(),
+            dwm_rounded: false,
             theme,
             accent: shell.theme.as_ref().and_then(|theme| theme.accent),
             user_adjustable: shell
@@ -889,6 +970,7 @@ impl FallbackApp {
             // horizontal strip.
             timeline_left: shell.timeline != Some(shun::config::TimelineOrientation::Top),
             logo,
+            caption_icons,
             stage: Stage::Configure,
             mode,
             desktop_shortcut: true,
@@ -979,44 +1061,22 @@ impl FallbackApp {
         );
     }
 
-    fn install_context(&self) -> Result<InstallContext, String> {
-        let install = self
-            .config
-            .targets
-            .iter()
-            .find_map(|t| match t {
-                TargetConfig::Install(install) => Some(install),
-                _ => None,
-            })
-            .ok_or_else(|| "此配置未声明安装目标 / no install target declared".to_string())?;
+    /// The install request the shared wizard driver consumes: mode,
+    /// padded directory, and the wizard language (it rides into the flow
+    /// as `SHUN_LANGUAGE` and the on-disk manifest). Shortcut answers
+    /// deliberately ride OUT of the request — the flow creates none and
+    /// the done page owns the choice, exactly like every other face.
+    fn install_request(&self) -> Result<InstallRequest, String> {
         let dir = self.dir.trim().trim_end_matches('\\');
         if dir.is_empty() {
             return Err(self.texts.dir_empty.to_string());
         }
-        let mut ctx = InstallContext::new(
-            self.config.product.name.clone(),
-            self.config.product.version.clone(),
-            PathBuf::from(dir),
-            self.mode == "portable",
-        );
-        ctx.publisher = self.config.product.publisher.clone();
-        ctx.main_exe = install.main_exe.clone();
-        // The wizard language rides into the flow: exported to payload
-        // scripts as `SHUN_LANGUAGE`, recorded in the install manifest.
-        ctx.language = Some(self.language.code().to_string());
-        ctx.apply_config(
-            install,
-            shun::targets::install::WizardAnswers {
-                desktop_shortcut: self.desktop_shortcut,
-                start_menu_shortcut: true,
-                machine: self.machine,
-                // No done-page launch toggle in the demo shell yet: the
-                // answer is the default-checked one (nothing calls
-                // `shun::targets::install::launch` here).
-                launch_after_install: true,
-            },
-        );
-        Ok(ctx)
+        Ok(InstallRequest {
+            mode: self.mode.to_string(),
+            dir: dir.to_string(),
+            language: Some(self.language.code().to_string()),
+            machine: self.machine,
+        })
     }
 
     /// Spawns the worker thread driving the flow. The egui context is
@@ -1024,8 +1084,8 @@ impl FallbackApp {
     fn spawn_worker(&mut self, ctx: &Context, uninstalling: bool) {
         let raw = self.dir.clone();
         self.dir = nested_dir(&self.config, &raw);
-        let install_ctx = match self.install_context() {
-            Ok(ctx) => ctx,
+        let request = match self.install_request() {
+            Ok(request) => request,
             Err(err) => {
                 self.outcome = Some(Outcome::Failed(err));
                 self.stage = Stage::Finished;
@@ -1035,13 +1095,22 @@ impl FallbackApp {
         // Machine scope needs an elevated token; re-launch under UAC
         // carrying the resolved answers (headless) and exit this
         // instance — the elevated copy carries on.
-        if let Err(err) = crate::ensure_elevated_for(
-            &install_ctx,
-            self.mode,
+        if let Err(err) = shun::wizard::elevation_context(
+            &self.config,
             self.dir.trim(),
-            self.desktop_shortcut,
-            uninstalling,
-        ) {
+            self.mode == "portable",
+            self.machine,
+            Some(self.language.code()),
+        )
+        .and_then(|gate| {
+            crate::ensure_elevated_for(
+                &gate,
+                self.mode,
+                self.dir.trim(),
+                self.desktop_shortcut,
+                uninstalling,
+            )
+        }) {
             self.outcome = Some(Outcome::Failed(err));
             self.stage = Stage::Finished;
             return;
@@ -1053,29 +1122,29 @@ impl FallbackApp {
         self.terminal.clear();
         self.overall = None;
         self.uninstalling = Some(uninstalling);
-        self.entry = install_ctx
-            .main_exe
-            .as_ref()
-            .map(|main| install_ctx.install_dir.join(main));
+        self.entry = install_of(&self.config)
+            .and_then(|install| install.main_exe.clone())
+            .map(|main| Path::new(self.dir.trim()).join(main));
 
         let (sender, receiver) = channel();
         self.receiver = receiver;
         let repaint = ctx.clone();
         let payload = self.payload.clone();
+        let config = self.config.clone();
         std::thread::spawn(move || {
+            // The shared driver, exactly what the webview and TUI faces
+            // ride: writability gate, overwrite hygiene, the flow, the
+            // stale-file sweep. Uninstall resolves the install dir this
+            // process sits in (the ARP uninstaller's contract).
+            let core = WizardCore::new(config, BTreeMap::new());
             let result = if uninstalling {
-                uninstall(&install_ctx, &WindowsRegistration).map_err(|e| e.to_string())
+                shun::wizard::run_uninstall(&core).map_err(|e| e.to_string())
             } else {
-                let flow = InstallFlow {
-                    payload: &payload,
-                    registration: &WindowsRegistration,
-                    ctx: install_ctx,
-                };
-                let mut forward = |event: FlowEvent| {
-                    let _ = sender.send(WorkerMsg::Event(event));
+                shun::wizard::run_install(&core, &payload, &request, &mut |event| {
+                    let _ = sender.send(WorkerMsg::Event(event.clone()));
                     repaint.request_repaint();
-                };
-                flow.run(&mut forward).map_err(|e| e.to_string())
+                })
+                .map_err(|e| e.to_string())
             };
             let _ = sender.send(WorkerMsg::Done(result));
             repaint.request_repaint();
@@ -1308,12 +1377,6 @@ pub fn run(
             .with_min_inner_size([640.0, 560.0]),
         ..Default::default()
     };
-    // Windows 11: round the frameless window's corners via DWM (a no-op
-    // on Windows 10). The native title resolves through the same locale
-    // rules as the drawn caption.
-    #[cfg(windows)]
-    let fallback_title = window_title(&config);
-    round_window_corners(&fallback_title);
     let result = eframe::run_native(
         &title,
         options,
@@ -1366,6 +1429,7 @@ pub fn run(
             // a slow or unavailable location service never delays the
             // first frame (the estimate covers until it lands).
             let geo_rx = solar::spawn_fix_resolver();
+            let caption_icons = CaptionIcons::load(&cc.egui_ctx);
             Ok(Box::new(FallbackApp::new(
                 config,
                 payload,
@@ -1376,6 +1440,7 @@ pub fn run(
                 logo,
                 license_docs,
                 geo_rx,
+                caption_icons,
             )))
         }),
     );
@@ -1399,6 +1464,7 @@ impl FallbackApp {
     fn title_bar(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let texts = self.texts;
+        let icons = self.caption_icons.clone();
         // Reserve one exact-height strip across the panel and lay both
         // halves out INSIDE it. Laying the caption cluster out directly
         // in the panel's ui let the bar's height depend on the panel's
@@ -1504,61 +1570,33 @@ impl FallbackApp {
                     } else {
                         theme.text_secondary
                     };
-                    // Hikari's 14px SVG glyphs fold to these extents:
-                    // the minimize bar spans ±4.1 and the close X sits
-                    // at ±3.5 per axis, both at 1.0 stroke (the SVGs'
-                    // 1.75 units at 14/24 scale), round caps like the
-                    // SVG linecap.
-                    let stroke = Stroke::new(1.0f32, icon_color);
-                    match icon {
-                        CaptionIcon::Minimize => {
-                            painter
-                                .line_segment([pos2(c.x - 4.1, c.y), pos2(c.x + 4.1, c.y)], stroke);
-                        }
-                        CaptionIcon::Close => {
-                            let d = 3.5f32;
-                            painter.line_segment(
-                                [pos2(c.x - d, c.y - d), pos2(c.x + d, c.y + d)],
-                                stroke,
-                            );
-                            painter.line_segment(
-                                [pos2(c.x - d, c.y + d), pos2(c.x + d, c.y - d)],
-                                stroke,
-                            );
-                        }
+                    // The lucide glyph texture (same path data the webview
+                    // face renders), tinted like `stroke="currentColor"`.
+                    let texture = match icon {
+                        CaptionIcon::Minimize => &icons.minus,
+                        CaptionIcon::Close => &icons.x,
                         CaptionIcon::ThemeToggle => {
                             if dark_now {
-                                painter.circle_filled(c, 2.3, icon_color);
-                                for ray in 0..8 {
-                                    let angle = ray as f32 * std::f32::consts::TAU / 8.0;
-                                    let dir = egui::vec2(angle.cos(), angle.sin());
-                                    painter.line_segment(
-                                        [
-                                            c + dir * egui::vec2(4.7, 4.7),
-                                            c + dir * egui::vec2(5.8, 5.8),
-                                        ],
-                                        stroke,
-                                    );
-                                }
+                                &icons.sun
                             } else {
-                                painter.circle_filled(c, 4.0, icon_color);
-                                painter.circle_filled(
-                                    c + egui::vec2(1.6, -1.0),
-                                    3.4,
-                                    theme.background,
-                                );
+                                &icons.moon
                             }
                         }
-                    }
+                    };
+                    painter.image(
+                        texture.id(),
+                        egui::Rect::from_center_size(c, egui::vec2(14.0, 14.0)),
+                        egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                        icon_color,
+                    );
                     response
                 };
 
-                // Theme toggle — manifest-gated (user-adjustable). The
-                // bite disc paints in the bar fill (the toggle plate
-                // stays transparent), so hover keeps it readable.
-                // Right-to-left row: emit the CLOSE first so it lands
-                // right-most (the Windows convention), minimize to its
-                // left, and the theme toggle left-most of the cluster.
+                // Theme toggle — manifest-gated (user-adjustable), the
+                // sun/moon picked by the live mode. Right-to-left row:
+                // emit the CLOSE first so it lands right-most (the
+                // Windows convention), minimize to its left, and the
+                // theme toggle left-most of the cluster.
                 let close = caption(ui, CaptionIcon::Close);
                 if close.clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -2236,9 +2274,14 @@ impl FallbackApp {
                             .size(12.0)
                             .color(theme.text_tertiary),
                     );
-                    // The done-page shortcut answer — the flow created
-                    // none (pinned "never"); the finish button applies it.
-                    if desktop_asks {
+                    // The done-page shortcut answer — the shared driver's
+                    // flow creates none, so the finish button applies it.
+                    // Offered only after a real (non-portable) install:
+                    // an uninstall has nothing to point a shortcut at.
+                    if desktop_asks
+                        && matches!(outcome.as_ref(), Some(Outcome::InstallOk))
+                        && self.mode != "portable"
+                    {
                         ui.add_space(12.0);
                         Self::circle_checkbox(
                             ui,
@@ -2375,41 +2418,23 @@ impl FallbackApp {
                                 }
                                 _ => {
                                     // The done page owns the shortcut
-                                    // answer (the manifest pins both
-                                    // launcher policies to "never", so
-                                    // the flow created none): apply it,
-                                    // then close.
-                                    let install =
-                                        self.config.targets.iter().find_map(|t| match t {
-                                            shun::config::TargetConfig::Install(install) => {
-                                                Some(install.clone())
-                                            }
-                                            _ => None,
-                                        });
-                                    if let Some(install) = install {
-                                        let main_exe = install
-                                            .main_exe
-                                            .clone()
-                                            .unwrap_or_else(|| {
-                                                std::path::PathBuf::from(format!(
-                                                    "{}.exe",
-                                                    self.config.product.name
-                                                ))
-                                            })
-                                            .to_string_lossy()
-                                            .into_owned();
-                                        let aumid = install.aumid.clone().unwrap_or_else(|| {
-                                            shun::targets::install::default_aumid(
-                                                self.config.product.publisher.as_deref(),
-                                                &self.config.product.name,
-                                            )
-                                        });
-                                        let _ = shun::targets::shortcuts::apply_shortcut_choices(
-                                            &aumid,
-                                            &main_exe,
+                                    // answer (the shared driver's flow
+                                    // creates none): apply it through the
+                                    // same finish path every face uses,
+                                    // then close. Uninstalls and portable
+                                    // runs never apply shortcuts — there
+                                    // is nothing to point at.
+                                    if matches!(self.outcome, Some(Outcome::InstallOk))
+                                        && self.mode != "portable"
+                                    {
+                                        let core =
+                                            WizardCore::new(self.config.clone(), BTreeMap::new());
+                                        let _ = shun::wizard::apply_finish(
+                                            &core,
+                                            self.dir.trim(),
                                             Some(self.desktop_shortcut),
                                             Some(true),
-                                            self.dir.trim(),
+                                            false,
                                         );
                                     }
                                     std::process::exit(0);
@@ -2486,9 +2511,19 @@ impl FallbackApp {
 }
 
 impl eframe::App for FallbackApp {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         self.drain_worker();
         self.tick_solar_clock(ctx);
+        // Frameless windows lose BOTH the rounded corners and the
+        // shadow until DWMWCP_ROUND lands. Apply it here — our OWN
+        // window handle, not a title lookup (both faces share one
+        // title, so a title poll would round the other instance's
+        // window).
+        if !self.dwm_rounded {
+            self.dwm_rounded = true;
+            #[cfg(windows)]
+            apply_dwm_rounding(frame);
+        }
         let theme = self.theme;
 
         // ── Caption bar (frameless chrome): one flat HkTitleBar band.
@@ -2593,27 +2628,29 @@ impl eframe::App for FallbackApp {
     }
 }
 
-/// Windows 11 DWM corner rounding for the frameless fallback window
-/// (a no-op on Windows 10, which keeps square corners). The window is
-/// located by its exact native title once it exists.
+/// Windows 11 DWM corner rounding for the frameless window — the
+/// system shadow rides on it. Takes the frame so the handle is OUR
+/// window: the caption title is shared by every face instance, so a
+/// title lookup would round a neighbor.
 #[cfg(windows)]
-fn round_window_corners(title: &str) {
-    let title = title.to_string();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        if let Some(hwnd) = crate::screenshot::find_window_by_title(&title) {
-            const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
-            const DWMWCP_ROUND: u32 = 2;
-            // SAFETY: plain dwmapi call with our own window handle and a
-            // 4-byte attribute.
-            unsafe {
-                windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-                    hwnd as *mut core::ffi::c_void,
-                    DWMWA_WINDOW_CORNER_PREFERENCE,
-                    &DWMWCP_ROUND as *const u32 as *const core::ffi::c_void,
-                    4,
-                );
-            }
+fn apply_dwm_rounding(frame: &eframe::Frame) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(win) = handle.as_raw() else {
+        return;
+    };
+        const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+        const DWMWCP_ROUND: u32 = 2;
+        // SAFETY: plain dwmapi call with our own window handle and a
+        // 4-byte attribute.
+        unsafe {
+            windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+                win.hwnd.get() as *mut core::ffi::c_void,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &DWMWCP_ROUND as *const u32 as *const core::ffi::c_void,
+                4,
+            );
         }
-    });
 }

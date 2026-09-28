@@ -377,8 +377,9 @@ impl WizardCore {
     }
 
     /// The install context for a wizard run (registration semantics per
-    /// the config; the flow itself creates no shortcuts).
-    fn install_context(&self, dir: &str, portable: bool) -> Result<InstallContext, String> {
+    /// the config; the flow itself creates no shortcuts — the done page
+    /// owns that answer).
+    fn install_context(&self, dir: &str, portable: bool, machine: bool) -> Result<InstallContext, String> {
         let install = self.install_target()?;
         let mut ctx = InstallContext::new(
             self.config.product.name.clone(),
@@ -394,7 +395,7 @@ impl WizardCore {
                 desktop_shortcut: false,
                 start_menu_shortcut: false,
                 launch_after_install: false,
-                machine: false,
+                machine,
             },
         );
         Ok(ctx)
@@ -440,6 +441,11 @@ pub struct InstallRequest {
     pub dir: String,
     /// The wizard language (reaches scripts and the on-disk manifest).
     pub language: Option<String>,
+    /// Machine-wide scope (HKLM / all-users surfaces). Faces without a
+    /// scope toggle — and every elevated relaunch that already passed the
+    /// gate — file `false`; the headless lane is the only `true` source
+    /// after the UAC gate.
+    pub machine: bool,
 }
 
 /// Drives one delivery through the shared path every face uses:
@@ -463,7 +469,7 @@ pub fn run_install(
     }
     let portable = request.mode != "local";
     let mut ctx = core
-        .install_context(&dir, portable)
+        .install_context(&dir, portable, request.machine)
         .map_err(|e| e.to_string())?;
     ctx.language = match request.language.as_deref() {
         Some(l) if !l.trim().is_empty() => Some(l.to_string()),
@@ -520,6 +526,7 @@ pub fn apply_finish(
 ) -> Result<(), String> {
     crate::targets::shortcuts::apply_shortcut_choices(
         &shortcut_aumid_for(&core.config),
+        &core.config.product.name,
         &core.main_exe(),
         desktop,
         menu,
@@ -529,6 +536,50 @@ pub fn apply_finish(
         launch_installed(core, dir)?;
     }
     Ok(())
+}
+
+/// The install context for the machine-scope elevation gate: the gate
+/// resolves the target's scope and relays the wizard language to the
+/// elevated copy, so it needs a full context — but the shortcut answers
+/// ride the relaunch flags (the elevated copy runs the headless lane,
+/// which applies its own conventional defaults), and the flow itself
+/// never creates shortcuts. One construction, shared by every face.
+pub fn elevation_context(
+    config: &ShunConfig,
+    dir: &str,
+    portable: bool,
+    machine: bool,
+    language: Option<&str>,
+) -> Result<InstallContext, String> {
+    let install = config
+        .targets
+        .iter()
+        .find_map(|t| match t {
+            TargetConfig::Install(install) => Some(install.clone()),
+            _ => None,
+        })
+        .ok_or("this configuration declares no install target")?;
+    let mut ctx = InstallContext::new(
+        config.product.name.clone(),
+        config.product.version.clone(),
+        PathBuf::from(dir),
+        portable,
+    );
+    ctx.publisher = config.product.publisher.clone();
+    ctx.main_exe = install.main_exe.clone();
+    ctx.language = language
+        .map(str::to_string)
+        .filter(|l| !l.trim().is_empty());
+    ctx.apply_config(
+        &install,
+        WizardAnswers {
+            desktop_shortcut: false,
+            start_menu_shortcut: false,
+            launch_after_install: false,
+            machine,
+        },
+    );
+    Ok(ctx)
 }
 
 /// Launches the freshly installed main executable through the delivery

@@ -484,6 +484,93 @@ mod registration {
         drop(guard); // the Drop uninstall is tolerant of the cleaned state
     }
 
+    /// The done-page application (`apply_shortcut_choices`) speaks the
+    /// SAME naming rule as the registration pass — the sanitized product
+    /// stem, never the executable stem — and both accepting and declining
+    /// sweep the legacy executable-stem links pre-unification shells left
+    /// behind, so an upgrade cannot strand a differently-named copy.
+    #[test]
+    fn done_page_application_names_by_product_and_sweeps_legacy_links() {
+        let com_works = shell_com_works();
+        let product = "ShunDemo-Test-DonePage";
+        // The done-page application checks the entry point exists on
+        // disk, so the install must outlive the fixture's temporary:
+        // hold the tempdir for the whole test (the `install` shorthand
+        // deletes its tree the moment the call expression ends).
+        let dest = tempfile::tempdir().unwrap();
+        let (guard, install_dir) =
+            Installed::in_dir(product, dest.path().join(stem(product)), &|_| {});
+        let dir = install_dir.display().to_string();
+        let aumid = "celestia-island.ShunDemo-Test-DonePage";
+
+        // Stage the legacy executable-stem links an older shell wrote
+        // (`bin/shun-demo.exe` → `shun-demo.lnk`); content is irrelevant
+        // to the sweep. The start menu is always per-user-writable.
+        let legacy_menu = start_menu_programs().join("shun-demo.lnk");
+        std::fs::write(&legacy_menu, b"legacy").unwrap();
+        let desktop_writable = desktop_accepts_lnk();
+        let legacy_desktop = user_desktop().join("shun-demo.lnk");
+        if desktop_writable {
+            std::fs::write(&legacy_desktop, b"legacy").unwrap();
+        }
+
+        // Accept: the product-stem links exist (the flow created the
+        // start-menu one; the done page adds the desktop one), resolve
+        // to the entry point, and the legacy names are gone.
+        shun::targets::shortcuts::apply_shortcut_choices(
+            aumid,
+            product,
+            "bin/shun-demo.exe",
+            Some(true),
+            Some(true),
+            &dir,
+        )
+        .unwrap();
+        if com_works {
+            let view = read_shortcut_via_shell(&start_menu_lnk(product));
+            assert_eq!(
+                view.target,
+                install_dir.join(r"bin\shun-demo.exe").display().to_string()
+            );
+        } else {
+            assert!(start_menu_lnk(product).is_file());
+        }
+        assert!(
+            !legacy_menu.exists(),
+            "legacy start-menu link swept on accept"
+        );
+        // The desktop write is best-effort (the same AV/EDR denials the
+        // registration path survives): assert its effects only when the
+        // link actually landed.
+        let desktop_landed = desktop_writable && desktop_lnk(product).is_file();
+        if desktop_landed {
+            assert!(
+                !legacy_desktop.exists(),
+                "legacy desktop link swept on accept"
+            );
+        }
+
+        // Decline: both product-stem links disappear.
+        shun::targets::shortcuts::apply_shortcut_choices(
+            aumid,
+            product,
+            "bin/shun-demo.exe",
+            Some(false),
+            Some(false),
+            &dir,
+        )
+        .unwrap();
+        assert!(
+            !start_menu_lnk(product).exists(),
+            "decline removes the start-menu link"
+        );
+        assert!(
+            !desktop_lnk(product).exists(),
+            "decline removes the desktop link (or it never landed)"
+        );
+        drop(guard); // the Drop uninstall is tolerant of the cleaned state
+    }
+
     /// The AUMID is stamped on the shortcut through the Shell property
     /// store — the identity Windows uses for taskbar grouping and
     /// user-initiated pinning (there is no programmatic pinning).
