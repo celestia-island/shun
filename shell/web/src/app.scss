@@ -215,6 +215,12 @@ body {
 
   // Quick candidates under the path field: one small button per
   // location the backend proposed (its `dir` was picked from these).
+  /* The drive list is ten rows on a good day — the affix picker's
+     search box is noise here; hide it for the path field only. */
+  .path-field .hk-affix-search {
+    display: none;
+  }
+
   .wizard-target__quick-title {
     font-size: var(--text-xs);
     color: rgb(var(--color-muted));

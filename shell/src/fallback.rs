@@ -496,6 +496,8 @@ struct Texts {
     next: String,
     back: String,
     license_agree: String,
+    license_title: String,
+    license_sub: String,
     dir_label: String,
     browse: String,
     browse_title: String,
@@ -2856,6 +2858,27 @@ impl FallbackApp {
             .map(|(title, body)| (title.as_deref(), body.as_str()))
             .unwrap_or((None, ""));
 
+        // The web face's license step leads with its title + sub
+        // (license.title / license.sub), left-aligned like every pane.
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 90.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.label(
+                    RichText::new(texts.license_title.as_str())
+                        .strong()
+                        .size(22.0)
+                        .color(theme.text),
+                );
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new(texts.license_sub.as_str())
+                        .size(13.5)
+                        .color(theme.text_secondary),
+                );
+            },
+        );
+        ui.add_space(8.0);
         Frame::default()
             .fill(theme.surface)
             .stroke(Stroke::new(1.0f32, theme.border))

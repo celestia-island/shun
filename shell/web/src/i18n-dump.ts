@@ -41,6 +41,8 @@ const MAP: Record<string, string> = {
   finish: "done.finish",
   retry: "done.retry",
   license_agree: "license.agree",
+  license_title: "license.title",
+  license_sub: "license.sub",
   flavor_full: "flavors.full",
   flavor_full_webview2: "flavors.fullWebview2",
   kind_removable: "pathField.kinds.removable",
