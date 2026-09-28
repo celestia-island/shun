@@ -233,6 +233,7 @@ const zhHans: InstallerStrings = {
   target: {
     label: "安装位置",
     dialogTitle: "选择安装位置",
+    quickTitle: "常用路径",
     hintLocal: "数据写入 %APPDATA%，可自动更新；卸载信息会登记到系统。",
     hintUsb: "检测到可移动磁盘时自动定位；否则回退到本机路径。",
     hintUsbDetected: "已检测到可移动磁盘。",
@@ -350,6 +351,7 @@ const zhHant: InstallerStrings = {
   target: {
     label: "安裝位置",
     dialogTitle: "選擇安裝位置",
+    quickTitle: "常用路徑",
     hintLocal: "資料寫入 %APPDATA%，可自動更新；解除安裝資訊會登錄到系統。",
     hintUsb: "偵測到可移動磁碟時自動定位；否則回退到本機路徑。",
     hintUsbDetected: "已偵測到可移動磁碟。",
@@ -467,6 +469,7 @@ const en: InstallerStrings = {
   target: {
     label: "Install location",
     dialogTitle: "Choose the install location",
+    quickTitle: "Common locations",
     hintLocal: "Data is written to %APPDATA% with auto-updates; the uninstall entry is registered with the system.",
     hintUsb: "Located automatically when a removable drive is present; otherwise falls back to a local path.",
     hintUsbDetected: "Removable drive detected.",
@@ -586,6 +589,7 @@ const ru: InstallerStrings = {
   target: {
     label: "Папка установки",
     dialogTitle: "Выберите папку установки",
+    quickTitle: "Частые папки",
     hintLocal: "Данные записываются в %APPDATA%, доступно автообновление; сведения об удалении регистрируются в системе.",
     hintUsb: "Определяется автоматически при наличии съёмного диска; иначе используется локальный путь.",
     hintUsbDetected: "Съёмный диск обнаружен.",
@@ -710,6 +714,7 @@ const ja: InstallerStrings = {
   target: {
     label: "インストール先",
     dialogTitle: "インストール先を選択",
+    quickTitle: "よく使う場所",
     hintLocal:
       "データは %APPDATA% に書き込まれ、自動更新が利用できます。アンインストール情報もシステムに登録されます。",
     hintUsb:
@@ -844,6 +849,7 @@ const ko: InstallerStrings = {
   target: {
     label: "설치 위치",
     dialogTitle: "설치 위치 선택",
+    quickTitle: "일반 위치",
     hintLocal:
       "데이터는 %APPDATA%에 기록되며 자동 업데이트를 사용할 수 있습니다. 제거 정보도 시스템에 등록됩니다.",
     hintUsb: "이동식 드라이브가 있으면 자동으로 지정되고, 없으면 로컬 경로로 대체됩니다.",
@@ -967,6 +973,7 @@ const fr: InstallerStrings = {
   target: {
     label: "Emplacement d'installation",
     dialogTitle: "Choisir l'emplacement d'installation",
+    quickTitle: "Emplacements courants",
     hintLocal:
       "Les données sont écrites dans %APPDATA% avec mise à jour automatique ; l'entrée de désinstallation est enregistrée dans le système.",
     hintUsb:
@@ -1097,6 +1104,7 @@ const es: InstallerStrings = {
   target: {
     label: "Ubicación de instalación",
     dialogTitle: "Elegir la ubicación de instalación",
+    quickTitle: "Ubicaciones frecuentes",
     hintLocal:
       "Los datos se escriben en %APPDATA% con actualizaciones automáticas; la información de desinstalación se registra en el sistema.",
     hintUsb:
@@ -1227,6 +1235,7 @@ const de: InstallerStrings = {
   target: {
     label: "Installationsort",
     dialogTitle: "Installationsort wählen",
+    quickTitle: "Häufige Speicherorte",
     hintLocal:
       "Die Daten werden unter %APPDATA% abgelegt, mit automatischen Updates; der Deinstallationseintrag wird im System registriert.",
     hintUsb:
@@ -1356,6 +1365,7 @@ const pt: InstallerStrings = {
   target: {
     label: "Local de instalação",
     dialogTitle: "Escolher o local de instalação",
+    quickTitle: "Locais comuns",
     hintLocal:
       "Os dados são escritos em %APPDATA%, com atualizações automáticas; a entrada de desinstalação é registada no sistema.",
     hintUsb:
@@ -1459,7 +1469,7 @@ const pt: InstallerStrings = {
   },
 };
 
-const TABLE: Record<InstallerLocale, InstallerStrings> = {
+export const TABLE: Record<InstallerLocale, InstallerStrings> = {
   "zh-Hans": zhHans,
   "zh-Hant": zhHant,
   en,

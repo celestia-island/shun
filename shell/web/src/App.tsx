@@ -806,6 +806,7 @@ export default defineComponent({
                   }
                 }}
               />
+              <p class="wizard-target__quick-title">{s.target.quickTitle}</p>
               <div class="wizard-target__quick">
                 {candidates.value.map((candidate) => {
                   const meta = CANDIDATE_META[candidate.kind] ?? CANDIDATE_META.drive;

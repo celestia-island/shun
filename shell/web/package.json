@@ -6,7 +6,8 @@
   "description": "Frontend of the shun installer shell — Vue + hikari (left step rail, per-product branding from the manifest)",
   "scripts": {
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dump-strings": "npx esbuild src/i18n-dump.ts --bundle --format=cjs --platform=node --outfile=.strings-dump.cjs && node .strings-dump.cjs && del .strings-dump.cjs"
   },
   "dependencies": {
     "@celestia-island/hikari": "^0.55.75",
