@@ -2357,9 +2357,20 @@ impl FallbackApp {
         // wrap spread apart). The sub rides the manifest's product name
         // via %PRODUCT%.
         ui.add_space(4.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), ui.available_height()),
-            egui::Layout::top_down(egui::Align::Min).with_main_align(egui::Align::Center),
+        // Vertical centering needs an explicit full-height max_rect +
+        // main_align Center: allocate_ui_with_layout paints from the
+        // cursor and ignores main-axis alignment entirely.
+        let pane_rect = egui::Rect::from_min_max(
+            pos2(ui.cursor().left(), ui.min_rect().top()),
+            pos2(ui.max_rect().right(), ui.max_rect().bottom()),
+        );
+        ui.allocate_new_ui(
+            egui::UiBuilder::new()
+                .max_rect(pane_rect)
+                .layout(
+                    egui::Layout::top_down(egui::Align::Min)
+                        .with_main_align(egui::Align::Center),
+                ),
             |ui| {
                 ui.label(
                     RichText::new(texts.location_heading)
