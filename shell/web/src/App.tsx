@@ -245,7 +245,8 @@ export default defineComponent({
       railBackground?: { css: string } | null;
       paneBackground?: { css: string } | null;
       mode?: "system" | "light" | "dark" | null;
-      userAdjustable?: boolean | null;
+      // ThemeConfig serializes kebab-case; the toggle rides this flag.
+      "user-adjustable"?: boolean | null;
       wallpaper?: {
         sources: Array<
           { video: string } | { image: string } | { pipeline: string }
@@ -979,7 +980,7 @@ export default defineComponent({
             // The light/dark toggle rides the caption's custom actions,
             // left of minimize — the same seat the egui face gives it.
             customActions={
-              theme.value?.userAdjustable
+              theme.value?.["user-adjustable"]
                 ? [
                     {
                       id: "theme",
