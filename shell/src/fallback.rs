@@ -1171,6 +1171,56 @@ impl FallbackApp {
     /// documents and the document pager all follow, and the choice is
     /// remembered for the next run — unless the selected mode is
     /// portable, in which case nothing leaves this process.
+    /// Visual-debug hook (debug builds only): SHUN_DEBUG_STAGE =
+    /// running|finished|failed forces the pane, SHUN_DEBUG_LOG_LINES
+    /// fills sample log rows, SHUN_DEBUG_LOG_OPEN=1 opens the drawer —
+    /// so `--screenshot` can capture states the wizard only reaches
+    /// after interactive clicks (release builds carry none of it).
+    #[cfg(debug_assertions)]
+    fn debug_force_stage(&mut self) {
+        let Ok(stage) = std::env::var("SHUN_DEBUG_STAGE") else {
+            return;
+        };
+        let lines = std::env::var("SHUN_DEBUG_LOG_LINES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(40);
+        for i in 0..lines {
+            let kind = match i % 7 {
+                0 => crate::terminal::LineKind::Step,
+                5 => crate::terminal::LineKind::Error,
+                _ => crate::terminal::LineKind::Echo,
+            };
+            let text = if i % 7 == 0 {
+                format!("» running script post-install-{i:02}.duck")
+            } else {
+                format!("write C:\\Games\\Evernight\\assets\\packs\\chapter_{i:03}.pack")
+            };
+            self.terminal.push(kind, text);
+        }
+        if std::env::var("SHUN_DEBUG_LOG_OPEN").map_or(false, |v| v == "1") {
+            self.terminal.open = true;
+        }
+        match stage.as_str() {
+            "running" => {
+                self.stage = Stage::Running;
+                self.progress =
+                    Some(("Extracting chapter_042.pack".into(), Some(42)));
+                self.overall = Some(42);
+            }
+            "finished" => {
+                self.stage = Stage::Finished;
+                self.outcome = Some(Outcome::InstallOk);
+            }
+            "failed" => {
+                self.stage = Stage::Finished;
+                self.outcome =
+                    Some(Outcome::Failed("the extract step failed: archive truncated".into()));
+            }
+            _ => {}
+        }
+    }
+
     /// Rebuild the tokens + egui visuals for a light/dark flip — the
     /// one path both the caption toggle and the solar clock go through.
     fn apply_mode(&mut self, ctx: &Context, dark: bool) {
@@ -1628,7 +1678,7 @@ pub fn run(
             // first frame (the estimate covers until it lands).
             let geo_rx = solar::spawn_fix_resolver();
             let caption_icons = CaptionIcons::load(&cc.egui_ctx);
-            Ok(Box::new(FallbackApp::new(
+            let mut app = FallbackApp::new(
                 config,
                 payload,
                 reason,
@@ -1641,7 +1691,10 @@ pub fn run(
                 geo_rx,
                 caption_icons,
                 SHUN_FLAVOR.trim().to_string(),
-            )))
+            );
+            #[cfg(debug_assertions)]
+            app.debug_force_stage();
+            Ok(Box::new(app))
         }),
     );
     if let Err(err) = result {
@@ -3038,50 +3091,79 @@ impl FallbackApp {
         Self::circle_checkbox(ui, self.theme, &mut self.license_accepted, self.texts.license_agree.as_str(), None);
     }
 
-    /// Progress view (the "install" pane): per-phase rows like the
-    /// webview UI (which renders download + extract), then the log.
+    /// Progress view (the "install" pane), the web layout verbatim: the
+    /// progress block centers in the space ABOVE, the log strip pins to
+    /// the pane's bottom edge at full pane width (a hairline's gap
+    /// between them). The strip's height is reserved BEFORE the block
+    /// centers, so the two can never overlap or push past the window.
     fn running_view(&mut self, ui: &mut egui::Ui) {
-        let theme = &self.theme;
+        let theme = self.theme;
         let uninstalling = self.uninstalling == Some(true);
 
-        // Headline + real overall progress. Uninstalling has no payload
-        // phases to weigh, so it stays indeterminate (spinner); an
-        // install renders the weighted bar with its live percent.
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new(if uninstalling {
-                self.texts.uninstalling.clone()
-            } else {
-                self.texts.installing_percent.clone()
-            })
-            .strong()
-            .size(16.0)
-            .color(theme.text),
-        );
-        ui.add_space(12.0);
-        if uninstalling {
-            ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new().size(18.0));
-            });
-        } else {
-            let percent = self.overall.unwrap_or(0);
-            let bar = egui::ProgressBar::new(f32::from(percent) / 100.0)
-                .show_percentage()
-                .fill(theme.primary)
-                .corner_radius(CornerRadius::same(8));
-            ui.add(bar.desired_width(ui.available_width()).desired_height(16.0));
-        }
-        // The live step under the bar — the one thing actually happening.
-        if let Some((step, _)) = &self.progress {
-            ui.add_space(8.0);
+        let strip_h = self.terminal.height_hint();
+        let zone_h = (ui.available_height() - strip_h - 18.0).max(0.0);
+        // The centered block's height is known (logo? product, bar,
+        // step) — egui will not center it by layout, so the offset is
+        // computed by hand, top and bottom, filling the zone exactly.
+        let has_logo = self.logo.is_some();
+        let block_h = if has_logo { 56.0 + 16.0 } else { 0.0 }
+            + 24.0   // headline
+            + 16.0
+            + 16.0   // bar / spinner
+            + 10.0
+            + 18.0;  // step label
+        let pad = ((zone_h - block_h) / 2.0).max(0.0);
+        ui.add_space(pad);
+        // A BOUNDED block (with_layout would eat the full remaining rect
+        // and shove the strip off the pane's bottom).
+        ui.allocate_ui_with_layout(
+            Vec2::new(ui.available_width(), block_h),
+            Layout::top_down(Align::Center),
+            |ui| {
+            if let Some(logo) = &self.logo {
+                ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(56.0)));
+                ui.add_space(16.0);
+            }
             ui.label(
-                RichText::new(step.as_str())
-                    .size(12.0)
-                    .color(theme.text_tertiary),
+                RichText::new(if uninstalling {
+                    self.texts.uninstalling.clone()
+                } else {
+                    self.config.product.name.clone()
+                })
+                .strong()
+                .size(18.0)
+                .color(theme.text),
             );
-        }
-        ui.add_space(12.0);
-
+            ui.add_space(16.0);
+            if uninstalling {
+                // Uninstalling has no payload phases to weigh — the
+                // indeterminate sweep, like the web page's loading bar.
+                let t = ui.input(|i| i.time) as f32;
+                let sweep = (t * 0.9).sin() * 0.5 + 0.5;
+                ui.ctx().request_repaint();
+                let bar = egui::ProgressBar::new(sweep.clamp(0.02, 0.98))
+                    .fill(theme.primary)
+                    .corner_radius(CornerRadius::same(8));
+                ui.add(bar.desired_width(320.0).desired_height(8.0));
+            } else {
+                let percent = self.overall.unwrap_or(0);
+                let bar = egui::ProgressBar::new(f32::from(percent) / 100.0)
+                    .show_percentage()
+                    .fill(theme.primary)
+                    .corner_radius(CornerRadius::same(8));
+                ui.add(bar.desired_width(320.0).desired_height(16.0));
+            }
+            ui.add_space(10.0);
+            // The live step under the bar — the one thing actually
+            // happening (the percent headline rides the bar itself).
+            let step = self
+                .progress
+                .as_ref()
+                .map(|(step, _)| step.clone())
+                .unwrap_or_else(|| self.texts.installing.clone());
+            ui.label(RichText::new(step).size(12.0).color(theme.text_tertiary));
+        });
+        ui.add_space(pad + 18.0);
         self.log_view(ui);
     }
 
@@ -3173,8 +3255,13 @@ impl FallbackApp {
                     });
             }
         }
-        ui.add_space(8.0);
-        self.log_view(ui);
+        // The done page shows the log ONLY on the failure variant (the
+        // web failure pane keeps the trail beside the retry action);
+        // success is clean — no log chrome on the celebration page.
+        if matches!(self.outcome, Some(Outcome::Failed(_))) {
+            ui.add_space(8.0);
+            self.log_view(ui);
+        }
     }
 
     fn log_view(&mut self, ui: &mut egui::Ui) {
@@ -3778,9 +3865,10 @@ impl eframe::App for FallbackApp {
                 // keeps the central panel narrow, so the cap is nearly
                 // invisible). The uninstall page has NO rail — a capped
                 // block would anchor the whole pane left of center — so
-                // it spans the panel and every centered child lines up
-                // with the window.
-                let pane_w = if self.uninstall_mode {
+                // it spans the panel; the running page goes full-width
+                // too, because its log strip pins to the pane's bottom
+                // edge at full pane width (the web install layout).
+                let pane_w = if self.uninstall_mode || self.stage == Stage::Running {
                     ui.available_width()
                 } else {
                     ui.available_width().min(560.0)
