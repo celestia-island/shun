@@ -28,8 +28,12 @@
 // with it. The doubled-class selector out-ranks the (0,1,0) base rule
 // regardless of stylesheet order.
 .path-field .path-field-chip {
-  padding: 1px 3px;
-  gap: 0.15rem;
+  /* Roomy fill, matching the upstream affix-chip revision (hikari
+     PR #690): the pill must not hug the mount text. The doubled class
+     keeps the override ranked above the (0,1,0) base rule; the
+     inline-end margin still widens the measured affix slot. */
+  padding: 4px 9px 4px 11px;
+  gap: 0.3rem;
   margin-inline-end: 8px;
 }
 

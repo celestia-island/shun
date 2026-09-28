@@ -638,7 +638,17 @@ export default defineComponent({
     const applyThemeMode = () => {
       const resolved =
         userPinned.value ?? theme.value?.mode ?? "system";
-      themeMode.value = resolved;
+      // themeMode carries the EFFECTIVE side (system resolves against
+      // the OS preference), so the caption toggle's sun/moon reflects
+      // what the page actually shows instead of pinning on the raw
+      // "system" string.
+      const effective =
+        resolved === "system"
+          ? window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light"
+          : resolved;
+      themeMode.value = effective;
       const root = document.documentElement;
       root.dataset.mode =
         resolved === "system" ? "" : resolved;

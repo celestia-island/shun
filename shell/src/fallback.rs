@@ -2247,12 +2247,14 @@ impl FallbackApp {
         // HkSelect-style row metric + the shared hairline border tone.
         let border_idle = mix(theme.background, theme.text, 0.14);
 
-        // Headings left-aligned to match the webview face (the central
-        // panel's cross-align would otherwise center them). The sub rides
-        // the manifest's product name via %PRODUCT%.
+        // One start-aligned block for the whole pane: the manifest's
+        // centered step alignment would otherwise re-center individual
+        // rows (the field row drifted under the browse button, the chip
+        // wrap spread apart). The sub rides the manifest's product name
+        // via %PRODUCT%.
         ui.add_space(4.0);
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 130.0),
+            egui::vec2(ui.available_width(), ui.available_height()),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.label(
@@ -2280,12 +2282,19 @@ impl FallbackApp {
         ui.add_space(8.0);
 
         // ── The path field row: [drive chip | mono path] + browse ──
-        let browse_w = 92.0f32;
-        let gap = ui.spacing().item_spacing.x;
-        let field_w = ui.available_width() - browse_w - gap;
+        let browse_w = 96.0f32;
+        let row_w = ui.available_width();
+        let field_w = row_w - browse_w - 10.0;
         let field_h = 44.0f32;
-        let (field_rect, _) =
-            ui.allocate_exact_size(egui::vec2(field_w, field_h), egui::Sense::hover());
+        let mut chip_clicked = false;
+        let mut chip_rect_out = egui::Rect::ZERO;
+        ui.allocate_ui_with_layout(
+            egui::vec2(row_w, field_h),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            let (field_rect, _) =
+                ui.allocate_exact_size(egui::vec2(field_w, field_h), egui::Sense::hover());
         let painter = ui.painter_at(field_rect);
         painter.rect_filled(field_rect, CornerRadius::same(10), theme.surface);
         let field_border = if self.drive_open {
@@ -2347,7 +2356,7 @@ impl FallbackApp {
                         );
                     }
                     ui.painter().text(
-                        pos2(chip.left() + 10.0, chip.center().y),
+                        pos2(chip.left() + 12.0, chip.center().y),
                         egui::Align2::LEFT_CENTER,
                         &mount,
                         egui::FontId::monospace(13.0),
@@ -2356,17 +2365,19 @@ impl FallbackApp {
                     ui.painter().image(
                         icons.chevron.id(),
                         egui::Rect::from_center_size(
-                            pos2(chip.right() - 12.0, chip.center().y),
+                            pos2(chip.right() - 14.0, chip.center().y),
                             egui::vec2(12.0, 12.0),
                         ),
                         egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
                         theme.text_secondary,
                     );
+                    chip_clicked = chip_resp.clicked();
+                    chip_rect_out = chip;
                     chip_resp
                 },
             )
             .inner;
-        if chip_resp.clicked() {
+        if chip_clicked {
             self.drive_open = !self.drive_open;
         }
 
@@ -2443,6 +2454,8 @@ impl FallbackApp {
                 self.dir = nested_dir(&self.config, &picked.to_string_lossy());
             }
         }
+            },
+        );
 
         // Quick candidates: the config-driven chips — kind → icon,
         // unwritable dims and swaps to the alert glyph, the accent
@@ -2459,8 +2472,9 @@ impl FallbackApp {
             .flatten();
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), 70.0),
-            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+            egui::Layout::top_down(egui::Align::Min),
             |ui| {
+                ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 for (kind, writable, path) in self.candidates.clone() {
                     let accent = accent_target.as_deref() == Some(path.as_str());
@@ -2525,6 +2539,7 @@ impl FallbackApp {
                         self.probed_dir.clear();
                     }
                 }
+                });
             },
         );
 
@@ -2569,10 +2584,10 @@ impl FallbackApp {
         // HkSelectPanel: mount left, localized kind (+ volume label)
         // right; the current mount carries a soft wash.
         if self.drive_open {
-            let mut popup_rect = chip_rect;
+            let mut popup_rect = chip_rect_out;
             egui::Area::new(egui::Id::new("drive-picker"))
                 .order(egui::Order::Foreground)
-                .fixed_pos(chip_rect.left_bottom() + egui::vec2(0.0, 4.0))
+                .fixed_pos(chip_rect_out.left_bottom() + egui::vec2(0.0, 4.0))
                 .show(ui.ctx(), |ui| {
                     let popup = egui::Frame::default()
                         .fill(theme.surface)
@@ -2654,9 +2669,9 @@ impl FallbackApp {
                 });
             let hover_pos = ui.input(|i| i.pointer.hover_pos());
             let outside = ui.input(|i| i.pointer.any_click())
-                && !chip_resp.clicked()
+                && !chip_clicked
                 && hover_pos.map_or(true, |p| {
-                    !popup_rect.contains(p) && !chip_rect.contains(p)
+                    !popup_rect.contains(p) && !chip_rect_out.contains(p)
                 });
             if outside {
                 self.drive_open = false;
