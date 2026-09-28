@@ -25,7 +25,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::{
     Align, Button, Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, Frame,
-    Layout, Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2, pos2,
+    Layout, Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2, pos2, vec2,
 };
 use shun::config::{ShunConfig, TargetConfig};
 use shun::flow::{Flow, FlowEvent, FlowPhase};
@@ -1172,28 +1172,40 @@ impl FallbackApp {
     fn title_bar(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let texts = self.texts;
-        ui.horizontal(|ui| {
-            ui.add_space(10.0);
-            let bar_height = 22.0;
-            if let Some(logo) = &self.logo {
-                ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(16.0)));
-            }
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(format!(
-                    "{} {}",
-                    self.config.product.name,
-                    if self.uninstalling == Some(true) {
-                        texts.titlebar_uninstall
-                    } else {
-                        texts.titlebar_installer
-                    }
-                ))
-                .color(theme.text_secondary)
-                .size(13.0),
-            );
-            ui.set_min_height(bar_height);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        // Reserve one exact-height strip across the panel and lay both
+        // halves out INSIDE it. Laying the caption cluster out directly
+        // in the panel's ui let the bar's height depend on the panel's
+        // previous-frame rect: egui's Center alignment measures
+        // `set_min_height` from the centered cursor line, so the bar
+        // crept north of 40pt and stayed there — a fixed point through
+        // the panel's per-frame PanelState. A bounded strip renders the
+        // same geometry every frame.
+        let (strip, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), CAPTION_H), Sense::hover());
+        ui.allocate_new_ui(
+            egui::UiBuilder::new()
+                .max_rect(strip)
+                .layout(Layout::left_to_right(Align::Center)),
+            |ui| {
+                ui.add_space(10.0);
+                if let Some(logo) = &self.logo {
+                    ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(16.0)));
+                }
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{} {}",
+                        self.config.product.name,
+                        if self.uninstalling == Some(true) {
+                            texts.titlebar_uninstall
+                        } else {
+                            texts.titlebar_installer
+                        }
+                    ))
+                    .color(theme.text_secondary)
+                    .size(13.0),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // Caption buttons, Windows style: 40×24 plates, centered
                 // VECTOR glyphs (egui's default fonts carry no caption
                 // dingbats — strokes and discs render everywhere), hover
@@ -1205,8 +1217,8 @@ impl FallbackApp {
                 }
                 let dark_now = self.dark_theme;
                 let caption = move |ui: &mut egui::Ui, icon: CaptionIcon| -> egui::Response {
-                    let (rect, response) = ui
-                        .allocate_exact_size(Vec2::new(CAPTION_W, CAPTION_H), egui::Sense::click());
+                let (rect, response) = ui
+                    .allocate_exact_size(Vec2::new(CAPTION_W, CAPTION_H), egui::Sense::click());
                     let painter = ui.painter_at(rect);
                     let hovered = response.hovered();
                     if hovered {
@@ -1298,15 +1310,16 @@ impl FallbackApp {
                     }
                 }
                 ui.add_space(8.0);
-            });
-        });
+                });
+            },
+        );
         // The drag zone must not overlap the caption buttons: egui
         // hit-tests later-registered widgets first, so a full-bar drag
         // rect registered after the button cluster sits ON TOP of it and
         // eats every click (buttons only responded at the window's outer
         // pixel). Shrink the drag rect to the cluster's left edge.
         let caption_count = if self.user_adjustable { 3 } else { 2 };
-        let mut drag_rect = ui.min_rect();
+        let mut drag_rect = strip;
         let cluster_left = drag_rect.right() - (CAPTION_W * caption_count as f32 + 12.0);
         drag_rect.set_right(cluster_left.max(drag_rect.left()));
         let drag = ui.interact(drag_rect, ui.id().with("titlebar-drag"), Sense::drag());
