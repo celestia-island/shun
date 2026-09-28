@@ -163,7 +163,7 @@ fn main() {
             std::fs::write(out_dir.join("shun-logo.bin"), []).expect("write empty logo");
             "none".into()
         });
-    std::fs::write(out_dir.join("shun-logo-kind.txt"), kind).expect("write logo kind");
+    std::fs::write(out_dir.join("shun-logo-kind.txt"), &kind).expect("write logo kind");
 
     // 3b. The webview face's exe/window icon follows the manifest too:
     //     the product logo re-encoded as a multi-size ICO and embedded

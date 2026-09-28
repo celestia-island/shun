@@ -1078,6 +1078,18 @@ fn native_fatal_box(title: &str, body: &str) {
         .show();
 }
 
+/// The embedded product logo as raw RGBA, when the manifest declares
+/// one (`LOGO_KIND`/`LOGO_BYTES`) — the window-icon source for the
+/// webview face. `None` leaves the exe-resource icon in place.
+fn decode_logo_rgba(bytes: &[u8]) -> Option<image::RgbaImage> {
+    if bytes.is_empty() {
+        return None;
+    }
+    image::load_from_memory(bytes)
+        .ok()
+        .map(|logo| logo.into_rgba8())
+}
+
 /// Boots the webview face (the richest one): fixed-runtime bootstrap,
 /// screenshot capture, the command surface, and the localized native
 /// frame title.
@@ -1123,6 +1135,19 @@ fn run_tauri(cli: Cli, config: ShunConfig, payload: ArchivePayload, uninstall_mo
             let _ = (&screenshot, delay);
             if let Some(window) = app.get_webview_window("installer") {
                 let _ = window.set_title(&native_title);
+                // The window/taskbar icon follows the manifest's product
+                // logo — the same bytes the egui face renders into its
+                // viewport — instead of the generic exe resource.
+                if let Some(rgba) = decode_logo_rgba(LOGO_BYTES) {
+                    let (width, height) = (rgba.width(), rgba.height());
+                    let _ = window
+                        .set_icon(tauri::image::Image::new_owned(
+                            rgba.into_raw(),
+                            width,
+                            height,
+                        ))
+                        .map_err(|e| eprintln!("shun: window icon: {e}"));
+                }
                 // Frameless windows lose BOTH the rounded corners and
                 // the shadow until DWMWCP_ROUND lands — the same hint
                 // the egui face applies to its own window.
