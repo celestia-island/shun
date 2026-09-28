@@ -2636,7 +2636,7 @@ impl FallbackApp {
                                     );
                                 }
                                 rp.text(
-                                    pos2(row.left() + 10.0, row.center().y),
+                                    pos2(row.left() + 10.0, row.center().y + 1.0),
                                     egui::Align2::LEFT_CENTER,
                                     &mount,
                                     egui::FontId::monospace(13.0),
