@@ -25,13 +25,14 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 
 use egui::{
-    Align, Button, Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, Frame,
+    Align, Button, Color32, Context, CornerRadius, FontDefinitions, FontFamily, Frame,
     Layout, Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2, pos2, vec2,
 };
 use shun::config::{ShunConfig, TargetConfig};
 use shun::flow::{FlowEvent, FlowPhase};
 use shun::payload::ArchivePayload;
 use shun::wizard::{InstallRequest, WizardCore};
+use crate::SHUN_FLAVOR;
 
 /// Why the fallback UI is running — drives the banner text.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -538,6 +539,18 @@ struct Texts {
     desktop_shortcut: &'static str,
     hint_local: &'static str,
     hint_portable: &'static str,
+    location_sub: &'static str,
+    target_hint_local: &'static str,
+    warn_unwritable: &'static str,
+    warn_no_writable: &'static str,
+    flavor_full: &'static str,
+    flavor_full_webview2: &'static str,
+    kind_removable: &'static str,
+    kind_fixed: &'static str,
+    kind_network: &'static str,
+    kind_cdrom: &'static str,
+    kind_ramdisk: &'static str,
+    kind_unknown: &'static str,
     install: &'static str,
     uninstall: &'static str,
     installing: &'static str,
@@ -580,8 +593,20 @@ const TEXTS_ZH: Texts = Texts {
     browse_title: "选择安装位置",
     dir_empty: "安装目录不能为空",
     desktop_shortcut: "创建桌面快捷方式",
-    hint_local: "登记到系统「应用」列表，可从设置或本界面卸载。",
-    hint_portable: "写入 .shun-portable 标记；卸载即删除整个目录。",
+    hint_local: "%PRODUCT% 已登记到系统「应用」列表；勾选的快捷方式会在点击「完成安装」时创建。",
+    hint_portable: "便携副本已就绪：数据全部留在可移动磁盘内。",
+    location_sub: "选择 %PRODUCT% 的安装位置。",
+    target_hint_local: "数据写入 %APPDATA%，可自动更新；卸载信息会登记到系统。",
+    warn_unwritable: "当前目录不可写，安装会被拒绝——建议选择上方标亮的候选位置。",
+    warn_no_writable: "未检测到可写的候选位置，请手动选择有权限的目录。",
+    flavor_full: "完整版",
+    flavor_full_webview2: "完整版 · 含 WebView2 运行时",
+    kind_removable: "可移动磁盘",
+    kind_fixed: "本地磁盘",
+    kind_network: "网络磁盘",
+    kind_cdrom: "光盘",
+    kind_ramdisk: "RAM 盘",
+    kind_unknown: "未知磁盘",
     install: "开始安装",
     uninstall: "卸载",
     installing: "正在安装…",
@@ -624,8 +649,20 @@ const TEXTS_EN: Texts = Texts {
     browse_title: "Choose install location",
     dir_empty: "Install directory cannot be empty",
     desktop_shortcut: "Create a desktop shortcut",
-    hint_local: "Registered in system Apps; uninstall from Settings or here.",
-    hint_portable: "Writes a .shun-portable marker; uninstalling removes the folder.",
+    hint_local: "%PRODUCT% is registered in the system's app list; the checked shortcuts are created when you click Finish.",
+    hint_portable: "The portable copy is ready: all data stays on the removable drive.",
+    location_sub: "Pick the folder %PRODUCT% is installed to.",
+    target_hint_local: "Data is written to %APPDATA% with auto-updates; the uninstall entry is registered with the system.",
+    warn_unwritable: "The current directory is not writable and the install would be rejected — pick one of the highlighted candidates above.",
+    warn_no_writable: "No writable candidate location was found — pick a directory you have access to.",
+    flavor_full: "Full edition",
+    flavor_full_webview2: "Full edition · includes the WebView2 runtime",
+    kind_removable: "Removable drive",
+    kind_fixed: "Local disk",
+    kind_network: "Network drive",
+    kind_cdrom: "Optical drive",
+    kind_ramdisk: "RAM disk",
+    kind_unknown: "Unknown drive",
     install: "Install",
     uninstall: "Uninstall",
     installing: "Installing…",
@@ -759,6 +796,10 @@ mod lucide {
     pub(crate) const SUN: &str = r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>"#;
     pub(crate) const MOON: &str = r#"<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>"#;
     pub(crate) const CHEVRON_DOWN: &str = r#"<path d="m6 9 6 6 6-6"/>"#;
+    pub(crate) const FOLDER_OPEN: &str = r#"<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>"#;
+    pub(crate) const APP_WINDOW: &str = r#"<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>"#;
+    pub(crate) const HARD_DRIVE: &str = r#"<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>"#;
+    pub(crate) const ALERT_TRIANGLE: &str = r#"<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-1"/><path d="M12 9v4"/><path d="M12 17h.01"/>"#;
 }
 
 /// The caption's four glyph textures (white strokes — tinted per state
@@ -771,6 +812,10 @@ struct CaptionIcons {
     moon: TextureHandle,
     /// The select trigger's dropdown arrow (HkSelect's ChevronDown).
     chevron: TextureHandle,
+    folder: TextureHandle,
+    app_window: TextureHandle,
+    hard_drive: TextureHandle,
+    alert: TextureHandle,
 }
 
 impl CaptionIcons {
@@ -792,6 +837,10 @@ impl CaptionIcons {
             sun: render("sun", lucide::SUN),
             moon: render("moon", lucide::MOON),
             chevron: render("chevron-down", lucide::CHEVRON_DOWN),
+            folder: render("folder-open", lucide::FOLDER_OPEN),
+            app_window: render("app-window", lucide::APP_WINDOW),
+            hard_drive: render("hard-drive", lucide::HARD_DRIVE),
+            alert: render("alert-triangle", lucide::ALERT_TRIANGLE),
         }
     }
 }
@@ -858,19 +907,19 @@ fn offered_modes(config: &ShunConfig) -> Vec<&'static str> {
     modes
 }
 
-fn default_dir(config: &ShunConfig, mode: &str) -> PathBuf {
-    let product = &config.product.name;
-    if mode == "portable" {
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(format!("{product}-portable"))
-    } else {
-        std::env::var_os("LOCALAPPDATA")
-            .map(|local| PathBuf::from(local).join(product))
-            .unwrap_or_else(|| PathBuf::from(".").join(product))
+/// The DriveKind → i18n key mapping, identical to the web face's
+/// list_drives serialization.
+fn drive_kind_name(kind: shun::fs_probe::DriveKind) -> String {
+    use shun::fs_probe::DriveKind;
+    match kind {
+        DriveKind::Removable => "removable",
+        DriveKind::Fixed => "fixed",
+        DriveKind::Network => "network",
+        DriveKind::CdRom => "cdrom",
+        DriveKind::RamDisk => "ramdisk",
+        DriveKind::Unknown => "unknown",
     }
+    .to_string()
 }
 
 /// Pads one folder level under a bare filesystem root target (a picked
@@ -928,6 +977,17 @@ struct FallbackApp {
     last_solar_tick: std::time::Instant,
     /// The DWM round/shadow hint is applied once, on the first frame.
     dwm_rounded: bool,
+    /// The install-location candidates + drive list — probed once from
+    /// the same shun sources the web face's default_dir/list_drives
+    /// commands ride (kind, writable, path) / (mount, kind, label).
+    candidates: Vec<(String, bool, String)>,
+    drives: Vec<(String, String, Option<String>)>,
+    /// Live writability of the shown path, probed when it changes.
+    dir_writable: Option<bool>,
+    probed_dir: String,
+    drive_open: bool,
+    /// Build flavor for the location pane's identity line.
+    flavor: String,
     accent: Option<[u8; 3]>,
     user_adjustable: bool,
     timeline_left: bool,
@@ -1001,10 +1061,20 @@ impl FallbackApp {
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
         geo_rx: Receiver<Option<(f64, f64)>>,
         caption_icons: CaptionIcons,
+        flavor: String,
     ) -> Self {
         let theme = resolve_theme(&config);
         let shell = config.shell.clone().unwrap_or_default();
         let mode = offered_modes(&config).first().copied().unwrap_or("local");
+        // The initial location resolves exactly like the web face's
+        // default_dir command: the first writable candidate from the
+        // config-driven list, else the wizard's default.
+        let probed = shun::wizard::location_defaults(&config.product.name);
+        let dir = probed
+            .iter()
+            .find(|candidate| candidate.writable)
+            .map(|candidate| candidate.path.clone())
+            .unwrap_or_else(|| shun::wizard::default_location(&config.product.name));
         // The toggle state mirrors what resolve_theme resolved (the
         // solar clock's first-paint verdict counts for the session
         // until the user pins — or the clock itself flips it).
@@ -1016,7 +1086,7 @@ impl FallbackApp {
             Some(shun::config::ThemeMode::Dark)
         );
         Self {
-            dir: default_dir(&config, mode).to_string_lossy().into_owned(),
+            dir,
             config,
             payload,
             reason,
@@ -1030,6 +1100,24 @@ impl FallbackApp {
             solar_dark: None,
             last_solar_tick: std::time::Instant::now(),
             dwm_rounded: false,
+            candidates: probed
+                .into_iter()
+                .map(|c| (c.kind.to_string(), c.writable, c.path))
+                .collect(),
+            drives: shun::fs_probe::list_drives()
+                .into_iter()
+                .map(|d| {
+                    (
+                        d.mount.to_string_lossy().into_owned(),
+                        drive_kind_name(d.kind),
+                        d.label,
+                    )
+                })
+                .collect(),
+            dir_writable: None,
+            probed_dir: String::new(),
+            drive_open: false,
+            flavor: flavor,
             theme,
             accent: shell.theme.as_ref().and_then(|theme| theme.accent),
             user_adjustable: shell
@@ -1366,11 +1454,10 @@ impl FallbackApp {
         self.terminal.push(crate::terminal::LineKind::Ok, line);
     }
 
-    fn hint(&self) -> &'static str {
-        match self.mode {
-            "portable" => self.texts.hint_portable,
-            _ => self.texts.hint_local,
-        }
+    fn hint(&self) -> String {
+        self.texts
+            .hint_local
+            .replace("%PRODUCT%", &self.config.product.name)
     }
 }
 
@@ -1514,6 +1601,7 @@ pub fn run(
                 license_docs,
                 geo_rx,
                 caption_icons,
+                SHUN_FLAVOR.trim().to_string(),
             )))
         }),
     );
@@ -2154,12 +2242,17 @@ impl FallbackApp {
     fn location_view(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let texts = self.texts;
+        let icons = self.caption_icons.clone();
 
-        ui.add_space(4.0);
+        // HkSelect-style row metric + the shared hairline border tone.
+        let border_idle = mix(theme.background, theme.text, 0.14);
+
         // Headings left-aligned to match the webview face (the central
-        // panel's cross-align would otherwise center them).
+        // panel's cross-align would otherwise center them). The sub rides
+        // the manifest's product name via %PRODUCT%.
+        ui.add_space(4.0);
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 90.0),
+            egui::vec2(ui.available_width(), 130.0),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.label(
@@ -2168,7 +2261,15 @@ impl FallbackApp {
                         .size(22.0)
                         .color(theme.text),
                 );
-                ui.add_space(16.0);
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new(
+                        texts.location_sub.replace("%PRODUCT%", &self.config.product.name),
+                    )
+                    .size(13.5)
+                    .color(theme.text_secondary),
+                );
+                ui.add_space(18.0);
                 ui.label(
                     RichText::new(texts.dir_label)
                         .size(13.0)
@@ -2176,46 +2277,400 @@ impl FallbackApp {
                 );
             },
         );
-        ui.add_space(6.0);
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            folder_badge(ui, &theme, 28.0);
-            let browse_width = 84.0;
-            let gap = ui.spacing().item_spacing.x;
-            let input = TextEdit::singleline(&mut self.dir)
-                .desired_width(ui.available_width() - browse_width - gap)
-                .text_color(theme.text)
-                // The webview face renders the path in its mono face.
-                .font(egui::FontId::monospace(13.0));
-            ui.add(input);
-            if ui
-                .add_sized(
-                    Vec2::new(browse_width, 28.0),
-                    Button::new(
-                        RichText::new(texts.browse)
-                            .size(13.0)
-                            .color(theme.text_secondary),
-                    )
-                    .fill(theme.surface)
-                    .stroke(Stroke::new(1.0f32, theme.border))
-                    .corner_radius(CornerRadius::same(6)),
-                )
-                .clicked()
-            {
-                if let Some(picked) = rfd::FileDialog::new()
-                    .set_title(texts.browse_title)
-                    .pick_folder()
-                {
-                    self.dir = nested_dir(&self.config, &picked.to_string_lossy());
-                }
-            }
-        });
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(self.hint())
-                .size(12.0)
-                .color(theme.text_tertiary),
+        ui.add_space(8.0);
+
+        // ── The path field row: [drive chip | mono path] + browse ──
+        let browse_w = 92.0f32;
+        let gap = ui.spacing().item_spacing.x;
+        let field_w = ui.available_width() - browse_w - gap;
+        let field_h = 44.0f32;
+        let (field_rect, _) =
+            ui.allocate_exact_size(egui::vec2(field_w, field_h), egui::Sense::hover());
+        let painter = ui.painter_at(field_rect);
+        painter.rect_filled(field_rect, CornerRadius::same(10), theme.surface);
+        let field_border = if self.drive_open {
+            theme.primary
+        } else {
+            border_idle
+        };
+        painter.rect_stroke(
+            field_rect,
+            CornerRadius::same(10),
+            Stroke::new(1.0, field_border),
+            egui::StrokeKind::Middle,
         );
+
+        // Drive chip (PathField's HkAffixPicker): the mount shows once on
+        // the chip; picking one rewrites the path in place, keeping the
+        // typed remainder (an emptied box falls back to the root).
+        let matched_mount = self
+            .drives
+            .iter()
+            .find(|(m, _, _)| {
+                self.dir
+                    .get(..m.len())
+                    .map_or(false, |prefix| prefix.eq_ignore_ascii_case(m))
+            })
+            .map(|(m, _, _)| m.clone());
+        let mount = matched_mount.clone().unwrap_or_else(|| {
+            self.drives
+                .first()
+                .map(|(m, _, _)| m.clone())
+                .unwrap_or_default()
+        });
+        let chip_w = (40.0 + mount.len() as f32 * 9.0).min(field_w * 0.4);
+        let chip_rect = egui::Rect::from_min_size(
+            pos2(field_rect.left() + 6.0, field_rect.top() + 6.0),
+            egui::vec2(chip_w, field_h - 12.0),
+        );
+        let chip_resp = ui
+            .allocate_new_ui(
+                egui::UiBuilder::new()
+                    .max_rect(chip_rect)
+                    .layout(Layout::left_to_right(Align::Center)),
+                |ui| {
+                    let (chip, chip_resp) =
+                        ui.allocate_exact_size(chip_rect.size(), egui::Sense::click());
+                    if chip_resp.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    let hover_t = ui.ctx().animate_bool_with_time(
+                        chip_resp.id.with("hover"),
+                        chip_resp.hovered() || self.drive_open,
+                        0.12,
+                    );
+                    if hover_t > 0.0 {
+                        ui.painter_at(chip).rect_filled(
+                            chip,
+                            CornerRadius::same(8),
+                            mix(theme.background, theme.primary, 0.10 * hover_t),
+                        );
+                    }
+                    ui.painter().text(
+                        pos2(chip.left() + 10.0, chip.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        &mount,
+                        egui::FontId::monospace(13.0),
+                        theme.text,
+                    );
+                    ui.painter().image(
+                        icons.chevron.id(),
+                        egui::Rect::from_center_size(
+                            pos2(chip.right() - 12.0, chip.center().y),
+                            egui::vec2(12.0, 12.0),
+                        ),
+                        egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                        theme.text_secondary,
+                    );
+                    chip_resp
+                },
+            )
+            .inner;
+        if chip_resp.clicked() {
+            self.drive_open = !self.drive_open;
+        }
+
+        // The mono path remainder inside the field.
+        let input_rect = egui::Rect::from_min_max(
+            pos2(chip_rect.right() + 10.0, field_rect.top() + 6.0),
+            pos2(field_rect.right() - 12.0, field_rect.bottom() - 6.0),
+        );
+        let rest = self
+            .dir
+            .strip_prefix(mount.as_str())
+            .unwrap_or(&self.dir)
+            .trim_start_matches(['\\', '/'])
+            .to_string();
+        let mut rest_edit = rest.clone();
+        ui.allocate_new_ui(
+            egui::UiBuilder::new().max_rect(input_rect),
+            |ui| {
+                TextEdit::singleline(&mut rest_edit)
+                    .frame(false)
+                    .desired_width(input_rect.width())
+                    .text_color(theme.text)
+                    .font(egui::FontId::monospace(13.0))
+                    .show(ui);
+            },
+        );
+        if rest_edit != rest {
+            self.dir = format!("{mount}{rest_edit}");
+        }
+
+        // Browse: ghost button with the lucide folder glyph.
+        let (browse_rect, browse_resp) =
+            ui.allocate_exact_size(egui::vec2(browse_w, field_h), egui::Sense::click());
+        if browse_resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let bp = ui.painter_at(browse_rect);
+        let browse_hover =
+            ui.ctx()
+                .animate_bool_with_time(browse_resp.id.with("hover"), browse_resp.hovered(), 0.12);
+        if browse_hover > 0.0 {
+            bp.rect_filled(
+                browse_rect,
+                CornerRadius::same(10),
+                mix(theme.background, theme.text, 0.05 * browse_hover),
+            );
+        }
+        bp.rect_stroke(
+            browse_rect,
+            CornerRadius::same(10),
+            Stroke::new(1.0, border_idle),
+            egui::StrokeKind::Middle,
+        );
+        bp.image(
+            icons.folder.id(),
+            egui::Rect::from_center_size(
+                pos2(browse_rect.left() + 22.0, browse_rect.center().y),
+                egui::vec2(14.0, 14.0),
+            ),
+            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            theme.text,
+        );
+        bp.text(
+            pos2(browse_rect.left() + 34.0, browse_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            texts.browse,
+            egui::FontId::proportional(13.0),
+            theme.text,
+        );
+        if browse_resp.clicked() {
+            if let Some(picked) =
+                rfd::FileDialog::new().set_title(texts.browse_title).pick_folder()
+            {
+                self.dir = nested_dir(&self.config, &picked.to_string_lossy());
+            }
+        }
+
+        // Quick candidates: the config-driven chips — kind → icon,
+        // unwritable dims and swaps to the alert glyph, the accent
+        // highlights the first writable candidate while the current
+        // path fails its probe (all web-face behaviors).
+        ui.add_space(14.0);
+        let first_writable = self
+            .candidates
+            .iter()
+            .find(|(_, writable, _)| *writable)
+            .map(|(_, _, path)| path.clone());
+        let accent_target = (self.dir_writable == Some(false))
+            .then(|| first_writable.clone())
+            .flatten();
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 70.0),
+            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+            |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                for (kind, writable, path) in self.candidates.clone() {
+                    let accent = accent_target.as_deref() == Some(path.as_str());
+                    let label = match kind.as_str() {
+                        "appdata" => "AppData".to_string(),
+                        "program-files" => "Program Files".to_string(),
+                        _ => path.clone(),
+                    };
+                    let chip_w = 42.0 + label.len() as f32 * 7.5;
+                    let (rect, resp) = ui
+                        .allocate_exact_size(egui::vec2(chip_w, 28.0), egui::Sense::click());
+                    if resp.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    let painter = ui.painter_at(rect);
+                    if accent || resp.hovered() {
+                        painter.rect_filled(
+                            rect,
+                            CornerRadius::same(8),
+                            mix(
+                                theme.background,
+                                theme.primary,
+                                if accent { 0.15 } else { 0.08 },
+                            ),
+                        );
+                    }
+                    let icon = if writable {
+                        match kind.as_str() {
+                            "appdata" => &icons.app_window,
+                            _ => &icons.hard_drive,
+                        }
+                    } else {
+                        &icons.alert
+                    };
+                    let icon_tint = if writable {
+                        theme.text
+                    } else {
+                        theme.text_secondary.gamma_multiply(0.5)
+                    };
+                    painter.image(
+                        icon.id(),
+                        egui::Rect::from_center_size(
+                            pos2(rect.left() + 15.0, rect.center().y),
+                            egui::vec2(13.0, 13.0),
+                        ),
+                        egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                        icon_tint,
+                    );
+                    painter.text(
+                        pos2(rect.left() + 26.0, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        &label,
+                        egui::FontId::monospace(12.0),
+                        if writable {
+                            theme.text
+                        } else {
+                            theme.text_secondary
+                        },
+                    );
+                    if resp.clicked() {
+                        self.dir = shun::wizard::pad_root_dir(&self.config, &path);
+                        self.probed_dir.clear();
+                    }
+                }
+            },
+        );
+
+        // Hint + the unwritable warning + the product/flavor line.
+        ui.add_space(12.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 90.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.label(
+                    RichText::new(texts.target_hint_local)
+                        .size(13.0)
+                        .color(theme.text_secondary),
+                );
+                if self.dir_writable == Some(false) {
+                    ui.add_space(6.0);
+                    let warn = if first_writable.is_some() {
+                        texts.warn_unwritable
+                    } else {
+                        texts.warn_no_writable
+                    };
+                    ui.label(RichText::new(warn).size(13.0).color(theme.error));
+                }
+                ui.add_space(6.0);
+                let flavor_label = match self.flavor.as_str() {
+                    "full-webview2" => texts.flavor_full_webview2,
+                    "full" => texts.flavor_full,
+                    other => other,
+                };
+                ui.label(
+                    RichText::new(format!(
+                        "{} {} · {}",
+                        self.config.product.name, self.config.product.version, flavor_label
+                    ))
+                    .size(13.0)
+                    .color(theme.text_secondary),
+                );
+            },
+        );
+
+        // The drive picker popup, dropping below the chip like
+        // HkSelectPanel: mount left, localized kind (+ volume label)
+        // right; the current mount carries a soft wash.
+        if self.drive_open {
+            let mut popup_rect = chip_rect;
+            egui::Area::new(egui::Id::new("drive-picker"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(chip_rect.left_bottom() + egui::vec2(0.0, 4.0))
+                .show(ui.ctx(), |ui| {
+                    let popup = egui::Frame::default()
+                        .fill(theme.surface)
+                        .stroke(Stroke::new(1.0, border_idle))
+                        .shadow(egui::Shadow {
+                            offset: [0, 8],
+                            blur: 24,
+                            color: Color32::from_black_alpha(40),
+                            ..Default::default()
+                        })
+                        .corner_radius(CornerRadius::same(10))
+                        .inner_margin(Margin::same(6))
+                        .show(ui, |ui| {
+                            ui.set_width(field_w - 12.0);
+                            for (mount, kind, label) in self.drives.clone() {
+                                let kind_label = match kind.as_str() {
+                                    "removable" => texts.kind_removable,
+                                    "fixed" => texts.kind_fixed,
+                                    "network" => texts.kind_network,
+                                    "cdrom" => texts.kind_cdrom,
+                                    "ramdisk" => texts.kind_ramdisk,
+                                    _ => texts.kind_unknown,
+                                };
+                                let meta = match label.as_deref() {
+                                    Some(l) if !l.is_empty() => {
+                                        format!("{kind_label} · {l}")
+                                    }
+                                    _ => kind_label.to_string(),
+                                };
+                                let (row, row_resp) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), 34.0),
+                                    egui::Sense::click(),
+                                );
+                                if row_resp.hovered() {
+                                    ui.ctx()
+                                        .set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                let rp = ui.painter_at(row);
+                                if row_resp.hovered() || self.dir.starts_with(&mount) {
+                                    rp.rect_filled(
+                                        row,
+                                        CornerRadius::same(8),
+                                        mix(theme.background, theme.primary, 0.08),
+                                    );
+                                }
+                                rp.text(
+                                    pos2(row.left() + 10.0, row.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    &mount,
+                                    egui::FontId::monospace(13.0),
+                                    theme.text,
+                                );
+                                rp.text(
+                                    pos2(row.right() - 10.0, row.center().y),
+                                    egui::Align2::RIGHT_CENTER,
+                                    meta,
+                                    egui::FontId::proportional(11.0),
+                                    theme.text_secondary,
+                                );
+                                if row_resp.clicked() {
+                                    // PathField's contract: strip the old
+                                    // prefix, keep the typed remainder.
+                                    let old_mount = self
+                                        .drives
+                                        .iter()
+                                        .find(|(m, _, _)| self.dir.starts_with(m))
+                                        .map(|(m, _, _)| m.clone())
+                                        .unwrap_or_default();
+                                    let rest = self
+                                        .dir
+                                        .strip_prefix(old_mount.as_str())
+                                        .map(|r| r.trim_start_matches(['\\', '/']))
+                                        .unwrap_or("");
+                                    self.dir = format!("{mount}{rest}");
+                                }
+                            }
+                        });
+                    popup_rect = popup.response.rect;
+                });
+            let hover_pos = ui.input(|i| i.pointer.hover_pos());
+            let outside = ui.input(|i| i.pointer.any_click())
+                && !chip_resp.clicked()
+                && hover_pos.map_or(true, |p| {
+                    !popup_rect.contains(p) && !chip_rect.contains(p)
+                });
+            if outside {
+                self.drive_open = false;
+            }
+        }
+
+        // Live writability probe on change (drives the warning and the
+        // accent candidate) — the same probe the web face rides.
+        if self.probed_dir != self.dir {
+            self.probed_dir = self.dir.clone();
+            self.dir_writable = Some(shun::fs_probe::is_dir_writable(std::path::Path::new(
+                self.dir.trim(),
+            )));
+        }
     }
 
     /// The license pane: the agreement documents (paged when several
