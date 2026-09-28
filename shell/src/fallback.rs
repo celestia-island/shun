@@ -530,6 +530,17 @@ struct Texts {
     open_dir: String,
     finish: String,
     retry: String,
+    // The standalone uninstaller page (web `uninstall` block): confirm →
+    // running → done/failed with the repair variant.
+    un_heading: String,
+    un_sub: String,
+    un_cancel: String,
+    un_repair: String,
+    un_close: String,
+    un_repairing: String,
+    done_repair: String,
+    failed_uninstall: String,
+    failed_repair: String,
     log: String,
     log_expand: String,
     log_collapse: String,
@@ -988,6 +999,14 @@ struct FallbackApp {
     phase_active: Option<FlowPhase>,
     /// What the running worker is doing; `true` = uninstalling.
     uninstalling: Option<bool>,
+    /// The standalone uninstaller face (`/uninstall` without `--silent`,
+    /// the ARP entry's GUI spelling): replaces the whole wizard with the
+    /// web face's confirm → running → done/failed page, repair included.
+    uninstall_mode: bool,
+    /// Which action the uninstall page's run came from — repair relabels
+    /// the running/done/failed copy (the web phases repairing/repaired/
+    /// repair_failed).
+    repairing: bool,
     outcome: Option<Outcome>,
     entry: Option<PathBuf>,
     receiver: Receiver<WorkerMsg>,
@@ -1009,6 +1028,7 @@ impl FallbackApp {
         config: ShunConfig,
         payload: ArchivePayload,
         reason: FallbackReason,
+        uninstall_mode: bool,
         language: String,
         cjk_font: bool,
         receiver: Receiver<WorkerMsg>,
@@ -1105,6 +1125,8 @@ impl FallbackApp {
             phases_done: Vec::new(),
             phase_active: None,
             uninstalling: None,
+            uninstall_mode,
+            repairing: false,
             outcome: None,
             entry: None,
             receiver,
@@ -1429,14 +1451,20 @@ const ALL_PHASES: [FlowPhase; 5] = [
 ];
 
 /// The egui window title (the screenshot path locates the window by it).
-pub fn window_title(config: &ShunConfig) -> String {
+/// Uninstall runs carry the uninstaller spelling — the same frame title
+/// the webview face resolves (`卸载 {product}` et al).
+pub fn window_title(config: &ShunConfig, uninstall: bool) -> String {
     // The same locale resolution the webview face applies to its frame
     // (saved wizard language → system locale → zh-Hans default); the
     // English literal below is the non-Windows floor.
     #[cfg(windows)]
-    return crate::os_window_title(config, false);
+    return crate::os_window_title(config, uninstall);
     #[cfg(not(windows))]
-    return format!("{} Installer", config.product.name);
+    return if uninstall {
+        format!("Uninstall {}", config.product.name)
+    } else {
+        format!("{} Installer", config.product.name)
+    };
 }
 
 /// Opens a directory in the platform file manager.
@@ -1474,11 +1502,12 @@ pub fn run(
     config: ShunConfig,
     payload: ArchivePayload,
     reason: FallbackReason,
+    uninstall: bool,
     logo_kind: &str,
     logo_bytes: &[u8],
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
 ) {
-    let title = window_title(&config);
+    let title = window_title(&config, uninstall);
     // DPI contract: the whole face is designed in logical points. The
     // ONLY place actual DPI enters is egui's pixels_per_point — eframe
     // picks the monitor scale once and applies it as a single uniform
@@ -1560,6 +1589,7 @@ pub fn run(
                 config,
                 payload,
                 reason,
+                uninstall,
                 language,
                 font_found,
                 receiver,
@@ -1619,7 +1649,7 @@ impl FallbackApp {
                     RichText::new(format!(
                         "{} {}",
                         self.config.product.name,
-                        if self.uninstalling == Some(true) {
+                        if self.uninstall_mode || self.uninstalling == Some(true) {
                             texts.titlebar_uninstall
                         } else {
                             texts.titlebar_installer
@@ -1727,10 +1757,13 @@ impl FallbackApp {
                 };
 
                 // Theme toggle — manifest-gated (user-adjustable), the
-                // sun/moon picked by the live mode. Right-to-left row:
-                // emit the CLOSE first so it lands right-most (the
-                // Windows convention), minimize to its left, and the
-                // theme toggle left-most of the cluster.
+                // sun/moon picked by the live mode. Not offered on the
+                // standalone uninstall page (the web face renders no
+                // custom action there either). Right-to-left row: emit
+                // the CLOSE first so it lands right-most (the Windows
+                // convention), minimize to its left, and the theme
+                // toggle left-most of the cluster.
+                let show_toggle = self.user_adjustable && !self.uninstall_mode;
                 let close = caption(ui, CaptionIcon::Close);
                 if close.clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1740,7 +1773,7 @@ impl FallbackApp {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
-                if self.user_adjustable {
+                if show_toggle {
                     let r = caption(ui, CaptionIcon::ThemeToggle);
                     if r.clicked() {
                         // A manual toggle pins the side for the session
@@ -1758,7 +1791,11 @@ impl FallbackApp {
         // rect registered after the button cluster sits ON TOP of it and
         // eats every click (buttons only responded at the window's outer
         // pixel). Shrink the drag rect to the cluster's left edge.
-        let caption_count = if self.user_adjustable { 3 } else { 2 };
+        let caption_count = if self.user_adjustable && !self.uninstall_mode {
+            3
+        } else {
+            2
+        };
         let mut drag_rect = strip;
         let cluster_left = drag_rect.right() - (CAPTION_W * caption_count as f32 + 2.0);
         drag_rect.set_right(cluster_left.max(drag_rect.left()));
@@ -3029,19 +3066,7 @@ impl FallbackApp {
                 // shortcut answers.
                 ui.add_space(16.0);
                 ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
-                    let painter = ui.painter_at(rect);
-                    let c = rect.center();
-                    let stroke = Stroke::new(3.0f32, theme.success);
-                    painter.circle_stroke(c, 24.0, stroke);
-                    painter.line_segment(
-                        [pos2(c.x - 9.0, c.y + 1.0), pos2(c.x - 2.5, c.y + 8.0)],
-                        stroke,
-                    );
-                    painter.line_segment(
-                        [pos2(c.x - 2.5, c.y + 8.0), pos2(c.x + 10.0, c.y - 7.0)],
-                        stroke,
-                    );
+                    Self::hero_check(ui, &theme);
                     ui.add_space(10.0);
                     ui.label(
                         RichText::new(title)
@@ -3122,6 +3147,276 @@ impl FallbackApp {
             self.texts.log_expand.as_str(),
             self.texts.log_collapse.as_str(),
         );
+    }
+
+    /// The done hero's check ring (hikari's CheckCircle2 at 56pt) — the
+    /// success glyph of the finished pane AND the uninstall page.
+    fn hero_check(ui: &mut egui::Ui, theme: &Theme) {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        let c = rect.center();
+        let stroke = Stroke::new(3.0f32, theme.success);
+        painter.circle_stroke(c, 24.0, stroke);
+        painter.line_segment(
+            [pos2(c.x - 9.0, c.y + 1.0), pos2(c.x - 2.5, c.y + 8.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [pos2(c.x - 2.5, c.y + 8.0), pos2(c.x + 10.0, c.y - 7.0)],
+            stroke,
+        );
+    }
+
+    /// The failure hero's cross ring (hikari's XCircle at 56pt) — the
+    /// uninstall page's failure glyph.
+    fn hero_cross(ui: &mut egui::Ui, theme: &Theme) {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        let c = rect.center();
+        let stroke = Stroke::new(3.0f32, theme.error);
+        painter.circle_stroke(c, 24.0, stroke);
+        painter.line_segment(
+            [pos2(c.x - 9.0, c.y - 9.0), pos2(c.x + 9.0, c.y + 9.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [pos2(c.x + 9.0, c.y - 9.0), pos2(c.x - 9.0, c.y + 9.0)],
+            stroke,
+        );
+    }
+
+    /// Spawns the uninstall page's worker. Uninstall drives the shared
+    /// uninstall (the ARP contract — the install dir this process sits
+    /// in); repair re-runs the local delivery over that same dir, the
+    /// web face's `start_install { mode: "local", dir: current_dir }`
+    /// verbatim (no nesting pass, no shortcut finish).
+    fn spawn_uninstall_worker(&mut self, ctx: &Context, repair: bool) {
+        self.stage = Stage::Running;
+        self.progress = None;
+        self.phases_done.clear();
+        self.phase_active = None;
+        self.terminal.clear();
+        self.overall = None;
+        self.uninstalling = Some(!repair);
+        self.repairing = repair;
+        self.entry = None;
+
+        let (sender, receiver) = channel();
+        self.receiver = receiver;
+        let repaint = ctx.clone();
+        let payload = self.payload.clone();
+        let config = self.config.clone();
+        std::thread::spawn(move || {
+            let core = WizardCore::new(config, BTreeMap::new());
+            let result = if repair {
+                let dir = shun::wizard::current_exe_dir()
+                    .map(|dir| dir.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let request = InstallRequest {
+                    mode: "local".into(),
+                    dir,
+                    language: None,
+                    machine: false,
+                };
+                shun::wizard::run_install(&core, &payload, &request, &mut |event| {
+                    let _ = sender.send(WorkerMsg::Event(event.clone()));
+                    repaint.request_repaint();
+                })
+                .map_err(|e| e.to_string())
+            } else {
+                shun::wizard::run_uninstall(&core).map_err(|e| e.to_string())
+            };
+            let _ = sender.send(WorkerMsg::Done(result));
+            repaint.request_repaint();
+        });
+    }
+
+    /// The standalone uninstaller page — the web face's uninstall pane,
+    /// state for state: confirm (cancel · repair · danger uninstall) →
+    /// indeterminate running (the repair variant relabels) → done/failed
+    /// hero with a single close. The pane carries every action; the
+    /// wizard's rail, footer and degradation banner are suppressed.
+    fn uninstall_view(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme;
+        let texts = self.texts.clone();
+        // %PRODUCT% substitution — the same token the web face's
+        // withProduct() resolves everywhere.
+        let product = self.config.product.name.clone();
+        let with_product = |raw: &str| raw.replace("%PRODUCT%", &product);
+
+        // Vertical centering (web `wizard-pane--center`): egui draws
+        // from the cursor, so the block gets a hand-computed top offset
+        // — the location pane's idiom. Heights in logical points.
+        let content_h = match self.stage {
+            Stage::Configure => 140.0,
+            Stage::Running => if self.logo.is_some() { 140.0 } else { 70.0 },
+            Stage::Finished => 180.0,
+        };
+        ui.add_space(((ui.available_height() - content_h) / 2.0).max(0.0));
+
+        // hikari button analog for the terminal views' close: a filled
+        // plate (primary here; the danger fill is built into the
+        // confirm row's hand-placed button).
+        let solid = |ui: &mut egui::Ui, label: &str, fill: Color32| {
+            Self::hand(ui.add(
+                Button::new(RichText::new(label).strong().size(13.5).color(theme.on_primary))
+                    .fill(fill)
+                    .corner_radius(CornerRadius::same(8))
+                    .min_size(Vec2::new(112.0, 32.0)),
+            ))
+            .clicked()
+        };
+
+        match self.stage {
+            // Confirm: heading + sub, then the action row.
+            Stage::Configure => {
+                ui.label(
+                    RichText::new(with_product(&texts.un_heading))
+                        .strong()
+                        .size(22.0)
+                        .color(theme.text),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(with_product(&texts.un_sub))
+                        .size(13.5)
+                        .color(theme.text_secondary),
+                );
+                ui.add_space(28.0);
+                // The action row centers as a unit (web
+                // `.wizard-uninstall__actions { justify-content:
+                // center }`). egui draws child UIs from the cursor, so a
+                // `ui.horizontal` cannot be centered by layout — but
+                // single widgets placed at explicit rects can. Measure
+                // the three buttons, center the run inside a full-width
+                // strip, and `ui.put` one rect per button.
+                let measure = |ui: &egui::Ui, text: &str, size: f32, min_w: f32| -> f32 {
+                    let galley = ui.painter().layout_no_wrap(
+                        text.to_owned(),
+                        egui::FontId::proportional(size),
+                        Color32::WHITE,
+                    );
+                    (galley.size().x + 24.0).max(min_w)
+                };
+                // (label, font size, min width, danger?)
+                let actions: Vec<(String, f32, f32, bool)> = vec![
+                    (texts.un_cancel.clone(), 13.0, 96.0, false),
+                    (with_product(&texts.un_repair), 13.0, 96.0, false),
+                    (with_product(&texts.uninstall), 13.5, 112.0, true),
+                ];
+                let widths: Vec<f32> = actions
+                    .iter()
+                    .map(|(text, size, min_w, _)| measure(ui, text, *size, *min_w))
+                    .collect();
+                let gap = ui.spacing().item_spacing.x;
+                let run: f32 =
+                    widths.iter().sum::<f32>() + gap * widths.len().saturating_sub(1) as f32;
+                let (strip, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 32.0),
+                    Sense::hover(),
+                );
+                let mut left = strip.center().x - run / 2.0;
+                // Index 0 = cancel, 1 = repair, 2 = uninstall.
+                for (index, ((text, size, _, danger), width)) in
+                    actions.iter().zip(&widths).enumerate()
+                {
+                    let rect =
+                        egui::Rect::from_min_size(pos2(left, strip.top()), vec2(*width, 32.0));
+                    let button = if *danger {
+                        Button::new(
+                            RichText::new(text.as_str())
+                                .strong()
+                                .size(*size)
+                                .color(theme.on_primary),
+                        )
+                        .fill(theme.error)
+                        .corner_radius(CornerRadius::same(8))
+                    } else {
+                        Button::new(
+                            RichText::new(text.as_str()).size(*size).color(theme.text_secondary),
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::new(1.0f32, theme.border))
+                        .corner_radius(CornerRadius::same(8))
+                    };
+                    if Self::hand(ui.put(rect, button)).clicked() {
+                        match index {
+                            0 => std::process::exit(0),
+                            1 => self.spawn_uninstall_worker(ui.ctx(), true),
+                            _ => self.spawn_uninstall_worker(ui.ctx(), false),
+                        }
+                    }
+                    left += width + gap;
+                }
+            }
+            // Running: the indeterminate sweep — shun's uninstall emits
+            // no percents, and the web page keeps its loading bar
+            // indeterminate for the repair too.
+            Stage::Running => {
+                if let Some(logo) = &self.logo {
+                    ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(56.0)));
+                    ui.add_space(16.0);
+                }
+                let t = ui.input(|i| i.time) as f32;
+                let sweep = (t * 0.9).sin() * 0.5 + 0.5;
+                ui.ctx().request_repaint();
+                let bar = egui::ProgressBar::new(sweep.clamp(0.02, 0.98))
+                    .fill(theme.primary)
+                    .corner_radius(CornerRadius::same(8));
+                ui.add(bar.desired_width(320.0).desired_height(8.0));
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(if self.repairing {
+                        with_product(&texts.un_repairing)
+                    } else {
+                        with_product(&texts.uninstalling)
+                    })
+                    .size(13.0)
+                    .color(theme.text_secondary),
+                );
+            }
+            // Terminal: the success/failure hero plus a close. The
+            // repair variant relabels (repaired / repair failed).
+            Stage::Finished => {
+                let outcome = self.outcome.clone();
+                match outcome.as_ref().expect("Finished implies an outcome") {
+                    Outcome::InstallOk | Outcome::UninstallOk => {
+                        Self::hero_check(ui, &theme);
+                        ui.add_space(12.0);
+                        let title = if self.repairing {
+                            texts.done_repair.clone()
+                        } else {
+                            texts.done_uninstall.clone()
+                        };
+                        ui.label(
+                            RichText::new(title).strong().size(18.0).color(theme.success),
+                        );
+                        ui.add_space(20.0);
+                        if solid(ui, texts.un_close.as_str(), theme.primary) {
+                            std::process::exit(0);
+                        }
+                    }
+                    Outcome::Failed(err) => {
+                        Self::hero_cross(ui, &theme);
+                        ui.add_space(12.0);
+                        let title = if self.repairing {
+                            texts.failed_repair.clone()
+                        } else {
+                            texts.failed_uninstall.clone()
+                        };
+                        ui.label(RichText::new(title).strong().size(18.0).color(theme.error));
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(err.clone()).size(12.5).color(theme.error));
+                        ui.add_space(20.0);
+                        if solid(ui, texts.un_close.as_str(), theme.primary) {
+                            std::process::exit(0);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// The installer footer: live flow step on the left, nav buttons on
@@ -3358,20 +3653,25 @@ impl eframe::App for FallbackApp {
                 self.title_bar(ui);
             });
 
-        // ── Footer: live step + nav.
-        egui::TopBottomPanel::bottom("footer")
-            .frame(
-                Frame::default()
-                    .fill(theme.background)
-                    .inner_margin(Margin::symmetric(20, 6)),
-            )
-            .show(ctx, |ui| {
-                self.footer(ui, ctx);
-            });
+        // ── Footer: live step + nav. The standalone uninstall page
+        // carries its actions in the pane itself — no footer, exactly
+        // like the web face's uninstall layout.
+        if !self.uninstall_mode {
+            egui::TopBottomPanel::bottom("footer")
+                .frame(
+                    Frame::default()
+                        .fill(theme.background)
+                        .inner_margin(Margin::symmetric(20, 6)),
+                )
+                .show(ctx, |ui| {
+                    self.footer(ui, ctx);
+                });
+        }
 
-        // ── Optional left rail (`shell.timeline = "left"`).
+        // ── Optional left rail (`shell.timeline = "left"`). The
+        // uninstall page has no step rail to draw.
         let timeline_left = self.timeline_left;
-        if timeline_left {
+        if timeline_left && !self.uninstall_mode {
             egui::SidePanel::left("timeline")
                 .exact_width(200.0)
                 .frame(
@@ -3395,15 +3695,16 @@ impl eframe::App for FallbackApp {
                     .inner_margin(Margin::symmetric(20, 12)),
             )
             .show(ctx, |ui| {
-                if !timeline_left {
+                if !timeline_left && !self.uninstall_mode {
                     self.timeline(ui, false);
                     ui.add_space(10.0);
                 }
                 // The degradation banner is information, not decoration:
                 // show it only when the runtime forced the fallback (no
                 // WebView2). A deliberate --no-webview launch needs no
-                // warning about itself.
-                if self.reason == FallbackReason::MissingWebview2 {
+                // warning about itself, and the uninstall page mirrors
+                // the web uninstaller (which never banners).
+                if self.reason == FallbackReason::MissingWebview2 && !self.uninstall_mode {
                     self.banner(ui);
                     ui.add_space(12.0);
                 }
@@ -3418,14 +3719,25 @@ impl eframe::App for FallbackApp {
                     main_dir: egui::Direction::TopDown,
                     cross_align: egui::Align::Center,
                     main_align: match self.stage {
-                        Stage::Running => egui::Align::Min,
+                        Stage::Running if !self.uninstall_mode => egui::Align::Min,
                         _ => egui::Align::Center,
                     },
                     main_justify: false,
                     cross_justify: false,
                 };
+                // The wizard caps its content block at 560pt (the rail
+                // keeps the central panel narrow, so the cap is nearly
+                // invisible). The uninstall page has NO rail — a capped
+                // block would anchor the whole pane left of center — so
+                // it spans the panel and every centered child lines up
+                // with the window.
+                let pane_w = if self.uninstall_mode {
+                    ui.available_width()
+                } else {
+                    ui.available_width().min(560.0)
+                };
                 ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width().min(560.0), ui.available_height()),
+                    egui::vec2(pane_w, ui.available_height()),
                     pane,
                     |ui| {
                         // The inner column fixes the text alignment;
@@ -3439,7 +3751,13 @@ impl eframe::App for FallbackApp {
                             egui::Align::Center
                         };
                         ui.with_layout(egui::Layout::top_down(text_align), |ui| {
-                            ui.set_width(ui.available_width().min(560.0));
+                            ui.set_width(pane_w);
+                            // The standalone uninstaller page replaces the
+                            // wizard panes entirely (one flow, every face).
+                            if self.uninstall_mode {
+                                self.uninstall_view(ui);
+                                return;
+                            }
                             match self.stage {
                                 Stage::Configure => self.configure_view(ui),
                                 Stage::Running => self.running_view(ui),

@@ -1056,9 +1056,14 @@ fn main() {
             } else {
                 fallback::FallbackReason::MissingWebview2
             };
+            // The uninstaller degrades too: `/uninstall` without
+            // `--silent` renders the egui uninstall page (never the
+            // install wizard) when WebView2 is missing — the same face
+            // ladder every other run takes.
+            let uninstall = cli.uninstall;
             #[cfg(windows)]
             if let Some(path) = &cli.screenshot {
-                let title = fallback::window_title(&config);
+                let title = fallback::window_title(&config, uninstall);
                 screenshot::schedule_by_title(
                     title,
                     path.clone(),
@@ -1073,6 +1078,7 @@ fn main() {
                     config,
                     payload,
                     reason,
+                    uninstall,
                     LOGO_KIND.trim(),
                     LOGO_BYTES,
                     license_docs(),
