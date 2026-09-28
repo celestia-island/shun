@@ -1693,8 +1693,11 @@ impl FallbackApp {
                 }
                 let dark_now = self.dark_theme;
                 let caption = move |ui: &mut egui::Ui, icon: CaptionIcon| -> egui::Response {
-                let (rect, response) = ui
-                    .allocate_exact_size(Vec2::new(CAPTION_W, TITLEBAR_H), egui::Sense::click());
+                let (rect, response) = ui.allocate_exact_size(
+                    Vec2::new(CAPTION_W, TITLEBAR_H),
+                    egui::Sense::click(),
+                );
+                let response = Self::hand(response);
                     let painter = ui.painter_at(rect);
                     let close = matches!(icon, CaptionIcon::Close);
                     let hovered = response.hovered();
@@ -2001,6 +2004,19 @@ impl FallbackApp {
     /// The configure pane: dispatches on the fixed wizard steps —
     /// language → location → license — the same progression the webview
     /// face renders.
+    /// Clickables point: egui has no automatic hand cursor, so every
+    /// interactive widget routes its response through here.
+    fn hand(response: egui::Response) -> egui::Response {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    }
+
+    /// The icon-vs-label optical drop: a glyph box's center rides above
+    /// the visible x-height band (the box carries descender room), so
+    /// the icon shifts down by ~15% of the point size to meet it.
+    fn icon_drop(font_size: f32) -> f32 {
+        font_size * 0.15
+    }
+
     /// A hikari ghost button: borderless lucide icon + label with a
     /// soft hover wash (the quick-candidate/browse seat). The icon
     /// centers on the label's optical middle — the galley box includes
@@ -2016,9 +2032,7 @@ impl FallbackApp {
         h: f32,
     ) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(vec2(min_w, h), egui::Sense::click());
-        if response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
+        let response = Self::hand(response);
         let painter = ui.painter_at(rect);
         let hover_t = ui
             .ctx()
@@ -2034,7 +2048,7 @@ impl FallbackApp {
         let galley = painter.layout_no_wrap(label.to_string(), font, theme.text);
         let content_w = 14.0 + 6.0 + galley.size().x;
         let left = rect.left() + ((rect.width() - content_w) / 2.0).max(0.0);
-        let text_cy = rect.center().y + 0.5;
+        let text_cy = rect.center().y + Self::icon_drop(13.0);
         painter.image(
             icon.id(),
             egui::Rect::from_center_size(
@@ -2068,9 +2082,7 @@ impl FallbackApp {
     ) -> bool {
         let chip_w = 42.0 + label.len() as f32 * 7.5;
         let (rect, response) = ui.allocate_exact_size(egui::vec2(chip_w, 28.0), egui::Sense::click());
-        if response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
+        let response = Self::hand(response);
         let painter = ui.painter_at(rect);
         if accent || response.hovered() {
             painter.rect_filled(
@@ -2085,7 +2097,7 @@ impl FallbackApp {
             font,
             if writable { theme.text } else { theme.text_secondary },
         );
-        let text_cy = rect.center().y + 0.5;
+        let text_cy = rect.center().y + Self::icon_drop(12.0);
         let icon_tint = if writable {
             theme.text
         } else {
@@ -2124,9 +2136,7 @@ impl FallbackApp {
         let on = *checked;
         let row_w = width.unwrap_or(ui.available_width());
         let (row, response) = ui.allocate_exact_size(vec2(row_w, 22.0), egui::Sense::click());
-        if response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
+        let response = Self::hand(response);
         let painter = ui.painter_at(row);
         let plate = egui::Rect::from_min_size(
             pos2(row.left(), row.center().y - 9.0),
@@ -2827,14 +2837,14 @@ impl FallbackApp {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let pager_button = |ui: &mut egui::Ui, glyph: &str, enabled: bool| {
-                    ui.add_enabled(
+                    Self::hand(ui.add_enabled(
                         enabled,
                         Button::new(RichText::new(glyph).size(13.0).color(theme.text_secondary))
                             .fill(theme.surface)
                             .stroke(Stroke::new(1.0f32, theme.border))
                             .corner_radius(CornerRadius::same(6))
                             .min_size(Vec2::new(44.0, 24.0)),
-                    )
+                    ))
                 };
                 if pager_button(ui, "[<]", index > 0).clicked() {
                     self.license_doc_index = index - 1;
@@ -3095,7 +3105,7 @@ impl FallbackApp {
                     (Stage::Finished, _) => Some((false, false)),
                 };
                 if let Some((uninstalling, _)) = action {
-                    if ui
+                    if Self::hand(ui
                         .add_enabled(
                             enabled,
                             Button::new(
@@ -3107,7 +3117,7 @@ impl FallbackApp {
                             .fill(theme.primary)
                             .corner_radius(CornerRadius::same(8))
                             .min_size(Vec2::new(112.0, 30.0)),
-                        )
+                        ))
                         .clicked()
                     {
                         match self.stage {
@@ -3173,13 +3183,13 @@ impl FallbackApp {
                 // hikari's secondary actions are bare text — no border
                 // box — with the muted color carrying the hierarchy.
                 let ghost = |ui: &mut egui::Ui, label: &str| {
-                    ui.add(
+                    Self::hand(ui.add(
                         Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
                             .fill(Color32::TRANSPARENT)
                             .stroke(Stroke::NONE)
                             .corner_radius(CornerRadius::same(8))
                             .min_size(Vec2::new(88.0, 30.0)),
-                    )
+                    ))
                     .clicked()
                 };
                 if configuring {
