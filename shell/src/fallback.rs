@@ -672,10 +672,11 @@ struct FallbackApp {
 
 /// Shared control metrics for the egui face — one set of heights and
 /// widths every pane draws with, so all products and steps size alike.
-const CAPTION_W: f32 = 34.0;
-// 26pt plates in a 26pt strip: the band totals 32pt with the panel
-// margins — the native Windows 11 caption proportion at any DPI.
-const CAPTION_H: f32 = 26.0;
+// Caption chrome, HkTitleBar parity: full-band-height 46pt plates in a
+// flat 32pt band — the native Windows 11 caption proportion, identical
+// to the webview face's SCSS (--hk-tb-height).
+const CAPTION_W: f32 = 46.0;
+const TITLEBAR_H: f32 = 32.0;
 const CONTROL_H: f32 = 36.0;
 const COMBO_W: f32 = 380.0;
 
@@ -1174,9 +1175,12 @@ pub fn run(
 // ── Rendering — mirrors the hikari wizard layout ────────────────────────
 
 impl FallbackApp {
-    /// The hikari caption bar: logo + title left, close right, the whole
-    /// band drags the window (double-click toggles nothing — the shell
-    /// window is not maximizable).
+    /// The hikari caption bar, drawn to HkTitleBar's spec so the egui
+    /// face reads identical to the webview face: 32pt flat band, logo +
+    /// 11pt semibold title + 10pt version subtitle left, full-height
+    /// 46pt caption plates right (accent-tinted hover; close hovers
+    /// red with a white glyph and rounds the window's top-right
+    /// corner). The whole band outside the buttons drags the window.
     fn title_bar(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let texts = self.texts;
@@ -1189,17 +1193,20 @@ impl FallbackApp {
         // the panel's per-frame PanelState. A bounded strip renders the
         // same geometry every frame.
         let (strip, _) =
-            ui.allocate_exact_size(vec2(ui.available_width(), CAPTION_H), Sense::hover());
+            ui.allocate_exact_size(vec2(ui.available_width(), TITLEBAR_H), Sense::hover());
         ui.allocate_new_ui(
             egui::UiBuilder::new()
                 .max_rect(strip)
                 .layout(Layout::left_to_right(Align::Center)),
             |ui| {
-                ui.add_space(10.0);
+                // HkTitleBar's left cluster: 12pt lead-in, 16pt icon,
+                // 8pt gap, 11pt/600 title, then the version subtitle at
+                // 10pt and 70% strength.
+                ui.add_space(12.0);
                 if let Some(logo) = &self.logo {
                     ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(16.0)));
                 }
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 ui.label(
                     RichText::new(format!(
                         "{} {}",
@@ -1210,14 +1217,24 @@ impl FallbackApp {
                             texts.titlebar_installer
                         }
                     ))
-                    .color(theme.text_secondary)
-                    .size(13.0),
+                    .color(theme.text)
+                    .size(11.0)
+                    .strong(),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!("v{}", self.config.product.version))
+                        .color(theme.text_secondary.gamma_multiply(0.7))
+                        .size(10.0),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                // Caption buttons, Windows style: 40×24 plates, centered
-                // VECTOR glyphs (egui's default fonts carry no caption
-                // dingbats — strokes and discs render everywhere), hover
-                // fill (red for close).
+                // Caption plates, HkTitleBar geometry: full-band-height
+                // 46pt rectangles flush to the window edge, VECTOR
+                // glyphs (egui's default fonts carry no caption
+                // dingbats — strokes and discs render everywhere).
+                // Hover rides the accent at 12%; the close plate turns
+                // #e81123 with a white glyph and rounds the window's
+                // top-right corner, exactly like the SCSS.
                 enum CaptionIcon {
                     Minimize,
                     ThemeToggle,
@@ -1226,30 +1243,49 @@ impl FallbackApp {
                 let dark_now = self.dark_theme;
                 let caption = move |ui: &mut egui::Ui, icon: CaptionIcon| -> egui::Response {
                 let (rect, response) = ui
-                    .allocate_exact_size(Vec2::new(CAPTION_W, CAPTION_H), egui::Sense::click());
+                    .allocate_exact_size(Vec2::new(CAPTION_W, TITLEBAR_H), egui::Sense::click());
                     let painter = ui.painter_at(rect);
+                    let close = matches!(icon, CaptionIcon::Close);
                     let hovered = response.hovered();
                     if hovered {
-                        painter.rect_filled(
-                            rect,
-                            CornerRadius::same(5),
-                            mix(theme.background, theme.text, 0.12),
-                        );
+                        let fill = if close {
+                            Color32::from_rgb(0xe8, 0x11, 0x23)
+                        } else {
+                            mix(theme.background, theme.primary, 0.12)
+                        };
+                        let radius = if close {
+                            egui::CornerRadius {
+                                nw: 0,
+                                ne: 8,
+                                sw: 0,
+                                se: 0,
+                            }
+                        } else {
+                            CornerRadius::ZERO
+                        };
+                        painter.rect_filled(rect, radius, fill);
                     }
                     let c = rect.center();
-                    let icon_color = if hovered {
+                    let icon_color = if hovered && close {
+                        Color32::WHITE
+                    } else if hovered {
                         theme.text
                     } else {
                         theme.text_secondary
                     };
-                    let stroke = Stroke::new(1.3f32, icon_color);
+                    // Hikari's 14px SVG glyphs fold to these extents:
+                    // the minimize bar spans ±4.1 and the close X sits
+                    // at ±3.5 per axis, both at 1.0 stroke (the SVGs'
+                    // 1.75 units at 14/24 scale), round caps like the
+                    // SVG linecap.
+                    let stroke = Stroke::new(1.0f32, icon_color);
                     match icon {
                         CaptionIcon::Minimize => {
                             painter
-                                .line_segment([pos2(c.x - 4.0, c.y), pos2(c.x + 4.0, c.y)], stroke);
+                                .line_segment([pos2(c.x - 4.1, c.y), pos2(c.x + 4.1, c.y)], stroke);
                         }
                         CaptionIcon::Close => {
-                            let d = 4.0f32;
+                            let d = 3.5f32;
                             painter.line_segment(
                                 [pos2(c.x - d, c.y - d), pos2(c.x + d, c.y + d)],
                                 stroke,
@@ -1261,23 +1297,23 @@ impl FallbackApp {
                         }
                         CaptionIcon::ThemeToggle => {
                             if dark_now {
-                                painter.circle_filled(c, 3.8, icon_color);
+                                painter.circle_filled(c, 2.3, icon_color);
                                 for ray in 0..8 {
                                     let angle = ray as f32 * std::f32::consts::TAU / 8.0;
                                     let dir = egui::vec2(angle.cos(), angle.sin());
                                     painter.line_segment(
                                         [
-                                            c + dir * egui::vec2(6.0, 6.0),
-                                            c + dir * egui::vec2(8.0, 8.0),
+                                            c + dir * egui::vec2(4.7, 4.7),
+                                            c + dir * egui::vec2(5.8, 5.8),
                                         ],
-                                        Stroke::new(1.3f32, icon_color),
+                                        stroke,
                                     );
                                 }
                             } else {
-                                painter.circle_filled(c, 4.6, icon_color);
+                                painter.circle_filled(c, 4.0, icon_color);
                                 painter.circle_filled(
-                                    c + egui::vec2(2.0, -1.2),
-                                    3.8,
+                                    c + egui::vec2(1.6, -1.0),
+                                    3.4,
                                     theme.background,
                                 );
                             }
@@ -1317,7 +1353,6 @@ impl FallbackApp {
                         });
                     }
                 }
-                ui.add_space(8.0);
                 });
             },
         );
@@ -1328,7 +1363,7 @@ impl FallbackApp {
         // pixel). Shrink the drag rect to the cluster's left edge.
         let caption_count = if self.user_adjustable { 3 } else { 2 };
         let mut drag_rect = strip;
-        let cluster_left = drag_rect.right() - (CAPTION_W * caption_count as f32 + 12.0);
+        let cluster_left = drag_rect.right() - (CAPTION_W * caption_count as f32 + 2.0);
         drag_rect.set_right(cluster_left.max(drag_rect.left()));
         let drag = ui.interact(drag_rect, ui.id().with("titlebar-drag"), Sense::drag());
         if drag.drag_started() {
@@ -2129,14 +2164,9 @@ impl eframe::App for FallbackApp {
         self.drain_worker();
         let theme = self.theme;
 
-        // ── Caption bar (frameless chrome).
+        // ── Caption bar (frameless chrome): one flat HkTitleBar band.
         egui::TopBottomPanel::top("titlebar")
-            .frame(Frame::default().fill(theme.surface).inner_margin(Margin {
-                left: 0,
-                right: 10,
-                top: 3,
-                bottom: 3,
-            }))
+            .frame(Frame::default().fill(theme.surface).inner_margin(Margin::ZERO))
             .show(ctx, |ui| {
                 self.title_bar(ui);
             });
