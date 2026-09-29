@@ -738,7 +738,7 @@ export default defineComponent({
       if (uninstallMode.value) {
         const uninstallPane =
           uninstallPhase.value === "idle" ? (
-            <section class="wizard-pane wizard-pane--center wizard-uninstall">
+            <section class="wizard-pane wizard-uninstall">
               <h1>{s.uninstall.heading}</h1>
               <p class="wizard-sub">{s.uninstall.sub}</p>
               <div class="wizard-uninstall__actions">
@@ -754,7 +754,7 @@ export default defineComponent({
               </div>
             </section>
           ) : uninstallPhase.value === "running" || uninstallPhase.value === "repairing" ? (
-            <section class="wizard-pane wizard-pane--center wizard-uninstall">
+            <section class="wizard-pane wizard-uninstall">
               <img src={logoUrl.value} alt="" class="wizard-logo" />
               <HkProgressBar status="loading" size="md" />
               <p class="wizard-step">
@@ -762,7 +762,7 @@ export default defineComponent({
               </p>
             </section>
           ) : uninstallPhase.value === "done" || uninstallPhase.value === "repaired" ? (
-            <section class="wizard-pane wizard-pane--center wizard-uninstall">
+            <section class="wizard-pane wizard-uninstall">
               <CheckCircle2
                 size={56}
                 color="rgb(var(--color-success))"
@@ -778,7 +778,7 @@ export default defineComponent({
               </div>
             </section>
           ) : (
-            <section class="wizard-pane wizard-pane--center wizard-uninstall">
+            <section class="wizard-pane wizard-uninstall">
               <XCircle
                 size={56}
                 color="rgb(var(--color-error))"
@@ -814,7 +814,7 @@ export default defineComponent({
 
       const pane =
         step.value === "language" ? (
-          <section class="wizard-pane wizard-pane--center wizard-language">
+          <section class="wizard-pane wizard-language">
             <h1>{s.language.title}</h1>
             <p class="wizard-sub">{s.language.sub}</p>
             <div class="wizard-language__select">
@@ -826,7 +826,7 @@ export default defineComponent({
             </div>
           </section>
         ) : step.value === "mode" ? (
-          <section class="wizard-pane wizard-pane--center">
+          <section class="wizard-pane">
             <h1>{s.mode.title}</h1>
             <p class="wizard-sub">{s.mode.sub}</p>
 
@@ -943,7 +943,7 @@ export default defineComponent({
             </div>
           </section>
         ) : installFailed.value ? (
-          <section class="wizard-pane wizard-pane--center wizard-done">
+          <section class="wizard-pane wizard-done">
             <XCircle
               size={56}
               color="rgb(var(--color-error))"
@@ -972,7 +972,7 @@ export default defineComponent({
             </div>
           </section>
         ) : (
-          <section class="wizard-pane wizard-pane--center wizard-done">
+          <section class="wizard-pane wizard-done">
             <CheckCircle2
               size={56}
               color="rgb(var(--color-success))"

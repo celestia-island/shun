@@ -105,9 +105,9 @@ body {
 }
 
 /* The uninstall page's pane hangs directly off .installer (no rail) —
-   restore the container insets the rail layout moved onto the pane. */
+   no wrapper insets: the pane's own padding IS the unified inset. */
 .installer > .wizard-layout__pane {
-  padding: 0 28px 20px;
+  padding: 0;
 }
 
 .wizard-pane {
@@ -116,13 +116,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-/* Install / done panes center their content both ways */
-.wizard-pane--center {
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  // THE unified content origin (both faces): a fixed 48px left/right
+  // and 40px top inset, everything left-aligned — the heading parks at
+  // the same spot on every page instead of drifting with content
+  // length (user direction; the egui face carries the same numbers).
+  padding: 40px 48px 24px;
+  align-items: flex-start;
+  text-align: left;
 }
 
 /* Install pane: progress centered on top, live log strip along the
@@ -138,9 +138,9 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   gap: 16px;
 }
 
@@ -155,9 +155,9 @@ body {
 .wizard-install__main {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   gap: 16px;
   min-height: 0;
 }
@@ -429,7 +429,7 @@ body {
   .wizard-uninstall__actions {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 10px;
   }
 

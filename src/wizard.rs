@@ -489,6 +489,13 @@ pub fn run_install(
         });
     }
     stop_running_app(&install_dir, &main_exe);
+    // Prepare-phase script hooks (docs/en/design/scripting.md): the
+    // payload may carry runner scripts that hold the flow's opening —
+    // the demo's screenshot-window delay rides this.
+    crate::targets::install::run_prepare_hooks(&core.config, payload, &ctx, &mut |event| {
+        on_event(&event)
+    })
+    .map_err(|e| e.to_string())?;
     let flow = InstallFlow {
         payload,
         registration: &WindowsRegistration,

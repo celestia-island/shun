@@ -14,6 +14,8 @@ publish = true
 exclude = ["docs/", "scripts/", ".github/", "assets/", "justfile", "rust-toolchain.toml"]
 
 [dependencies]
+duckscript = "0.10.0"
+duckscriptsdk = "0.11.1"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -80,8 +82,6 @@ name = "pyembed_runner"
 required-features = ["python-probe"]
 
 [dev-dependencies]
-duckscript = "0.10.0"
-duckscriptsdk = "0.11.1"
 tempfile = "^3"
 
 [lints]

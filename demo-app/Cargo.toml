@@ -93,6 +93,16 @@ kind = "license"
 [[package.metadata.shun.steps]]
 kind = "install"
 
+# The prepare-phase script hook (docs/en/design/scripting.md): a 5s
+# hold at the flow's opening so the running page can be screenshotted
+# mid-install. Demo-only — real products ship no hold.
+[package.metadata.shun.script]
+runner = "duckscript"
+
+[[package.metadata.shun.script.hooks]]
+phase = "prepare"
+script = "installer/prepare.dk"
+
 [package.metadata.shun.msix]
 identity-name = "ShunDemo"
 publisher = "CN=celestia-island"

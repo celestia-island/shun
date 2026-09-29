@@ -2334,46 +2334,24 @@ impl FallbackApp {
         let labels = &wizard_strings().labels;
         let options = wizard_strings().options();
 
-        // Vertical centering, deterministic: measure the parts, offset by
-        // (available - content) / 2, then draw with a fixed-width block
-        // for the horizontal centering. (egui's main-align Center
-        // silently no-ops for sized-to-content content in this nesting.)
-        let heading_font = egui::FontId::proportional(22.0);
-        let heading_h = ui
-            .painter()
-            .layout_no_wrap(texts.lang_heading.to_string(), heading_font, theme.text)
-            .size()
-            .y;
-        let sub_h = 20.0f32;
-        let combo_h = CONTROL_H;
-        let content_h = heading_h + 8.0 + sub_h + 24.0 + combo_h;
-        let avail_h = ui.available_height();
-        ui.add_space(((avail_h - content_h) / 2.0).max(0.0));
-
+        // The unified fixed-origin column: heading, sub and picker all
+        // start at the pane's left inset — no centering, no offsets.
         let block_w = COMBO_W;
-        let block_left = ((ui.available_width() - block_w) / 2.0).max(0.0);
-        // The block centers horizontally in the pane (the webview face's
-        // language step centers its picker the same way); its CONTENT is
-        // left-aligned inside.
-        ui.allocate_ui_with_layout(
-            egui::vec2(block_w, content_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.add_space(2.0);
-                let _ = block_left;
-                ui.label(
-                    RichText::new(texts.lang_heading)
-                        .strong()
-                        .size(22.0)
-                        .color(theme.text),
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new(texts.lang_sub)
-                        .size(13.0)
-                        .color(theme.text_secondary),
-                );
-                ui.add_space(24.0);
+        {
+            ui.add_space(2.0);
+            ui.label(
+                RichText::new(texts.lang_heading)
+                    .strong()
+                    .size(22.0)
+                    .color(theme.text),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(texts.lang_sub)
+                    .size(13.0)
+                    .color(theme.text_secondary),
+            );
+            ui.add_space(24.0);
                 // HkSelect trigger parity: a 44pt surface row with a
                 // hairline border (text at 14%), 10pt radius, the
                 // selection CENTERED like the SCSS's text-align, and the
@@ -2504,8 +2482,7 @@ impl FallbackApp {
                     self.lang_combo_open = false;
                     self.apply_language(&language);
                 }
-            },
-        );
+        }
     }
 
     /// The location pane — product hero + the install-directory row
@@ -2520,46 +2497,29 @@ impl FallbackApp {
         // HkSelect-style row metric + the shared hairline border tone.
         let border_idle = mix(theme.background, theme.text, 0.14);
 
-        // One start-aligned block for the whole pane: the manifest's
-        // centered step alignment would otherwise re-center individual
-        // rows (the field row drifted under the browse button, the chip
-        // wrap spread apart). The sub rides the manifest's product name
-        // via %PRODUCT%.
-        ui.add_space(4.0);
-        // Vertical centering, deterministic like the language step:
-        // the content height is known (heading + field + hint bands),
-        // so the top offset is (available - content) / 2. egui's
-        // main_align on allocate_new_ui never moves the cursor.
-        let pane_h = ui.available_height();
-        let content_h = 320.0f32; // heading + field + hint bands
-        ui.add_space(((pane_h - content_h) / 2.0).max(0.0));
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), content_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.label(
-                    RichText::new(texts.location_heading)
-                        .strong()
-                        .size(22.0)
-                        .color(theme.text),
-                );
-                ui.add_space(10.0);
-                ui.label(
-                    RichText::new(
-                        texts.location_sub.replace("%PRODUCT%", &self.config.product.name),
-                    )
-                    .size(13.5)
-                    .color(theme.text_secondary),
-                );
-                ui.add_space(18.0);
-                ui.label(
-                    RichText::new(texts.dir_label)
-                        .size(13.0)
-                        .color(theme.text_secondary),
-                );
-            },
+        // One start-aligned block for the whole pane: heading, sub and
+        // the path field all start at the column's fixed origin. The
+        // sub rides the manifest's product name via %PRODUCT%.
+        ui.label(
+            RichText::new(texts.location_heading)
+                .strong()
+                .size(22.0)
+                .color(theme.text),
         );
-        ui.add_space(8.0);
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(
+                texts.location_sub.replace("%PRODUCT%", &self.config.product.name),
+            )
+            .size(13.5)
+            .color(theme.text_secondary),
+        );
+        ui.add_space(18.0);
+        ui.label(
+            RichText::new(texts.dir_label)
+                .size(13.0)
+                .color(theme.text_secondary),
+        );
 
         // ── The path field row: [drive chip | mono path] + browse ──
         let browse_w = 96.0f32;
@@ -3129,24 +3089,12 @@ impl FallbackApp {
         let uninstalling = self.uninstalling == Some(true);
 
         let strip_h = self.terminal.height_hint();
-        let zone_h = (ui.available_height() - strip_h - 18.0).max(0.0);
-        // The centered block's height is known (logo? product, bar,
-        // step) — egui will not center it by layout, so the offset is
-        // computed by hand, top and bottom, filling the zone exactly.
-        let has_logo = self.logo.is_some();
-        let block_h = if has_logo { 56.0 + 16.0 } else { 0.0 }
-            + 24.0   // headline
-            + 16.0
-            + 16.0   // bar / spinner
-            + 10.0
-            + 18.0;  // step label
-        let pad = ((zone_h - block_h) / 2.0).max(0.0);
-        ui.add_space(pad);
-        // A BOUNDED block (with_layout would eat the full remaining rect
-        // and shove the strip off the pane's bottom).
+        // The unified fixed-origin column: the progress block starts at
+        // the pane's top-left inset; the log strip pins to the pane's
+        // bottom edge. Nothing centers, nothing drifts.
         ui.allocate_ui_with_layout(
-            Vec2::new(ui.available_width(), block_h),
-            Layout::top_down(Align::Center),
+            Vec2::new(ui.available_width(), 140.0),
+            Layout::top_down(Align::LEFT),
             |ui| {
             if let Some(logo) = &self.logo {
                 ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(56.0)));
@@ -3191,7 +3139,10 @@ impl FallbackApp {
                 .unwrap_or_else(|| self.texts.installing.clone());
             ui.label(RichText::new(step).size(12.0).color(theme.text_tertiary));
         });
-        ui.add_space(pad + 18.0);
+        // Pin the strip to the pane's bottom edge: fill the gap between
+        // the block and the strip with exactly the space that remains.
+        let gap = ui.max_rect().bottom() - strip_h - 18.0 - ui.cursor().top();
+        ui.add_space(gap.max(0.0));
         self.log_view(ui);
     }
 
@@ -3213,12 +3164,12 @@ impl FallbackApp {
                         Some(self.dir.trim().trim_end_matches('\\').to_string()),
                     ),
                 };
-                // hikari's done hero: a centered column — green ring
-                // check, the success headline in the success color, the
-                // install path in monospace, then the hint and the
-                // shortcut answers.
+                // The done hero, left-aligned at the column origin like
+                // every pane: green ring check, the success headline in
+                // the success color, the install path in monospace, then
+                // the hint and the shortcut answers.
                 ui.add_space(16.0);
-                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                {
                     Self::hero_check(ui, &theme);
                     ui.add_space(10.0);
                     ui.label(
@@ -3256,74 +3207,39 @@ impl FallbackApp {
                             |raw: &str| -> String { raw.replace("%PRODUCT%", &product) };
                         let menu_asks = menu_policy_asks(&self.config);
                         let portable = self.mode == "portable";
-                        let menu_label = with_product(&texts.menu_shortcut);
-                        let desktop_label = with_product(&texts.desktop_shortcut);
-                        let launch_label = with_product(&texts.launch_after);
-                        if portable {
+                        // The answers stack left-aligned at the origin —
+                        // the web `.wizard-done__shortcuts` block; a
+                        // portable run keeps only the launch answer (its
+                        // shortcuts point nowhere).
+                        if menu_asks && !portable {
                             Self::circle_checkbox(
                                 ui,
                                 theme,
-                                &mut self.launch_after,
-                                launch_label.as_str(),
+                                &mut self.start_menu,
+                                with_product(&texts.menu_shortcut).as_str(),
                                 None,
                             );
-                        } else {
-                            // The stack's width FOLLOWS its widest label
-                            // (plus the plate chrome) — a fixed-width
-                            // block leaves the shorter labels hugging its
-                            // left edge and the whole unit reading
-                            // left-shifted against the centered text
-                            // above.
-                            let measure = |ui: &egui::Ui, text: &str| -> f32 {
-                                ui.painter()
-                                    .layout_no_wrap(
-                                        text.to_owned(),
-                                        egui::FontId::proportional(13.0),
-                                        Color32::WHITE,
-                                    )
-                                    .size()
-                                    .x
-                            };
-                            let widest = [menu_label.as_str(), desktop_label.as_str(), launch_label.as_str()]
-                                .into_iter()
-                                .map(|t| measure(ui, t))
-                                .fold(0.0f32, f32::max);
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(30.0 + widest + 4.0, 96.0),
-                                Layout::top_down(Align::Min),
-                                |ui| {
-                                    if menu_asks {
-                                        Self::circle_checkbox(
-                                            ui,
-                                            theme,
-                                            &mut self.start_menu,
-                                            menu_label.as_str(),
-                                            None,
-                                        );
-                                        ui.add_space(8.0);
-                                    }
-                                    if desktop_asks {
-                                        Self::circle_checkbox(
-                                            ui,
-                                            theme,
-                                            &mut self.desktop_shortcut,
-                                            desktop_label.as_str(),
-                                            None,
-                                        );
-                                        ui.add_space(8.0);
-                                    }
-                                    Self::circle_checkbox(
-                                        ui,
-                                        theme,
-                                        &mut self.launch_after,
-                                        launch_label.as_str(),
-                                        None,
-                                    );
-                                },
-                            );
+                            ui.add_space(8.0);
                         }
+                        if desktop_asks && !portable {
+                            Self::circle_checkbox(
+                                ui,
+                                theme,
+                                &mut self.desktop_shortcut,
+                                with_product(&texts.desktop_shortcut).as_str(),
+                                None,
+                            );
+                            ui.add_space(8.0);
+                        }
+                        Self::circle_checkbox(
+                            ui,
+                            theme,
+                            &mut self.launch_after,
+                            with_product(&texts.launch_after).as_str(),
+                            None,
+                        );
                     }
-                });
+                }
             }
             Outcome::Failed(err) => {
                 // The HAlert error analog.
@@ -3468,25 +3384,25 @@ impl FallbackApp {
         let product = self.config.product.name.clone();
         let with_product = |raw: &str| raw.replace("%PRODUCT%", &product);
 
-        // Vertical centering (web `wizard-pane--center`): egui draws
-        // from the cursor, so the block gets a hand-computed top offset
-        // — the location pane's idiom. Heights in logical points.
-        let content_h = match self.stage {
-            Stage::Configure => 140.0,
-            Stage::Running => if self.logo.is_some() { 140.0 } else { 70.0 },
-            Stage::Finished => 180.0,
+        // hikari button analogs, content-sized: ghost = hairline box
+        // with muted text, solid = filled plate (the confirm row's
+        // uninstall rides the error channel).
+        let ghost = |ui: &mut egui::Ui, label: &str| {
+            Self::hand(ui.add(
+                Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(Stroke::new(1.0f32, theme.border))
+                    .corner_radius(CornerRadius::same(8))
+                    .min_size(Vec2::new(0.0, 32.0)),
+            ))
+            .clicked()
         };
-        ui.add_space(((ui.available_height() - content_h) / 2.0).max(0.0));
-
-        // hikari button analog for the terminal views' close: a filled
-        // plate (primary here; the danger fill is built into the
-        // confirm row's hand-placed button).
         let solid = |ui: &mut egui::Ui, label: &str, fill: Color32| {
             Self::hand(ui.add(
                 Button::new(RichText::new(label).strong().size(13.5).color(theme.on_primary))
                     .fill(fill)
                     .corner_radius(CornerRadius::same(8))
-                    .min_size(Vec2::new(112.0, 32.0)),
+                    .min_size(Vec2::new(0.0, 32.0)),
             ))
             .clicked()
         };
@@ -3507,71 +3423,24 @@ impl FallbackApp {
                         .color(theme.text_secondary),
                 );
                 ui.add_space(28.0);
-                // The action row centers as a unit (web
-                // `.wizard-uninstall__actions { justify-content:
-                // center }`). egui draws child UIs from the cursor, so a
-                // `ui.horizontal` cannot be centered by layout — but
-                // single widgets placed at explicit rects can. Measure
-                // the three buttons, center the run inside a full-width
-                // strip, and `ui.put` one rect per button.
-                let measure = |ui: &egui::Ui, text: &str, size: f32, min_w: f32| -> f32 {
-                    let galley = ui.painter().layout_no_wrap(
-                        text.to_owned(),
-                        egui::FontId::proportional(size),
-                        Color32::WHITE,
-                    );
-                    (galley.size().x + 24.0).max(min_w)
-                };
-                // (label, font size, min width, danger?)
-                let actions: Vec<(String, f32, f32, bool)> = vec![
-                    (texts.un_cancel.clone(), 13.0, 96.0, false),
-                    (with_product(&texts.un_repair), 13.0, 96.0, false),
-                    (with_product(&texts.uninstall), 13.5, 112.0, true),
-                ];
-                let widths: Vec<f32> = actions
-                    .iter()
-                    .map(|(text, size, min_w, _)| measure(ui, text, *size, *min_w))
-                    .collect();
-                let gap = ui.spacing().item_spacing.x;
-                let run: f32 =
-                    widths.iter().sum::<f32>() + gap * widths.len().saturating_sub(1) as f32;
-                let (strip, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 32.0),
-                    Sense::hover(),
-                );
-                let mut left = strip.center().x - run / 2.0;
-                // Index 0 = cancel, 1 = repair, 2 = uninstall.
-                for (index, ((text, size, _, danger), width)) in
-                    actions.iter().zip(&widths).enumerate()
-                {
-                    let rect =
-                        egui::Rect::from_min_size(pos2(left, strip.top()), vec2(*width, 32.0));
-                    let button = if *danger {
-                        Button::new(
-                            RichText::new(text.as_str())
-                                .strong()
-                                .size(*size)
-                                .color(theme.on_primary),
-                        )
-                        .fill(theme.error)
-                        .corner_radius(CornerRadius::same(8))
-                    } else {
-                        Button::new(
-                            RichText::new(text.as_str()).size(*size).color(theme.text_secondary),
-                        )
-                        .fill(Color32::TRANSPARENT)
-                        .stroke(Stroke::new(1.0f32, theme.border))
-                        .corner_radius(CornerRadius::same(8))
-                    };
-                    if Self::hand(ui.put(rect, button)).clicked() {
-                        match index {
-                            0 => std::process::exit(0),
-                            1 => self.spawn_uninstall_worker(ui.ctx(), true),
-                            _ => self.spawn_uninstall_worker(ui.ctx(), false),
-                        }
+                // The action row, left-aligned at the column origin —
+                // the unified fixed-origin rule (the web row is
+                // flex-start now too). Content-sized ghost/solid plates.
+                ui.horizontal(|ui| {
+                    if ghost(ui, texts.un_cancel.as_str()) {
+                        std::process::exit(0);
                     }
-                    left += width + gap;
-                }
+                    if ghost(ui, with_product(&texts.un_repair).as_str()) {
+                        self.spawn_uninstall_worker(ui.ctx(), true);
+                    }
+                    if solid(
+                        ui,
+                        with_product(&texts.uninstall).as_str(),
+                        theme.error,
+                    ) {
+                        self.spawn_uninstall_worker(ui.ctx(), false);
+                    }
+                });
             }
             // Running: the indeterminate sweep — shun's uninstall emits
             // no percents, and the web page keeps its loading bar
@@ -3921,8 +3790,12 @@ impl eframe::App for FallbackApp {
                 Frame::default()
                     // The pane layer: the token background, or the
                     // manifest's `pane-background` when it declares one.
+                    // ZERO margin — the content rect below owns ALL the
+                    // insets, so the cross-face numbers are exact (the
+                    // web pane's 48/40px padding, measured from the same
+                    // rail edge).
                     .fill(theme.pane_bg_override.unwrap_or(theme.background))
-                    .inner_margin(Margin::symmetric(20, 12)),
+                    .inner_margin(Margin::ZERO),
             )
             .show(ctx, |ui| {
                 if !timeline_left && !self.uninstall_mode {
@@ -3938,63 +3811,39 @@ impl eframe::App for FallbackApp {
                     self.banner(ui);
                     ui.add_space(12.0);
                 }
-                // Every pane centers its content block — horizontally
-                // always, vertically too (content panes that read as
-                // documents keep their start-aligned text inside the
-                // block; the running pane centers its bar). A fixed max
-                // width keeps wizard content off the window edges.
-                let align = shun::config::StepAlign::Center;
-                let pane = egui::Layout {
-                    main_wrap: false,
-                    main_dir: egui::Direction::TopDown,
-                    cross_align: egui::Align::Center,
-                    main_align: match self.stage {
-                        Stage::Running if !self.uninstall_mode => egui::Align::Min,
-                        _ => egui::Align::Center,
-                    },
-                    main_justify: false,
-                    cross_justify: false,
-                };
-                // The wizard caps its content block at 560pt (the rail
-                // keeps the central panel narrow, so the cap is nearly
-                // invisible). The uninstall page has NO rail — a capped
-                // block would anchor the whole pane left of center — so
-                // it spans the panel; the running page goes full-width
-                // too, because its log strip pins to the pane's bottom
-                // edge at full pane width (the web install layout).
-                let pane_w = if self.uninstall_mode || self.stage == Stage::Running {
-                    ui.available_width()
-                } else {
-                    ui.available_width().min(560.0)
-                };
-                ui.allocate_ui_with_layout(
-                    egui::vec2(pane_w, ui.available_height()),
-                    pane,
+                // THE unified content origin (user direction: both faces
+                // left-align everything at a FIXED inset — no per-page
+                // centering, so the heading parks at the same spot on
+                // every page and the distance from the pane's left edge
+                // never varies with content). 48/48 lateral matches the
+                // web pane's padding; PAD_T is 40 + the 12px titlebar
+                // clearance the web pane carries in its padding-top calc,
+                // so both headings land 84pt under the window top.
+                const PAD_L: f32 = 48.0;
+                const PAD_T: f32 = 52.0;
+                const PAD_R: f32 = 48.0;
+                let outer = ui.max_rect();
+                let content = egui::Rect::from_min_max(
+                    pos2(outer.left() + PAD_L, outer.top() + PAD_T),
+                    pos2(outer.right() - PAD_R, outer.bottom()),
+                );
+                ui.allocate_new_ui(
+                    egui::UiBuilder::new()
+                        .max_rect(content)
+                        .layout(Layout::top_down(Align::LEFT)),
                     |ui| {
-                        // The inner column fixes the text alignment;
-                        // the outer layout centers the block.
-                        let text_align = if self.stage == Stage::Configure {
-                            match align {
-                                shun::config::StepAlign::Center => egui::Align::Center,
-                                shun::config::StepAlign::Start => egui::Align::LEFT,
-                            }
-                        } else {
-                            egui::Align::Center
-                        };
-                        ui.with_layout(egui::Layout::top_down(text_align), |ui| {
-                            ui.set_width(pane_w);
-                            // The standalone uninstaller page replaces the
-                            // wizard panes entirely (one flow, every face).
-                            if self.uninstall_mode {
-                                self.uninstall_view(ui);
-                                return;
-                            }
-                            match self.stage {
-                                Stage::Configure => self.configure_view(ui),
-                                Stage::Running => self.running_view(ui),
-                                Stage::Finished => self.finished_view(ui),
-                            }
-                        });
+                        ui.set_width(content.width());
+                        // The standalone uninstaller page replaces the
+                        // wizard panes entirely (one flow, every face).
+                        if self.uninstall_mode {
+                            self.uninstall_view(ui);
+                            return;
+                        }
+                        match self.stage {
+                            Stage::Configure => self.configure_view(ui),
+                            Stage::Running => self.running_view(ui),
+                            Stage::Finished => self.finished_view(ui),
+                        }
                     },
                 );
             });

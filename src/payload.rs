@@ -199,6 +199,13 @@ impl ArchivePayload {
         Ok(Self { entries, files })
     }
 
+    /// The carried bytes of one archive path, pre-extraction — the
+    /// script-hook runner's source (`prepare` hooks run before anything
+    /// is written to disk).
+    pub fn read_file(&self, path: &Path) -> Option<&[u8]> {
+        self.files.get(path).map(|bytes| bytes.as_slice())
+    }
+
     /// Whether any carried entry sits under `prefix` — the shipped-pack
     /// check behind optional attachments (a full build carries the dest
     /// subtree, a lite build does not).
