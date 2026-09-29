@@ -491,18 +491,20 @@ body {
    is vertically centered in the column. */
 .wizard-layout__rail {
   display: flex;
-  // The timeline centers in the plate both ways: vertically via
-  // align-items, horizontally by shrinking the rail's child to its
-  // content (the hikari timeline would otherwise span the plate and
-  // hug its left edge).
-  align-items: center;
+  // TOP-anchored at the unified heading position (user direction):
+  // the 82px top padding puts the first node's CENTER at 82+12=94px —
+  // the heading's first-line center (heading tops out at 40+40=80px)
+  // instead of floating mid-plate. Horizontal stays centered by
+  // shrinking the rail's child to its content (the hikari timeline
+  // would otherwise span the plate and hug its left edge).
+  align-items: flex-start;
   justify-content: center;
   background: rgb(var(--color-text) / 0.045);
   border-right: 1px solid rgb(var(--color-border) / 0.8);
   // The grid gap would push the plate off the pane's edge: pull the
   // border flush by eating the gap into the plate's own padding.
   margin-right: calc(var(--wizard-gap, 26px) * -1);
-  padding: 20px 0 20px 24px;
+  padding: 82px 0 20px 24px;
   padding-right: var(--wizard-gap, 26px);
 
   > * {

@@ -396,11 +396,11 @@ export default defineComponent({
           theme.value = (view as { theme?: unknown }).theme as typeof theme.value;
           applyThemeMode();
           bootWallpaper();
-          // The solar clock: re-resolve every five minutes while the
-          // mode is unpinned, so dusk flips the wizard live.
-          window.setInterval(() => {
+          // The OS theme clock: an OS light/dark flip re-applies
+          // while the mode is unpinned, so the wizard follows live.
+          prefersDark?.addEventListener?.("change", () => {
             if (userPinned.value === null) applyThemeMode();
-          }, 5 * 60 * 1000);
+          });
         })
         .catch(() => {});
       invoke<DriveInfo[]>("list_drives")
@@ -632,56 +632,25 @@ export default defineComponent({
     // minutes so dawn and dusk flip a live wizard. `light`/`dark` pin
     // via [data-mode]; an explicit user toggle (when the manifest
     // allows it) wins for the session.
-    const solarAltitude = (latDeg: number, lngDeg: number): number => {
-      const DEG = Math.PI / 180;
-      const RAD = 180 / Math.PI;
-      const jd = Date.now() / 86400000 + 2440587.5;
-      const T = (jd - 2451545.0) / 36525;
-      let theta =
-        (280.46061837 +
-          360.98564736629 * (jd - 2451545.0) +
-          0.000387933 * T * T -
-          (T * T * T) / 38710000) %
-        360;
-      if (theta < 0) theta += 360;
-      const L0 = (280.46646 + 36000.76983 * T) % 360;
-      const M = ((357.52911 + 35999.05029 * T) % 360) * DEG;
-      const C =
-        (1.9146 - 0.004817 * T) * Math.sin(M) +
-        (0.019993 - 0.000101 * T) * Math.sin(2 * M);
-      let sunLon = (L0 + C) % 360;
-      if (sunLon < 0) sunLon += 360;
-      const omega = (125.04 - 1934.136 * T) * DEG;
-      const lambda = sunLon * DEG - 0.00569 * DEG - 0.00478 * DEG * Math.sin(omega);
-      const epsilon = (23.439291 - 0.013004 * T) * DEG;
-      const decl = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
-      const ra = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
-      let ha = theta + lngDeg - ra * RAD;
-      ha = (((ha + 180) % 360) + 360) % 360 - 180;
-      const lat = latDeg * DEG;
-      const haRad = ha * DEG;
-      return (
-        Math.asin(
-          Math.sin(lat) * Math.sin(decl) +
-            Math.cos(lat) * Math.cos(decl) * Math.cos(haRad),
-        ) * RAD
-      );
-    };
-    const systemWantsDark = (): boolean => {
-      // 31.23°N is hikari's estimate latitude; the longitude comes
-      // from the timezone offset (minutes / 4 = degrees east).
-      const offsetMin = -new Date().getTimezoneOffset();
-      const lng = offsetMin / 4;
-      return solarAltitude(31.23, lng) <= 6;
-    };
+    // Light/dark resolution (hikari rules, user direction): `system`
+    // follows the MACHINE's app theme — WebView2 honors Windows 11's
+    // personalization light/dark through the prefers-color-scheme
+    // query — not the sun. The query unavailable resolves LIGHT
+    // (the documented floor). A live OS flip re-applies while the
+    // wizard sits open; a user toggle (when the manifest allows it)
+    // wins for the session.
+    const systemWantsDark = (): boolean =>
+      window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)");
     const themeMode = ref<"system" | "light" | "dark">("system");
     const userPinned = ref<"light" | "dark" | null>(null);
     const applyThemeMode = () => {
       const resolved =
         userPinned.value ?? theme.value?.mode ?? "system";
       // themeMode carries the EFFECTIVE side (system resolves against
-      // the sun), so the caption toggle's sun/moon reflects what the
-      // page actually shows instead of pinning on the raw "system".
+      // the OS preference), so the caption toggle's sun/moon reflects
+      // what the page actually shows instead of pinning on the raw
+      // "system".
       const effective =
         resolved === "system"
           ? systemWantsDark()

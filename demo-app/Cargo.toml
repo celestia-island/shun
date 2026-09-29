@@ -49,9 +49,13 @@ path = "NOTICE.md"
 #     { image = "assets/fallback.png" },
 #   ]
 [package.metadata.shun.shell.theme]
-mode = "dark"
-background = { from = "#0B1220", to = "#16223A", angle = 120 }
-rail-background = "#0E1728"
+# `system` follows the machine's app theme (AppsUseLightTheme),
+# undetectable resolving light — the same rule the products ship.
+mode = "system"
+# No `background` / `rail-background` here: a pinned dark gradient
+# would fight the system theme this manifest now follows. Products
+# that pin their look (evernight's own palette) declare their layers;
+# the demo shows the unpinned system path.
 
 # A named build variant (shun build --variant lite): payload override +
 # shell-build env, the flavor-marker channel.

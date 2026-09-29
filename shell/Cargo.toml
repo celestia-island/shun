@@ -62,13 +62,7 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_Graphics_Dwm",
   "Win32_System_Com",
 ] }
-# The solar theme clock's location fix — the native slot for hikari's
-# geolocation provider (windows-sys ships no WinRT, only the `windows`
-# crate does).
-windows = { version = "^0.61", features = [
-  "Devices_Geolocation",
-  "Foundation",
-] }
+# The OS app-theme probe (AppsUseLightTheme) for the `system` mode.
 winreg = "0.56.0"
 
 # The shell carries no `[package.metadata.shun]` of its own: the delivery

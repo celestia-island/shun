@@ -230,6 +230,24 @@ fn folder_badge(ui: &mut egui::Ui, theme: &Theme, size: f32) -> egui::Response {
     response
 }
 
+/// The machine's app-theme preference: Windows 11 personalization's
+/// `AppsUseLightTheme` (1 = light). Any failure to read it — older
+/// Windows, a stripped registry — resolves LIGHT (the user direction's
+/// floor), and so does every non-Windows platform.
+#[cfg(windows)]
+fn os_prefers_light() -> bool {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
+    use winreg::RegKey;
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    hkcu.open_subkey_with_flags(
+        r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        KEY_READ,
+    )
+    .and_then(|key| key.get_value::<u32, _>("AppsUseLightTheme"))
+    .map(|value| value != 0)
+    .unwrap_or(true)
+}
+
 fn resolve_theme(config: &ShunConfig) -> Theme {
     let shell = config.shell.clone().unwrap_or_default();
     let accent = shell.theme.as_ref().and_then(|theme| theme.accent);
@@ -242,15 +260,17 @@ fn resolve_theme(config: &ShunConfig) -> Theme {
     // explicit light/dark pin.
     let mut theme = match shell.theme.as_ref().and_then(|theme| theme.mode) {
         Some(shun::config::ThemeMode::Light) => Theme::light(accent),
-        Some(shun::config::ThemeMode::System) => {
-            let (lat, lng) = solar::timezone_estimate();
-            if solar::prefers_light(lat, lng) {
+        Some(shun::config::ThemeMode::Dark) => Theme::dark(accent),
+        // `system` (and unset): follow the MACHINE's app theme —
+        // Windows 11's personalization light/dark — not the sun.
+        // Undetectable resolves light (user direction).
+        Some(shun::config::ThemeMode::System) | None => {
+            if os_prefers_light() {
                 Theme::light(accent)
             } else {
                 Theme::dark(accent)
             }
         }
-        Some(shun::config::ThemeMode::Dark) | None => Theme::dark(accent),
     };
     // The manifest's background tints the tokens: solid applies as-is, a
     // gradient mixes to its midpoint (egui paints flat fills). Panes and
@@ -332,159 +352,6 @@ fn gradient_midpoint(spec: &shun::config::BackgroundSpec) -> Option<Color32> {
         (a.g() + b.g()) / 2,
         (a.b() + b.b()) / 2,
     ))
-}
-
-// ── The solar theme clock — ported 1:1 from hikari's useSolarTime.ts ────
-//
-// `system` theme mode resolves day/night from the SUN, not the OS
-// preference: the sun's altitude at the device's coordinates decides
-// (day → light, dusk/night → dark). Coordinates cascade like hikari's:
-// the Windows location service fix when one lands, else the first-paint
-// estimate (hikari's default latitude + the timezone-offset longitude).
-// The clock re-evaluates every five minutes, so dawn and dusk flip the
-// face while it sits open.
-mod solar {
-    const DEG: f64 = core::f64::consts::PI / 180.0;
-    const RAD: f64 = 180.0 / core::f64::consts::PI;
-
-    fn to_julian_date(unix_ms: i64) -> f64 {
-        unix_ms as f64 / 86_400_000.0 + 2_440_587.5
-    }
-
-    fn greenwich_sidereal_time(jd: f64) -> f64 {
-        let t = (jd - 2_451_545.0) / 36_525.0;
-        let mut theta = (280.460_618_37
-            + 360.985_647_366_29 * (jd - 2_451_545.0)
-            + 0.000_387_933 * t * t
-            - t * t * t / 38_710_000.0)
-            % 360.0;
-        if theta < 0.0 {
-            theta += 360.0;
-        }
-        theta
-    }
-
-    /// Sun declination (radians) and right ascension (degrees).
-    fn sun_equatorial(jd: f64) -> (f64, f64) {
-        let t = (jd - 2_451_545.0) / 36_525.0;
-        let l0 = (280.466_46 + 36_000.769_83 * t) % 360.0;
-        let m = ((357.529_11 + 35_999.050_29 * t) % 360.0) * DEG;
-        let c = (1.914_6 - 0.004_817 * t) * m.sin() + (0.019_993 - 0.000_101 * t) * (2.0 * m).sin();
-        let mut sun_lon = (l0 + c) % 360.0;
-        if sun_lon < 0.0 {
-            sun_lon += 360.0;
-        }
-        let omega = (125.04 - 1_934.136 * t) * DEG;
-        let lambda = sun_lon * DEG - 0.005_69 * DEG - 0.004_78 * DEG * omega.sin();
-        let epsilon = (23.439_291 - 0.013_004 * t) * DEG;
-        let decl = (epsilon.sin() * lambda.sin()).asin();
-        let ra = (epsilon.cos() * lambda.sin()).atan2(lambda.cos());
-        (decl, ra * RAD)
-    }
-
-    /// The sun's altitude in degrees at the given coordinates right now.
-    pub(crate) fn solar_altitude(lat_deg: f64, lng_deg: f64) -> f64 {
-        let unix_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        let jd = to_julian_date(unix_ms);
-        let (decl, ra) = sun_equatorial(jd);
-        let mut ha = greenwich_sidereal_time(jd) + lng_deg - ra;
-        ha = (((ha + 180.0) % 360.0) + 360.0) % 360.0 - 180.0;
-        let (lat_r, ha_r) = (lat_deg * DEG, ha * DEG);
-        (lat_r.sin() * decl.sin() + lat_r.cos() * decl.cos() * ha_r.cos()).asin() * RAD
-    }
-
-    /// hikari's bands: day above +6°, civil twilight in between, night
-    /// below −6°. Light only in full day — matching `useTheme`'s
-    /// `resolveEffectiveMode` (day → light, dusk/night → dark).
-    pub(crate) fn prefers_light(lat_deg: f64, lng_deg: f64) -> bool {
-        solar_altitude(lat_deg, lng_deg) > 6.0
-    }
-
-    /// First-paint estimate: hikari's default latitude plus the
-    /// timezone-offset longitude (offset minutes / 4 = degrees).
-    pub(crate) fn timezone_estimate() -> (f64, f64) {
-        (31.23, f64::from(local_utc_offset_minutes()) / 4.0)
-    }
-
-    /// Windows location service fix resolved on a worker thread — the
-    /// native slot for hikari's geolocation provider. `None` when the
-    /// service is off, permission is denied, or no fix lands in time.
-    #[cfg(windows)]
-    pub(crate) fn spawn_fix_resolver() -> std::sync::mpsc::Receiver<Option<(f64, f64)>> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(winrt_fix());
-        });
-        rx
-    }
-
-    #[cfg(windows)]
-    fn winrt_fix() -> Option<(f64, f64)> {
-        use std::sync::mpsc;
-        use std::time::Duration;
-        // The WinRT call needs an initialized apartment; the UI thread
-        // keeps its own — init MTA here.
-        unsafe {
-            windows_sys::Win32::System::Com::CoInitializeEx(
-                std::ptr::null(),
-                windows_sys::Win32::System::Com::COINIT_MULTITHREADED as u32,
-            );
-        }
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let fix = (|| -> Option<(f64, f64)> {
-                use windows::Devices::Geolocation::Geolocator;
-                let op = Geolocator::new().ok()?.GetGeopositionAsync().ok()?;
-                let position = op.get().ok()?;
-                let basic = position
-                    .Coordinate()
-                    .ok()?
-                    .Point()
-                    .ok()?
-                    .Position()
-                    .ok()?;
-                Some((basic.Latitude, basic.Longitude))
-            })();
-            let _ = tx.send(fix);
-        });
-        // A wedged service must not hold the theme clock hostage: the
-        // worker leaks (one short-lived stack), the face keeps the
-        // timezone estimate.
-        rx.recv_timeout(Duration::from_secs(4)).ok().flatten()
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn spawn_fix_resolver() -> std::sync::mpsc::Receiver<Option<(f64, f64)>> {
-        let (_, rx) = std::sync::mpsc::channel();
-        rx
-    }
-
-    /// Minutes east of UTC (DST-adjusted) for the longitude estimate.
-    #[cfg(windows)]
-    fn local_utc_offset_minutes() -> i32 {
-        use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
-        unsafe {
-            let mut tz: TIME_ZONE_INFORMATION = std::mem::zeroed();
-            // 1 = standard time active, 2 = daylight; the active bias
-            // rides along. Bias is minutes WEST (UTC = local + Bias).
-            let state = GetTimeZoneInformation(&mut tz);
-            let mut bias = tz.Bias;
-            if state == 2 {
-                bias += tz.DaylightBias;
-            } else if state == 1 {
-                bias += tz.StandardBias;
-            }
-            -bias
-        }
-    }
-
-    #[cfg(not(windows))]
-    fn local_utc_offset_minutes() -> i32 {
-        480 // UTC+8 — the estimate's honest default
-    }
 }
 
 // ── UI copy: the i18n strings of the web shell (shell/web/src/i18n.ts) ──
@@ -968,12 +835,8 @@ struct FallbackApp {
     mode_pinned: bool,
     /// The Windows location fix once it lands; `None` keeps the
     /// timezone estimate driving the solar clock.
-    geo: Option<(f64, f64)>,
-    geo_rx: Receiver<Option<(f64, f64)>>,
     /// The solar clock's last verdict and tick time — re-evaluated
     /// every five minutes so dawn/dusk flip a `system`-mode face.
-    solar_dark: Option<bool>,
-    last_solar_tick: std::time::Instant,
     /// The DWM round/shadow hint is applied once, on the first frame.
     dwm_rounded: bool,
     /// The install-location candidates + drive list — probed once from
@@ -1075,7 +938,6 @@ impl FallbackApp {
         logo: Option<TextureHandle>,
 
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
-        geo_rx: Receiver<Option<(f64, f64)>>,
         caption_icons: CaptionIcons,
         flavor: String,
     ) -> Self {
@@ -1112,10 +974,6 @@ impl FallbackApp {
             texts,
             dark_theme: resolved_dark,
             mode_pinned: false,
-            geo: None,
-            geo_rx,
-            solar_dark: None,
-            last_solar_tick: std::time::Instant::now(),
             dwm_rounded: false,
             candidates: probed
                 .into_iter()
@@ -1263,36 +1121,6 @@ impl FallbackApp {
         });
     }
 
-    /// The theme clock (hikari's `useTheme`): while the manifest leaves
-    /// the mode on `system` and the user hasn't pinned a side, the sun
-    /// decides — re-evaluated when the location fix lands and every
-    /// five minutes after, so dawn and dusk flip the face live.
-    fn tick_solar_clock(&mut self, ctx: &Context) {
-        let mut got_fix = false;
-        while let Ok(fix) = self.geo_rx.try_recv() {
-            self.geo = fix;
-            got_fix = true;
-        }
-        let pinned = matches!(
-            self.config
-                .shell
-                .as_ref()
-                .and_then(|t| t.theme.as_ref())
-                .and_then(|t| t.mode),
-            Some(shun::config::ThemeMode::Light) | Some(shun::config::ThemeMode::Dark)
-        ) || self.mode_pinned;
-        let due = self.last_solar_tick.elapsed().as_secs() >= 300;
-        if pinned || (!got_fix && !due) {
-            return;
-        }
-        self.last_solar_tick = std::time::Instant::now();
-        let (lat, lng) = self.geo.unwrap_or_else(solar::timezone_estimate);
-        let dark = !solar::prefers_light(lat, lng);
-        if self.solar_dark != Some(dark) {
-            self.solar_dark = Some(dark);
-            self.apply_mode(ctx, dark);
-        }
-    }
 
     fn apply_language(&mut self, language: &str) {
         if self.language == language {
@@ -1690,10 +1518,6 @@ pub fn run(
                 });
             let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
             let (_sender, receiver) = channel::<WorkerMsg>();
-            // The theme clock's geolocation fix — resolved off-thread so
-            // a slow or unavailable location service never delays the
-            // first frame (the estimate covers until it lands).
-            let geo_rx = solar::spawn_fix_resolver();
             let caption_icons = CaptionIcons::load(&cc.egui_ctx);
             let mut app = FallbackApp::new(
                 config,
@@ -1705,7 +1529,6 @@ pub fn run(
                 receiver,
                 logo,
                 license_docs,
-                geo_rx,
                 caption_icons,
                 SHUN_FLAVOR.trim().to_string(),
             );
@@ -2019,12 +1842,12 @@ impl FallbackApp {
         };
 
         if vertical {
-            // Deterministic centering, both axes: computed vertical
-            // offset for the fixed-metric block, computed left offset
-            // for the block width (egui's aligns nest unreliably through
-            // the pane's fixed-width block).
-            let total = items.len() as f32 * circle_d + (items.len() as f32 - 1.0) * connector_h;
-            let top = ((ui.available_height() - total) / 2.0).max(0.0);
+            // TOP-anchored at the unified heading position: the rail's
+            // panel margin (48pt under the titlebar) puts the first
+            // node's top at the same 80pt the pane's heading starts at
+            // — no vertical centering, the rail reads as a header
+            // element like the web face's. Horizontal stays centered.
+            let top = 0.0;
             let left = ((ui.available_width() - block_w) / 2.0).max(0.0);
             let cx = left + circle_d / 2.0;
 
@@ -3726,7 +3549,6 @@ impl FallbackApp {
 impl eframe::App for FallbackApp {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         self.drain_worker();
-        self.tick_solar_clock(ctx);
         // Frameless windows lose BOTH the rounded corners and the
         // shadow until DWMWCP_ROUND lands. Apply it here — our OWN
         // window handle, not a title lookup (both faces share one
@@ -3777,7 +3599,15 @@ impl eframe::App for FallbackApp {
                         .fill(theme.rail_bg_override.unwrap_or_else(|| {
                             mix(theme.background, theme.text, 0.04)
                         }))
-                        .inner_margin(Margin::same(16)),
+                        // Top inset 54: the first node's CENTER lands
+                        // at 32+54+12 = 98pt — the heading's first-line
+                        // center (the heading tops out at 32+52=84).
+                        .inner_margin(Margin {
+                            left: 16,
+                            right: 16,
+                            top: 54,
+                            bottom: 16,
+                        }),
                 )
                 .show(ctx, |ui| {
                     self.timeline(ui, true);
