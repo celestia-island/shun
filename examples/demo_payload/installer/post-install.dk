@@ -1,0 +1,4 @@
+# Post-install hold: a second, shorter window after the flow completes
+# (registration done, files verified) while the wizard still shows the
+# running page. Demo-only.
+sleep 2500

@@ -105,9 +105,9 @@ body {
 }
 
 /* The uninstall page's pane hangs directly off .installer (no rail) —
-   restore the container insets the rail layout moved onto the pane. */
+   no wrapper insets: the pane's own padding IS the unified inset. */
 .installer > .wizard-layout__pane {
-  padding: 0 28px 20px;
+  padding: 0;
 }
 
 .wizard-pane {
@@ -116,13 +116,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-/* Install / done panes center their content both ways */
-.wizard-pane--center {
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  // THE unified content origin (both faces): a fixed 48px left/right
+  // and 40px top inset, everything left-aligned — the heading parks at
+  // the same spot on every page instead of drifting with content
+  // length (user direction; the egui face carries the same numbers).
+  padding: 40px 48px 24px;
+  align-items: flex-start;
+  text-align: left;
 }
 
 /* Install pane: progress centered on top, live log strip along the
@@ -138,9 +138,9 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   gap: 16px;
 }
 
@@ -155,9 +155,9 @@ body {
 .wizard-install__main {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   gap: 16px;
   min-height: 0;
 }
@@ -211,14 +211,6 @@ body {
   .wizard-target__label {
     font-size: var(--text-sm);
     color: rgb(var(--color-muted));
-  }
-
-  // Quick candidates under the path field: one small button per
-  // location the backend proposed (its `dir` was picked from these).
-  /* The drive list is ten rows on a good day — the affix picker's
-     search box is noise here; hide it for the path field only. */
-  .path-field .hk-affix-search {
-    display: none;
   }
 
   .wizard-target__quick-title {
@@ -437,7 +429,7 @@ body {
   .wizard-uninstall__actions {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 10px;
   }
 
@@ -499,18 +491,20 @@ body {
    is vertically centered in the column. */
 .wizard-layout__rail {
   display: flex;
-  // The timeline centers in the plate both ways: vertically via
-  // align-items, horizontally by shrinking the rail's child to its
-  // content (the hikari timeline would otherwise span the plate and
-  // hug its left edge).
-  align-items: center;
+  // TOP-anchored at the unified heading position (user direction):
+  // the 82px top padding puts the first node's CENTER at 82+12=94px —
+  // the heading's first-line center (heading tops out at 40+40=80px)
+  // instead of floating mid-plate. Horizontal stays centered by
+  // shrinking the rail's child to its content (the hikari timeline
+  // would otherwise span the plate and hug its left edge).
+  align-items: flex-start;
   justify-content: center;
   background: rgb(var(--color-text) / 0.045);
   border-right: 1px solid rgb(var(--color-border) / 0.8);
   // The grid gap would push the plate off the pane's edge: pull the
   // border flush by eating the gap into the plate's own padding.
   margin-right: calc(var(--wizard-gap, 26px) * -1);
-  padding: 20px 0 20px 24px;
+  padding: 82px 0 20px 24px;
   padding-right: var(--wizard-gap, 26px);
 
   > * {

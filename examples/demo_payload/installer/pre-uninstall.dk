@@ -1,0 +1,3 @@
+# Pre-uninstall hold: a short window before the removal begins
+# (the uninstaller page is still on its running state). Demo-only.
+sleep 1500

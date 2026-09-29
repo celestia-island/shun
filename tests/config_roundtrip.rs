@@ -8,6 +8,7 @@ use shun::config::{
 
 fn sample() -> ShunConfig {
     ShunConfig {
+        script: None,
         variants: None,
         product: ProductIdentity {
             name: "ShunDemo".into(),

@@ -31,7 +31,7 @@ export default defineComponent({
   emits: {
     action: (_id: string) => true,
   },
-  setup(props) {
+  setup(props, { emit }) {
     const maximized = ref(false);
     let win: TauriWindow | null = null;
     let unlistenResize: (() => void) | null = null;

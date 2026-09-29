@@ -170,10 +170,15 @@ export default defineComponent({
                 side="prefix"
                 selected={selectedMount.value}
                 disabled={props.disabled}
+                // The drive list is a handful of rows — the picker's
+                // search box is noise here (user direction). The
+                // searchable PROP, not a CSS override: the popup
+                // teleports outside .path-field, so a descendant
+                // selector can never reach it.
+                searchable={false}
                 chipClass="path-field-chip"
                 chipLabel={props.labels.chipLabel}
                 title={props.labels.pickerTitle}
-                searchPlaceholder={props.labels.searchPlaceholder}
                 emptyText={props.labels.emptyText}
                 onSelect={(key: unknown) => {
                   const k = String(key);
