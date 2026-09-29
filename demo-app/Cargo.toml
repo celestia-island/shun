@@ -107,6 +107,19 @@ runner = "duckscript"
 phase = "prepare"
 script = "installer/prepare.dk"
 
+# The post-install hold: registration is done, the running page still
+# up — the second demo window for mid-install screenshots.
+[[package.metadata.shun.script.hooks]]
+phase = "post-install"
+script = "installer/post-install.dk"
+
+# The pre-uninstall hold: the uninstaller's running state, before any
+# removal work begins (the script itself is exempt from the manifest's
+# file sweep — hooks live in the installer/ pocket).
+[[package.metadata.shun.script.hooks]]
+phase = "pre-uninstall"
+script = "installer/pre-uninstall.dk"
+
 [package.metadata.shun.msix]
 identity-name = "ShunDemo"
 publisher = "CN=celestia-island"

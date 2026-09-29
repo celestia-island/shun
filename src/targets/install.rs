@@ -464,18 +464,20 @@ pub fn read_manifest(install_dir: &Path) -> Result<InstallManifest, ShunError> {
     })
 }
 
-/// Runs the config's `prepare`-phase script hooks (docs/en/design/
-/// scripting.md) — before any payload work, so a hook holds the flow's
-/// opening. The script rides the payload (read pre-extraction) and runs
-/// on the embedded duckscript interpreter with the wizard language
-/// exported (`SHUN_LANGUAGE`). A failing hook fails the install: a
-/// silently skipped hook would lie about what ran. Only `prepare` is
-/// mounted here; `post-install` / `pre-uninstall` stay design-stage.
-pub fn run_prepare_hooks(
+/// Runs the config's phase script hooks (docs/en/design/scripting.md):
+/// `prepare` (before any payload work), `post-install` (after the flow
+/// completes, before the wizard's done page), `pre-uninstall` (before
+/// the removal begins). The scripts ride the payload (`prepare` and
+/// `pre-uninstall` read them pre-extraction) and run on the embedded
+/// duckscript interpreter with the wizard language exported
+/// (`SHUN_LANGUAGE`). A failing hook fails the flow: a silently
+/// skipped hook would lie about what ran.
+pub fn run_phase_hooks(
+    phase: &str,
     config: &crate::config::ShunConfig,
-    payload: &crate::payload::ArchivePayload,
     ctx: &InstallContext,
     on_event: &mut dyn FnMut(FlowEvent),
+    read: &dyn Fn(&Path) -> Option<Vec<u8>>,
 ) -> Result<(), ShunError> {
     use crate::flow::FlowLog;
     use duckscript::types::runtime::Context as DuckContext;
@@ -489,12 +491,10 @@ pub fn run_prepare_hooks(
             hooks.runner
         )));
     }
-    for hook in hooks.hooks.iter().filter(|h| h.phase == "prepare") {
+    for hook in hooks.hooks.iter().filter(|h| h.phase == phase) {
         let path = Path::new(&hook.script);
-        let bytes = payload
-            .read_file(path)
-            .ok_or_else(|| ShunError::MissingEntry(path.to_path_buf()))?;
-        let script = std::str::from_utf8(bytes).map_err(|e| {
+        let bytes = read(path).ok_or_else(|| ShunError::MissingEntry(path.to_path_buf()))?;
+        let script = std::str::from_utf8(&bytes).map_err(|e| {
             ShunError::Config(format!("script {} is not utf-8: {e}", hook.script))
         })?;
         on_event(FlowEvent::Log {

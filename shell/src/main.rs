@@ -802,7 +802,7 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     };
 
     if cli.uninstall {
-        shun::wizard::run_uninstall(&core)?;
+        run_uninstall_events(&core, &mut print_event)?;
         println!(
             "shun: uninstalled {}",
             shun::wizard::current_exe_dir()
@@ -836,6 +836,15 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     }
     println!("shun: install complete");
     Ok(())
+}
+
+/// The uninstall through the shared event printer — pre-uninstall
+/// hooks and removal steps land on the console like the install's do.
+fn run_uninstall_events(
+    core: &WizardCore,
+    print_event: &mut dyn FnMut(&FlowEvent),
+) -> Result<(), String> {
+    shun::wizard::run_uninstall_with_events(core, &mut |event| print_event(&event))
 }
 
 /// Renders one structured log record for a headless console (English —

@@ -492,14 +492,18 @@ pub fn run_install(
     // Prepare-phase script hooks (docs/en/design/scripting.md): the
     // payload may carry runner scripts that hold the flow's opening —
     // the demo's screenshot-window delay rides this.
-    crate::targets::install::run_prepare_hooks(&core.config, payload, &ctx, &mut |event| {
-        on_event(&event)
-    })
+    crate::targets::install::run_phase_hooks(
+        "prepare",
+        &core.config,
+        &ctx,
+        &mut |event| on_event(&event),
+        &|path| payload.read_file(path).map(|b| b.to_vec()),
+    )
     .map_err(|e| e.to_string())?;
     let flow = InstallFlow {
         payload,
         registration: &WindowsRegistration,
-        ctx,
+        ctx: ctx.clone(),
     };
     let mut forwarding = |event: FlowEvent| on_event(&event);
     flow.run(&mut forwarding).map_err(|e| e.to_string())?;
@@ -511,13 +515,48 @@ pub fn run_install(
             percent: None,
         });
     }
+    // post-install hooks: after the flow's Completed event but before
+    // this returns — the wizard stays on the running page while they
+    // run, so their log lines land in the live pane.
+    crate::targets::install::run_phase_hooks(
+        "post-install",
+        &core.config,
+        &ctx,
+        &mut |event| on_event(&event),
+        // The flow has extracted by now — read from the install dir
+        // (the payload bytes are identical, but the on-disk copy is
+        // what a repair would have run too).
+        &|path| std::fs::read(install_dir.join(path)).ok(),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Drives the uninstall for the install dir this process sits in (the
 /// uninstall page and the headless ARP path both land here).
 pub fn run_uninstall(core: &WizardCore) -> Result<(), String> {
+    run_uninstall_with_events(core, &mut |_| {})
+}
+
+/// The uninstall with the event stream surfaced (the headless lane
+/// prints it; GUI faces drive their panes through the worker instead).
+pub fn run_uninstall_with_events(
+    core: &WizardCore,
+    on_event: &mut dyn FnMut(&FlowEvent),
+) -> Result<(), String> {
     let ctx = core.uninstall_context()?;
+    // pre-uninstall hooks: after the uninstall context resolves (the
+    // install dir this process sits in), before any removal work. The
+    // scripts read from that dir on disk — the uninstaller carries no
+    // payload, and the installed copy is what ran at install time.
+    crate::targets::install::run_phase_hooks(
+        "pre-uninstall",
+        &core.config,
+        &ctx,
+        &mut |event| on_event(&event),
+        &|path| std::fs::read(ctx.install_dir.join(path)).ok(),
+    )
+    .map_err(|e| e.to_string())?;
     uninstall(&ctx, &WindowsRegistration).map_err(|e| e.to_string())
 }
 

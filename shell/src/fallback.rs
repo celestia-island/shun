@@ -1064,15 +1064,17 @@ impl FallbackApp {
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(40);
         for i in 0..lines {
-            let kind = match i % 7 {
+            // A realistic mix: file writes echo, script markers step,
+            // completions ok (no errors - the capture is the happy run).
+            let kind = match i % 9 {
                 0 => crate::terminal::LineKind::Step,
-                5 => crate::terminal::LineKind::Error,
+                4 => crate::terminal::LineKind::Ok,
                 _ => crate::terminal::LineKind::Echo,
             };
-            let text = if i % 7 == 0 {
-                format!("» running script post-install-{i:02}.duck")
-            } else {
-                format!("write C:\\Games\\Evernight\\assets\\packs\\chapter_{i:03}.pack")
+            let text = match i % 9 {
+                0 => format!("running script installer/post-install.dk [{i:>2}]"),
+                4 => format!("verified data/packs/chapter_{i:03}.json"),
+                _ => format!("write data/packs/chapter_{i:03}.json"),
             };
             self.terminal.push(kind, text);
         }
@@ -2984,6 +2986,13 @@ impl FallbackApp {
         // the block and the strip with exactly the space that remains.
         let gap = ui.max_rect().bottom() - strip_h - 18.0 - ui.cursor().top();
         ui.add_space(gap.max(0.0));
+        // The web logs block: hairline separator above the strip, then
+        // 10pt of air before the header bar.
+        let (sep, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
+        ui.painter()
+            .rect_filled(sep, CornerRadius::ZERO, theme.border);
+        ui.add_space(10.0);
         self.log_view(ui);
     }
 
@@ -3119,13 +3128,7 @@ impl FallbackApp {
             return;
         }
         let theme = &self.theme;
-        self.terminal.render(
-            ui,
-            theme,
-            self.texts.log.as_str(),
-            self.texts.log_expand.as_str(),
-            self.texts.log_collapse.as_str(),
-        );
+        self.terminal.render(ui, theme, self.texts.log.as_str());
     }
 
     /// The done hero's check ring (hikari's CheckCircle2 at 56pt) — the
