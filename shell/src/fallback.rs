@@ -531,6 +531,8 @@ struct Texts {
     quick_title: String,
     dir_empty: String,
     desktop_shortcut: String,
+    menu_shortcut: String,
+    launch_after: String,
     hint_local: String,
     hint_portable: String,
     location_sub: String,
@@ -931,6 +933,14 @@ fn desktop_policy_asks(config: &ShunConfig) -> bool {
         .unwrap_or(false)
 }
 
+/// Same gate for the start-menu checkbox (`ShortcutPolicy` is the same
+/// enum — the manifest may pin the menu shortcut to always/never).
+fn menu_policy_asks(config: &ShunConfig) -> bool {
+    install_of(config)
+        .map(|install| install.start_menu_shortcut == shun::config::DesktopShortcutPolicy::Ask)
+        .unwrap_or(false)
+}
+
 fn install_of(config: &ShunConfig) -> Option<&shun::config::InstallConfig> {
     config.targets.iter().find_map(|t| match t {
         TargetConfig::Install(install) => Some(install),
@@ -989,6 +999,11 @@ struct FallbackApp {
     /// The wizard's answer to the `ask` desktop-shortcut policy
     /// (default checked, the NSIS convention).
     desktop_shortcut: bool,
+    /// The wizard's answer to the `ask` start-menu-shortcut policy
+    /// (default checked — the web done page's second checkbox).
+    start_menu: bool,
+    /// The done page's immediate-launch answer (default checked).
+    launch_after: bool,
     /// The wizard's answer to the `ask` install-scope policy
     /// (default per-user).
     machine: bool,
@@ -1136,6 +1151,8 @@ impl FallbackApp {
             stage: Stage::Configure,
             mode,
             desktop_shortcut: true,
+            start_menu: true,
+            launch_after: true,
             machine: false,
             license_docs,
             step: 0,
@@ -2244,7 +2261,18 @@ impl FallbackApp {
         width: Option<f32>,
     ) {
         let on = *checked;
-        let row_w = width.unwrap_or(ui.available_width());
+        // Default to the CONTENT's width (plate + gap + label), so the
+        // checkbox centers as a unit under a centering parent — a
+        // full-width row would pin the plate to the pane's left edge
+        // and read off-center on every centered pane.
+        let row_w = width.unwrap_or_else(|| {
+            let galley = ui.painter().layout_no_wrap(
+                label.to_owned(),
+                egui::FontId::proportional(13.0),
+                Color32::WHITE,
+            );
+            30.0 + galley.size().x + 4.0
+        });
         let (row, response) = ui.allocate_exact_size(vec2(row_w, 22.0), egui::Sense::click());
         let response = Self::hand(response);
         // The plate sits 4pt off the row's left edge and the paint rect
@@ -3214,22 +3242,86 @@ impl FallbackApp {
                             .size(12.0)
                             .color(theme.text_tertiary),
                     );
-                    // The done-page shortcut answer — the shared driver's
-                    // flow creates none, so the finish button applies it.
-                    // Offered only after a real (non-portable) install:
-                    // an uninstall has nothing to point a shortcut at.
-                    if desktop_asks
-                        && matches!(outcome.as_ref(), Some(Outcome::InstallOk))
-                        && self.mode != "portable"
-                    {
+                    // The done-page answers — the shared driver's flow
+                    // creates nothing, so the finish button applies
+                    // them. Three checkboxes stack left-aligned inside a
+                    // fixed-width block that centers as a unit (the web
+                    // `.wizard-done__shortcuts`); a portable run keeps
+                    // only the launch answer (its shortcuts point
+                    // nowhere).
+                    if matches!(outcome.as_ref(), Some(Outcome::InstallOk)) {
                         ui.add_space(12.0);
-                        Self::circle_checkbox(
-                            ui,
-                            theme,
-                            &mut self.desktop_shortcut,
-                            texts.desktop_shortcut.as_str(),
-                            Some(320.0),
-                        );
+                        let product = self.config.product.name.clone();
+                        let with_product =
+                            |raw: &str| -> String { raw.replace("%PRODUCT%", &product) };
+                        let menu_asks = menu_policy_asks(&self.config);
+                        let portable = self.mode == "portable";
+                        let menu_label = with_product(&texts.menu_shortcut);
+                        let desktop_label = with_product(&texts.desktop_shortcut);
+                        let launch_label = with_product(&texts.launch_after);
+                        if portable {
+                            Self::circle_checkbox(
+                                ui,
+                                theme,
+                                &mut self.launch_after,
+                                launch_label.as_str(),
+                                None,
+                            );
+                        } else {
+                            // The stack's width FOLLOWS its widest label
+                            // (plus the plate chrome) — a fixed-width
+                            // block leaves the shorter labels hugging its
+                            // left edge and the whole unit reading
+                            // left-shifted against the centered text
+                            // above.
+                            let measure = |ui: &egui::Ui, text: &str| -> f32 {
+                                ui.painter()
+                                    .layout_no_wrap(
+                                        text.to_owned(),
+                                        egui::FontId::proportional(13.0),
+                                        Color32::WHITE,
+                                    )
+                                    .size()
+                                    .x
+                            };
+                            let widest = [menu_label.as_str(), desktop_label.as_str(), launch_label.as_str()]
+                                .into_iter()
+                                .map(|t| measure(ui, t))
+                                .fold(0.0f32, f32::max);
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(30.0 + widest + 4.0, 96.0),
+                                Layout::top_down(Align::Min),
+                                |ui| {
+                                    if menu_asks {
+                                        Self::circle_checkbox(
+                                            ui,
+                                            theme,
+                                            &mut self.start_menu,
+                                            menu_label.as_str(),
+                                            None,
+                                        );
+                                        ui.add_space(8.0);
+                                    }
+                                    if desktop_asks {
+                                        Self::circle_checkbox(
+                                            ui,
+                                            theme,
+                                            &mut self.desktop_shortcut,
+                                            desktop_label.as_str(),
+                                            None,
+                                        );
+                                        ui.add_space(8.0);
+                                    }
+                                    Self::circle_checkbox(
+                                        ui,
+                                        theme,
+                                        &mut self.launch_after,
+                                        launch_label.as_str(),
+                                        None,
+                                    );
+                                },
+                            );
+                        }
                     }
                 });
             }
@@ -3643,7 +3735,7 @@ impl FallbackApp {
                             )
                             .fill(theme.primary)
                             .corner_radius(CornerRadius::same(8))
-                            .min_size(Vec2::new(112.0, 30.0)),
+                            .min_size(Vec2::new(0.0, 30.0)),
                         ))
                         .clicked()
                     {
@@ -3658,23 +3750,23 @@ impl FallbackApp {
                                 }
                                 _ => {
                                     // The done page owns the shortcut
-                                    // answer (the shared driver's flow
-                                    // creates none): apply it through the
-                                    // same finish path every face uses,
-                                    // then close. Uninstalls and portable
-                                    // runs never apply shortcuts — there
-                                    // is nothing to point at.
-                                    if matches!(self.outcome, Some(Outcome::InstallOk))
-                                        && self.mode != "portable"
-                                    {
+                                    // answers (the shared driver's flow
+                                    // creates none): apply them through
+                                    // the same finish path every face
+                                    // uses, then close. A portable run
+                                    // carries no shortcut answers —
+                                    // nothing to register — but its
+                                    // launch answer still applies.
+                                    if matches!(self.outcome, Some(Outcome::InstallOk)) {
+                                        let portable = self.mode == "portable";
                                         let core =
                                             WizardCore::new(self.config.clone(), BTreeMap::new());
                                         let _ = shun::wizard::apply_finish(
                                             &core,
                                             self.dir.trim(),
-                                            Some(self.desktop_shortcut),
-                                            Some(true),
-                                            false,
+                                            (!portable).then_some(self.desktop_shortcut),
+                                            (!portable).then_some(self.start_menu),
+                                            self.launch_after,
                                         );
                                     }
                                     std::process::exit(0);
@@ -3706,7 +3798,7 @@ impl FallbackApp {
                         )
                         .fill(theme.primary)
                         .corner_radius(CornerRadius::same(8))
-                        .min_size(Vec2::new(112.0, 30.0)),
+                        .min_size(Vec2::new(0.0, 30.0)),
                     );
                 }
 
@@ -3721,7 +3813,7 @@ impl FallbackApp {
                             .fill(Color32::TRANSPARENT)
                             .stroke(Stroke::new(1.0f32, theme.border))
                             .corner_radius(CornerRadius::same(8))
-                            .min_size(Vec2::new(88.0, 30.0)),
+                            .min_size(Vec2::new(0.0, 30.0)),
                     ))
                     .clicked()
                 };
@@ -3740,9 +3832,11 @@ impl FallbackApp {
                 } else if self.stage == Stage::Finished
                     && matches!(self.outcome, Some(Outcome::InstallOk))
                 {
-                    if ghost(ui, self.texts.uninstall.as_str()) {
-                        self.spawn_worker(ctx, true);
-                    }
+                    // 打开安装目录 ONLY. No uninstall next to the finish
+                    // button — the flow just succeeded and the ARP entry
+                    // (or the standalone uninstaller page) owns removal;
+                    // offering it here read as "uninstall what you just
+                    // installed".
                     if ghost(ui, self.texts.open_dir.as_str()) {
                         open_directory(self.dir.trim().trim_end_matches('\\'));
                     }

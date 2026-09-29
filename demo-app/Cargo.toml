@@ -63,6 +63,10 @@ env = { SHUN_FLAVOR = "lite" }
 local = true
 portable = true
 # The desktop-shortcut policy defaults to `ask` (the wizard checkbox).
+# The menu shortcut defaults to `always` (the historical convention) —
+# pinned to `ask` here so the demo exercises the same three-checkbox
+# done page the real products ship.
+start-menu-shortcut = "ask"
 # The install scope asks too — as a standalone step (see the steps
 # pipeline below).
 scope = "ask"

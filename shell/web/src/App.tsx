@@ -32,6 +32,7 @@ import {
   resolveSystemLocale,
   strings,
   type InstallerLocale,
+  type InstallerStrings,
 } from "./i18n";
 import { renderRichText } from "./richText";
 import { invoke, listen, openDirectory, tauriWindow } from "./tauri";
