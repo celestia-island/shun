@@ -65,6 +65,9 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 # The OS app-theme probe (AppsUseLightTheme) for the `system` mode.
 winreg = "0.56.0"
+# The wallpaper fetch (the manifest's image source; the same client the
+# online payload lane rides).
+ureq = "2"
 
 # The shell carries no `[package.metadata.shun]` of its own: the delivery
 # manifest it embeds comes from the target application (SHUN_MANIFEST, or

@@ -162,6 +162,19 @@ body {
   min-height: 0;
 }
 
+.wizard-target__flash-hint {
+    margin: 8px 0 0;
+    font-size: var(--text-xs);
+    color: rgb(var(--color-muted));
+  }
+
+  .wizard-attachments {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
 .wizard-sub {
   margin: 4px 0 0;
   font-size: var(--text-sm);
