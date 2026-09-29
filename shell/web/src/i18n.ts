@@ -160,6 +160,11 @@ export interface InstallerStrings {
     warnNoWritable: string;
     /** Note shown after the root-drive nesting pass rewrites the path. */
     nestedNote: string;
+    /** Optional-components block: heading + the bundled badge. */
+    attachTitle: string;
+    attachBundled: string;
+    /** Flash-target notice line on the location pane. */
+    flashHint: string;
   };
   flavors: { full: string; fullWebview2: string };
   license: {
@@ -240,6 +245,9 @@ const zhHans: InstallerStrings = {
     warnUnwritable: "当前目录不可写，安装会被拒绝——建议选择上方标亮的候选位置。",
     warnNoWritable: "未检测到可写的候选位置，请手动选择有权限的目录。",
     nestedNote: "已自动垫一层文件夹，避免直接安装到盘符根目录。",
+    attachTitle: "可选组件",
+    attachBundled: "已内置",
+    flashHint: "本交付还包含一个设备刷写步骤，安装完成后进行。",
   },
   flavors: {
     full: "完整版",
@@ -357,6 +365,9 @@ const zhHant: InstallerStrings = {
     warnUnwritable: "目前目錄不可寫，安裝會被拒絕——建議選擇上方標亮的候選位置。",
     warnNoWritable: "未偵測到可寫的候選位置，請手動選擇有權限的目錄。",
     nestedNote: "已自動墊一層資料夾，避免直接安裝到磁碟根目錄。",
+    attachTitle: "可選元件",
+    attachBundled: "已內建",
+    flashHint: "本交付還包含一個裝置燒錄步驟，安裝完成後進行。",
   },
   flavors: {
     full: "完整版",
@@ -474,6 +485,9 @@ const en: InstallerStrings = {
     warnUnwritable: "The current directory is not writable and the install would be rejected — pick one of the highlighted candidates above.",
     warnNoWritable: "No writable candidate location was found — pick a directory you have access to.",
     nestedNote: "A folder layer was added automatically so the payload never lands on the drive root.",
+    attachTitle: "Optional components",
+    attachBundled: "Bundled",
+    flashHint: "This delivery also includes a device flash step, run after the install.",
   },
   flavors: {
     full: "Full edition",
@@ -593,6 +607,9 @@ const ru: InstallerStrings = {
     warnUnwritable: "Текущий каталог недоступен для записи, установка будет отклонена — выберите один из подсвеченных вариантов выше.",
     warnNoWritable: "Доступных для записи вариантов не найдено — выберите папку, к которой у вас есть доступ.",
     nestedNote: "Автоматически добавлен уровень папки, чтобы установка не шла в корень диска.",
+    attachTitle: "Частые компоненты",
+    attachBundled: "В комплекте",
+    flashHint: "Этот пакет также включает шаг прошивки устройства после установки.",
   },
   flavors: {
     full: "Полная версия",
@@ -722,6 +739,9 @@ const ja: InstallerStrings = {
       "書き込み可能な候補場所が見つかりません。アクセス権のあるディレクトリを手動で選択してください。",
     nestedNote:
       "ドライブのルートに直接インストールされないよう、フォルダーを一階層自動で追加しました。",
+    attachTitle: "追加コンポーネント",
+    attachBundled: "同梱済み",
+    flashHint: "この配信にはインストール後のデバイス書き込みステップも含まれます。",
   },
   flavors: {
     full: "完全版",
@@ -855,6 +875,9 @@ const ko: InstallerStrings = {
       "쓸 수 있는 후보 위치를 찾지 못했습니다. 권한이 있는 디렉터리를 직접 선택하세요.",
     nestedNote:
       "드라이브 루트에 바로 설치되지 않도록 폴더를 한 단계 자동으로 추가했습니다.",
+    attachTitle: "선택 구성 요소",
+    attachBundled: "포함됨",
+    flashHint: "이 배포에는 설치 후 기기 플래시 단계도 포함됩니다.",
   },
   flavors: {
     full: "풀 버전",
@@ -979,6 +1002,9 @@ const fr: InstallerStrings = {
       "Aucun emplacement inscriptible n'a été trouvé — choisissez un répertoire auquel vous avez accès.",
     nestedNote:
       "Un niveau de dossier a été ajouté automatiquement afin que l'installation n'atterrisse jamais à la racine du lecteur.",
+    attachTitle: "Composants facultatifs",
+    attachBundled: "Inclus",
+    flashHint: "Cette livraison inclut également une étape de flashage après l'installation.",
   },
   flavors: {
     full: "Édition complète",
@@ -1109,6 +1135,9 @@ const es: InstallerStrings = {
       "No se encontró ninguna ubicación con permiso de escritura: elige un directorio al que tengas acceso.",
     nestedNote:
       "Se añadió automáticamente un nivel de carpeta para que la instalación nunca caiga en la raíz de la unidad.",
+    attachTitle: "Componentes opcionales",
+    attachBundled: "Incluido",
+    flashHint: "Esta entrega también incluye un paso de flasheo tras la instalación.",
   },
   flavors: {
     full: "Edición completa",
@@ -1239,6 +1268,9 @@ const de: InstallerStrings = {
       "Kein beschreibbarer Kandidatenort gefunden — wählen Sie ein Verzeichnis, auf das Sie zugreifen dürfen.",
     nestedNote:
       "Automatisch wurde eine Ordnerebene eingefügt, damit nichts direkt im Wurzelverzeichnis des Laufwerks landet.",
+    attachTitle: "Optionale Komponenten",
+    attachBundled: "Enthalten",
+    flashHint: "Diese Auslieferung umfasst zudem einen Flash-Schritt nach der Installation.",
   },
   flavors: {
     full: "Vollversion",
@@ -1368,6 +1400,9 @@ const pt: InstallerStrings = {
       "Não foi encontrado nenhum local com permissão de escrita — escolha um diretório a que tenha acesso.",
     nestedNote:
       "Foi adicionado automaticamente um nível de pastas para que a instalação nunca caia na raiz da unidade.",
+    attachTitle: "Componentes opcionais",
+    attachBundled: "Incluído",
+    flashHint: "Esta entrega inclui também um passo de gravação após a instalação.",
   },
   flavors: {
     full: "Edição completa",

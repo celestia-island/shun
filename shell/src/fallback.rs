@@ -50,6 +50,24 @@ enum WorkerMsg {
     Done(Result<(), String>),
 }
 
+/// One configure pane of the wizard's flow, built from the resolved
+/// pipeline: custom content steps slot in at their declaration position
+/// relative to the license (mode/scope fold into the location pane —
+/// the scope pane is a known gap).
+#[derive(Clone)]
+enum Page {
+    Language,
+    Location,
+    Content { title: String, body: String },
+    License,
+}
+
+impl Page {
+    fn is_license(&self) -> bool {
+        matches!(self, Page::License)
+    }
+}
+
 /// Wizard stage — the step rail and the content area follow it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Stage {
@@ -404,6 +422,9 @@ struct Texts {
     hint_portable: String,
     location_sub: String,
     target_hint_local: String,
+    attach_title: String,
+    attach_bundled: String,
+    flash_hint: String,
     warn_unwritable: String,
     warn_no_writable: String,
     flavor_full: String,
@@ -794,6 +815,72 @@ fn nested_dir(config: &ShunConfig, raw: &str) -> String {
 
 /// Whether the install target's desktop-shortcut policy is `ask` (the
 /// wizard checkbox); `always`/`never` never consult the user.
+/// The configure flow from the resolved pipeline (`shun-steps.json`):
+/// language + location, then the pipeline's content steps and the
+/// license at their declaration positions (license always present —
+/// the pipeline resolves one even for license-less configs, an empty
+/// documents list then renders an empty agreement pane).
+fn wizard_pages() -> Vec<Page> {
+    let pipeline: Vec<shun::config::ResolvedStep> =
+        serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json")))
+            .unwrap_or_default();
+    let mut pages = vec![Page::Language, Page::Location];
+    let mut license = false;
+    for step in &pipeline {
+        match step.kind {
+            shun::config::StepKind::Content => pages.push(Page::Content {
+                title: step.title.clone(),
+                body: step.body.clone().unwrap_or_default(),
+            }),
+            shun::config::StepKind::License => {
+                pages.push(Page::License);
+                license = true;
+            }
+            _ => {}
+        }
+    }
+    if !license {
+        pages.push(Page::License);
+    }
+    pages
+}
+
+/// Fetches the manifest wallpaper's first IMAGE source off-thread
+/// (ureq; video/pipeline sources have no egui renderer and stand down).
+/// `None` on any failure — the face paints its token background.
+fn spawn_wallpaper_fetcher(
+    config: &ShunConfig,
+) -> std::sync::mpsc::Receiver<Option<Vec<u8>>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let url = config
+        .shell
+        .as_ref()
+        .and_then(|shell| shell.theme.as_ref())
+        .and_then(|theme| theme.wallpaper.as_ref())
+        .and_then(|wallpaper| {
+            wallpaper.sources.iter().find_map(|source| match source {
+                shun::config::WallpaperSourceSpec::Image { image } => Some(image.clone()),
+                _ => None,
+            })
+        });
+    std::thread::spawn(move || {
+        let Some(url) = url else {
+            return;
+        };
+        let bytes = ureq::get(&url).call().ok().and_then(|resp| {
+            let mut bytes = Vec::new();
+            use std::io::Read;
+            resp.into_reader()
+                .take(64 * 1024 * 1024)
+                .read_to_end(&mut bytes)
+                .ok()
+                .map(|_| bytes)
+        });
+        let _ = tx.send(bytes);
+    });
+    rx
+}
+
 fn desktop_policy_asks(config: &ShunConfig) -> bool {
     install_of(config)
         .map(|install| install.desktop_shortcut == shun::config::DesktopShortcutPolicy::Ask)
@@ -843,6 +930,10 @@ struct FallbackApp {
     /// the same shun sources the web face's default_dir/list_drives
     /// commands ride (kind, writable, path) / (mount, kind, label).
     candidates: Vec<(String, bool, String)>,
+    /// Optional attachments resolved against the payload (key, title,
+    /// bundled?, size, picked?) — the location pane's block; picked
+    /// non-bundled ones stream in right after the install in the worker.
+    attachments: Vec<(String, String, bool, Option<u64>, bool)>,
     drives: Vec<(String, String, Option<String>)>,
     /// Live writability of the shown path, probed when it changes.
     dir_writable: Option<bool>,
@@ -854,6 +945,12 @@ struct FallbackApp {
     user_adjustable: bool,
     timeline_left: bool,
     logo: Option<TextureHandle>,
+    /// The manifest's wallpaper (first IMAGE source), fetched
+    /// off-thread after boot and painted as the pane's backdrop;
+    /// video/pipeline sources stand down (no egui renderer — the
+    /// degraded-face line), a failed fetch paints nothing.
+    wallpaper: Option<TextureHandle>,
+    wallpaper_rx: std::sync::mpsc::Receiver<Option<Vec<u8>>>,
     /// The lucide caption glyphs (loaded once; tinted per state).
     caption_icons: CaptionIcons,
     stage: Stage,
@@ -875,7 +972,10 @@ struct FallbackApp {
     /// shared with the web shell); the license step re-picks from this
     /// map when the language changes, falling back to `steps`.
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
-    /// Cursor into `steps` while on `Stage::Configure`.
+    /// The configure panes in walk order (language, location, the
+    /// pipeline's content steps around the license, license).
+    pages: Vec<Page>,
+    /// Cursor into `pages` while on `Stage::Configure`.
     step: usize,
     /// The license checkbox (`license` steps gate progression on it).
     license_accepted: bool,
@@ -938,6 +1038,7 @@ impl FallbackApp {
         logo: Option<TextureHandle>,
 
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
+        wallpaper_rx: std::sync::mpsc::Receiver<Option<Vec<u8>>>,
         caption_icons: CaptionIcons,
         flavor: String,
     ) -> Self {
@@ -964,6 +1065,11 @@ impl FallbackApp {
             Some(shun::config::ThemeMode::Dark)
         );
         let texts = wizard_strings().texts(&language);
+        let attachments: Vec<(String, String, bool, Option<u64>, bool)> =
+            shun::attachments::resolve(&config, &payload)
+                .into_iter()
+                .map(|a| (a.config.key, a.config.title, a.included, a.config.size, true))
+                .collect();
         Self {
             dir,
             config,
@@ -979,6 +1085,7 @@ impl FallbackApp {
                 .into_iter()
                 .map(|c| (c.kind.to_string(), c.writable, c.path))
                 .collect(),
+            attachments,
             drives: shun::fs_probe::list_drives()
                 .into_iter()
                 .map(|d| {
@@ -1005,8 +1112,11 @@ impl FallbackApp {
             // horizontal strip.
             timeline_left: shell.timeline != Some(shun::config::TimelineOrientation::Top),
             logo,
+            wallpaper: None,
+            wallpaper_rx,
             caption_icons,
             stage: Stage::Configure,
+            pages: wizard_pages(),
             mode,
             desktop_shortcut: true,
             start_menu: true,
@@ -1215,6 +1325,7 @@ impl FallbackApp {
         let repaint = ctx.clone();
         let payload = self.payload.clone();
         let config = self.config.clone();
+        let attachments = self.attachments.clone();
         std::thread::spawn(move || {
             // The shared driver, exactly what the webview and TUI faces
             // ride: writability gate, overwrite hygiene, the flow, the
@@ -1224,15 +1335,72 @@ impl FallbackApp {
             let result = if uninstalling {
                 shun::wizard::run_uninstall(&core).map_err(|e| e.to_string())
             } else {
-                shun::wizard::run_install(&core, &payload, &request, &mut |event| {
+                let install = shun::wizard::run_install(&core, &payload, &request, &mut |event| {
                     let _ = sender.send(WorkerMsg::Event(event.clone()));
                     repaint.request_repaint();
                 })
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string());
+                // Picked non-bundled attachments stream in right after
+                // the payload (the web face's download pass, same
+                // channel). A failed attachment fails the run — half an
+                // install lies about what it delivered.
+                install.and_then(|()| {
+                    for (key, _, included, _, picked) in &attachments {
+                        if *included || !*picked {
+                            continue;
+                        }
+                        let Some(attachment) = core
+                            .config
+                            .attachments
+                            .iter()
+                            .find(|a| &a.key == key)
+                        else {
+                            continue;
+                        };
+                        let dir = request.dir.trim().trim_end_matches('\\');
+                        shun::attachments::download(
+                            attachment,
+                            std::path::Path::new(dir),
+                            &mut |event| {
+                                let _ = sender.send(WorkerMsg::Event(event.clone()));
+                                repaint.request_repaint();
+                            },
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                    Ok(())
+                })
             };
             let _ = sender.send(WorkerMsg::Done(result));
             repaint.request_repaint();
         });
+    }
+
+    /// The wallpaper's fetch landing: decode and upload once, then the
+    /// backdrop paints every frame in update() before any panel.
+    fn drain_wallpaper(&mut self, ctx: &Context) {
+        if self.wallpaper.is_some() {
+            return;
+        }
+        let Ok(bytes) = self.wallpaper_rx.try_recv() else {
+            return;
+        };
+        let Some(bytes) = bytes else { return };
+        let decoded = image::load_from_memory(&bytes)
+            .ok()
+            .map(|img| img.into_rgba8());
+        if let Some(rgba) = decoded {
+            let (w, h) = (rgba.width(), rgba.height());
+            let texture = ctx.load_texture(
+                "wallpaper",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [w as usize, h as usize],
+                    rgba.as_raw(),
+                ),
+                egui::TextureOptions::default(),
+            );
+            self.wallpaper = Some(texture);
+        }
     }
 
     fn drain_worker(&mut self) {
@@ -1523,6 +1691,7 @@ pub fn run(
                 });
             let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
             let (_sender, receiver) = channel::<WorkerMsg>();
+            let wallpaper_rx = spawn_wallpaper_fetcher(&config);
             let caption_icons = CaptionIcons::load(&cc.egui_ctx);
             let mut app = FallbackApp::new(
                 config,
@@ -1534,6 +1703,7 @@ pub fn run(
                 receiver,
                 logo,
                 license_docs,
+                wallpaper_rx,
                 caption_icons,
                 SHUN_FLAVOR.trim().to_string(),
             );
@@ -1760,21 +1930,26 @@ impl FallbackApp {
         // The fixed five steps, webview-face parity: done steps carry a
         // check in a filled circle, the active step its number in a
         // ring, pending steps their number in a muted ring.
-        let labels = [
-            self.texts.step_language.to_owned(),
-            self.texts.step_location.to_owned(),
-            self.texts.step_license.to_owned(),
-            self.texts.step_install.to_owned(),
-            self.texts.step_done.to_owned(),
-        ];
+        let mut labels: Vec<String> = self
+            .pages
+            .iter()
+            .map(|page| match page {
+                Page::Language => self.texts.step_language.to_owned(),
+                Page::Location => self.texts.step_location.to_owned(),
+                Page::License => self.texts.step_license.to_owned(),
+                Page::Content { title, .. } => title.clone(),
+            })
+            .collect();
+        labels.push(self.texts.step_install.to_owned());
+        labels.push(self.texts.step_done.to_owned());
         let active_marker = match current {
-            Stage::Configure => Some(self.step.min(2)),
+            Stage::Configure => Some(self.step.min(labels.len() - 1)),
             _ => None,
         };
         let order_current = match current {
-            Stage::Configure => self.step.min(2),
-            Stage::Running => 3,
-            Stage::Finished => 4,
+            Stage::Configure => self.step.min(labels.len() - 1),
+            Stage::Running => labels.len() - 2,
+            Stage::Finished => labels.len() - 1,
         };
         let items: Vec<(bool, bool, String)> = labels
             .iter()
@@ -2144,11 +2319,73 @@ impl FallbackApp {
     }
 
     fn configure_view(&mut self, ui: &mut egui::Ui) {
-        match self.step {
-            0 => self.language_view(ui),
-            1 => self.location_view(ui),
-            _ => self.license_view(ui),
+        match self.pages[self.step].clone() {
+            Page::Language => self.language_view(ui),
+            Page::Location => self.location_view(ui),
+            Page::Content { title, body } => self.content_view(ui, title, body),
+            Page::License => self.license_view(ui),
         }
+    }
+
+    /// A custom content step: the title + a document card with a
+    /// minimal markdown renderer (headings, lists, quotes, plain
+    /// paragraphs — emphasis marks strip, the egui face carries no
+    /// rich-text engine).
+    fn content_view(&mut self, ui: &mut egui::Ui, title: String, body: String) {
+        let theme = self.theme;
+        ui.label(
+            RichText::new(title)
+                .strong()
+                .size(22.0)
+                .color(theme.text),
+        );
+        ui.add_space(10.0);
+        Frame::default()
+            .fill(theme.surface)
+            .stroke(Stroke::new(1.0f32, theme.border))
+            .inner_margin(Margin::same(12))
+            .corner_radius(CornerRadius::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .id_salt(ui.id().with("content-doc"))
+                    .max_height(300.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        for raw in body.lines() {
+                            let line = raw.trim_start();
+                            let (text, size, strong, indent, muted) = if let Some(h) =
+                                line.strip_prefix("# ")
+                            {
+                                (h.trim(), 16.0, true, 0.0, false)
+                            } else if let Some(h) = line.strip_prefix("## ") {
+                                (h.trim(), 14.0, true, 0.0, false)
+                            } else if let Some(h) = line.strip_prefix("### ") {
+                                (h.trim(), 13.0, true, 0.0, false)
+                            } else if let Some(item) =
+                                line.strip_prefix("- ").or_else(|| line.strip_prefix("* "))
+                            {
+                                (item.trim(), 12.5, false, 16.0, false)
+                            } else if let Some(q) = line.strip_prefix("> ") {
+                                (q.trim(), 12.5, false, 8.0, true)
+                            } else {
+                                (line, 12.5, false, 0.0, false)
+                            };
+                            let plain = text.replace("**", "").replace('*', "").replace('`', "");
+                            let color = if muted { theme.text_secondary } else { theme.text };
+                            ui.horizontal(|ui| {
+                                ui.add_space(indent);
+                                let mut text = RichText::new(plain).size(size).color(color);
+                                if strong {
+                                    text = text.strong();
+                                }
+                                ui.label(text);
+                            });
+                            ui.add_space(2.0);
+                        }
+                    });
+            });
     }
 
     fn language_view(&mut self, ui: &mut egui::Ui) {
@@ -2551,6 +2788,81 @@ impl FallbackApp {
                     .size(13.0)
                     .color(theme.text_secondary),
                 );
+                // The flash-target notice (web `.wizard-target__
+                // flash-hint`): a declared Flash target reads as a
+                // pending post-install step.
+                if self
+                    .config
+                    .targets
+                    .iter()
+                    .any(|t| matches!(t, TargetConfig::Flash(_)))
+                {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(texts.flash_hint.as_str())
+                            .size(12.0)
+                            .color(theme.text_tertiary),
+                    );
+                }
+                // The optional-components block (web `.wizard-
+                // attachments`): one checkbox row per declared
+                // attachment; bundled ones lock checked with the badge.
+                if !self.attachments.is_empty() {
+                    ui.add_space(14.0);
+                    ui.label(
+                        RichText::new(texts.attach_title.as_str())
+                            .size(13.0)
+                            .color(theme.text_secondary),
+                    );
+                    ui.add_space(6.0);
+                    for index in 0..self.attachments.len() {
+                        let (key, title, included, size, _) = self.attachments[index].clone();
+                        ui.horizontal(|ui| {
+                            if included {
+                                // Locked-on: the same plate, a static
+                                // check, no click target.
+                                let (rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(18.0, 18.0),
+                                    egui::Sense::hover(),
+                                );
+                                let painter = ui.painter_at(rect.expand(4.0));
+                                let c = rect.center();
+                                painter.circle_filled(c, 9.0, theme.primary);
+                                let stroke = Stroke::new(1.8f32, theme.on_primary);
+                                painter.line_segment(
+                                    [pos2(c.x - 3.6, c.y + 0.4), pos2(c.x - 1.0, c.y + 3.0)],
+                                    stroke,
+                                );
+                                painter.line_segment(
+                                    [pos2(c.x - 1.0, c.y + 3.0), pos2(c.x + 4.2, c.y - 2.8)],
+                                    stroke,
+                                );
+                                ui.add_space(12.0);
+                            } else {
+                                let picked = &mut self.attachments[index].4;
+                                Self::circle_checkbox(ui, theme, picked, "", None);
+                                ui.add_space(12.0);
+                                let _ = key;
+                            }
+                            ui.label(
+                                RichText::new(title).size(13.0).color(theme.text),
+                            );
+                            ui.add_space(10.0);
+                            let meta = if included {
+                                texts.attach_bundled.clone()
+                            } else {
+                                size.map(|bytes| {
+                                    format!("{:.1} MB", bytes as f32 / 1_048_576.0)
+                                })
+                                .unwrap_or_default()
+                            };
+                            ui.label(
+                                RichText::new(meta).size(12.0).color(theme.text_tertiary),
+                            );
+                        });
+                        ui.add_space(6.0);
+                    }
+                }
             },
         );
 
@@ -3388,7 +3700,8 @@ impl FallbackApp {
                 let configuring = self.stage == Stage::Configure;
                 // The license step (2) carries the install button;
                 // language and location walk the pipeline.
-                let on_last_step = self.step >= 2;
+                let on_last_step =
+                    self.pages[self.step].is_license() && self.step + 1 == self.pages.len();
                 let step_blocked = self.step_blocked();
                 // The license step's minimum-read countdown (web
                 // parity): the primary stays disabled for the first
@@ -3492,7 +3805,7 @@ impl FallbackApp {
                                 self.step += 1;
                                 // Arriving on the license step arms its
                                 // minimum-read countdown.
-                                if self.step >= 2 {
+                                if self.pages[self.step].is_license() {
                                     self.license_entered =
                                         Some(std::time::Instant::now());
                                 }
@@ -3537,7 +3850,7 @@ impl FallbackApp {
                     // standalone uninstaller face) only.
                     if self.step > 0 && ghost(ui, self.texts.back.as_str()) {
                         self.license_doc_index = 0;
-                        if self.step >= 2 {
+                        if self.pages[self.step].is_license() {
                             self.license_entered = None;
                         }
                         self.step -= 1;
@@ -3562,14 +3875,15 @@ impl FallbackApp {
     /// Whether the current step blocks progression (a license step
     /// without its checkbox ticked).
     fn step_blocked(&self) -> bool {
-        // Step 2 is the license: progression gates on the accept box.
-        self.step >= 2 && !self.license_accepted
+        // The license pane gates progression on the accept box.
+        self.pages[self.step].is_license() && !self.license_accepted
     }
 }
 
 impl eframe::App for FallbackApp {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         self.drain_worker();
+        self.drain_wallpaper(ctx);
         // Frameless windows lose BOTH the rounded corners and the
         // shadow until DWMWCP_ROUND lands. Apply it here — our OWN
         // window handle, not a title lookup (both faces share one
@@ -3581,6 +3895,26 @@ impl eframe::App for FallbackApp {
             apply_dwm_rounding(frame);
         }
         let theme = self.theme;
+
+        // The wallpaper backdrop (first IMAGE source): painted cover-
+        // style over the full window behind every panel, tinted down so
+        // content keeps its contrast (the web backdrop's overlay look).
+        if let Some(texture) = &self.wallpaper {
+            let screen = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let scale = (screen.width() / texture.size_vec2().x)
+                .max(screen.height() / texture.size_vec2().y);
+            let size = texture.size_vec2() * scale;
+            painter.image(
+                texture.id(),
+                egui::Rect::from_center_size(screen.center(), size),
+                egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                // The backdrop sits at ~35% strength over the token
+                // background — full-bleed wallpaper under an installer's
+                // dense text needs the dimming to stay legible.
+                Color32::from_white_alpha(89),
+            );
+        }
 
         // ── Caption bar (frameless chrome): one flat HkTitleBar band.
         egui::TopBottomPanel::top("titlebar")

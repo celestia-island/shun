@@ -91,6 +91,14 @@ kind = "mode"
 [[package.metadata.shun.steps]]
 kind = "scope"
 
+# A custom content step: renders at its declaration position (here,
+# between the scope and the license) on BOTH GUI faces — the web pane
+# rich-text, the egui pane its minimal markdown renderer.
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "发行说明"
+markdown = "release-notes.md"
+
 [[package.metadata.shun.steps]]
 kind = "license"
 
@@ -100,6 +108,19 @@ kind = "install"
 # The prepare-phase script hook (docs/en/design/scripting.md): a 5s
 # hold at the flow's opening so the running page can be screenshotted
 # mid-install. Demo-only — real products ship no hold.
+# An optional attachment (docs: full builds pack it under the dest
+# prefix, lite builds leave the declaration and fetch online). The demo
+# payload carries models/, so this one resolves as bundled — the UI
+# shows the optional-components block without a network dependency.
+[[package.metadata.shun.attachments]]
+key = "sample-models"
+title = "示例模型包 / Sample models"
+dest = "models"
+size = 1_048_576
+
+[package.metadata.shun.attachments.online]
+url = "https://example.com/shun-demo/models.shun"
+
 [package.metadata.shun.script]
 runner = "duckscript"
 

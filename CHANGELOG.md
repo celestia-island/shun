@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.5.1 (2026-09-30)
+
+The known-gaps release — every item from 0.5.0's list now ships.
+
+- **Optional attachments render on both faces**: the location pane
+  carries the optional-components block (per-component checkbox, size,
+  a bundled badge for full builds); picked non-bundled components
+  stream in right after the payload through the same progress channel,
+  on the web face via `download_attachment` and in the egui worker
+  inline. A failed attachment fails the run. The demo declares a
+  bundled `sample-models` attachment so the block demos offline.
+- **Custom content steps render on both faces**, slotted at their
+  declaration position around the license (both faces now walk a
+  dynamic flow — the web timeline and footer step through one array,
+  the egui face swaps its hardcoded three-page assumption for a
+  `Page` model). The web pane renders the markdown through the shared
+  rich-text engine; the egui pane ships a minimal markdown renderer
+  (headings, lists, quotes; emphasis marks strip). The demo declares a
+  发行说明 step between the scope and the license.
+- **Flash-target notice**: a declared Flash target reads as a pending
+  post-install step line on the location pane (both faces). The flash
+  runner itself stays a later milestone.
+- **The egui wallpaper backdrop**: the manifest's first IMAGE source
+  fetches off-thread after boot and paints cover-style behind the
+  wizard at ~35% strength; video/pipeline sources stand down (no egui
+  renderer) and a failed fetch paints nothing — the degraded-face
+  line, now honest instead of absent.
+
+## 0.5.0 (2026-09-30)
+
 ## 0.5.0 (2026-09-30)
 
 The parity release: the egui fallback face and the tauri2 webview face
