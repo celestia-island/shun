@@ -843,7 +843,7 @@ fn run_uninstall_events(
     core: &WizardCore,
     print_event: &mut dyn FnMut(&FlowEvent),
 ) -> Result<(), String> {
-    shun::wizard::run_uninstall_with_events(core, &mut |event| print_event(&event))
+    shun::wizard::run_uninstall_with_events(core, print_event)
 }
 
 /// Renders one structured log record for a headless console (English —

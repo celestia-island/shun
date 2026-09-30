@@ -224,7 +224,7 @@ impl Terminal {
         };
         let cx = chev_zone.center().x;
         let cy = bar_rect.center().y + 1.0;
-        let stroke = Stroke::new(1.6, chev_color);
+        let stroke = Stroke::new(1.6_f32, chev_color);
         let (a, b, c) = if self.open {
             (
                 egui::pos2(cx - 4.0, cy - 2.0),

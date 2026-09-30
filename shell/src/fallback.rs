@@ -169,19 +169,6 @@ impl Theme {
         }
     }
 
-    /// Terminal pane background (a shade between page and surface).
-    pub(crate) fn terminal_bg(&self) -> Color32 {
-        if let Some(override_bg) = self.terminal_bg_override {
-            return override_bg;
-        }
-        mix(self.background, self.surface, 0.6)
-    }
-
-    /// Terminal plain-echo foreground.
-    pub(crate) fn terminal_fg(&self) -> Color32 {
-        self.text_secondary
-    }
-
     /// Warning banner fill (warning at ~12% over the background).
     fn warning_tint(&self) -> Color32 {
         mix(self.background, self.warning, 0.12)
@@ -206,7 +193,7 @@ fn text_button(
     label: &str,
     font_size: f32,
     pad_x: f32,
-    strong: bool,
+    _strong: bool,
     text_color: Color32,
     fill: Color32,
     stroke_color: Option<Color32>,
@@ -255,8 +242,11 @@ fn text_button(
 /// (σ = blur/2) rasterizes once per button size into a texture; hover
 /// drawing is a single tinted image call. Layered plates cannot blur —
 /// they read as an enlarged border.
+type GlowTextureMap =
+    std::cell::RefCell<std::collections::HashMap<(u32, u32, [u8; 3]), TextureHandle>>;
+
 pub(crate) struct GlowCache {
-    textures: std::cell::RefCell<std::collections::HashMap<(u32, u32, [u8; 3]), TextureHandle>>,
+    textures: GlowTextureMap,
 }
 
 impl Default for GlowCache {
@@ -274,17 +264,15 @@ fn erfc(x: f32) -> f32 {
         return 2.0 - erfc(-x);
     }
     let t = 1.0 / (1.0 + 0.5 * x);
-    let poly = t
-        * (-x * x - 1.26551223
-            + t * (1.00002368
-                + t * (0.37409196
-                    + t * (0.09678418
-                        + t * (-0.18628806
-                            + t * (0.27886807
-                                + t * (-1.13520398
-                                    + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))))
-            .exp();
-    poly
+    t * (-x * x - 1.2655122
+        + t * (1.0000237
+            + t * (0.374092
+                + t * (0.0967842
+                    + t * (-0.18628806
+                        + t * (0.2788681
+                            + t * (-1.135204
+                                + t * (1.4885159 + t * (-0.8221522 + t * 0.1708728)))))))))
+        .exp()
 }
 
 /// The blurred shadow's alpha ratio at `d` points past the shape
@@ -406,42 +394,7 @@ fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
     )
 }
 
-/// Resolves `shell.theme.mode` (default dark; `system` asks Windows).
-/// Folder badge prefixing the target row — the shittim-chest file-picker
-/// look: a primary-tinted rounded square carrying an outlined folder
-/// glyph (no font dependency, pure painter strokes).
-fn folder_badge(ui: &mut egui::Ui, theme: &Theme, size: f32) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    let painter = ui.painter_at(rect);
-    // Neutral plate: the accent-blue tile clashed with the dark pane —
-    // the badge now sits in the surface tone with a hairline border and
-    // a muted glyph.
-    hairline_box(&painter, rect, 7, theme.border, theme.surface);
-    let glyph = rect.shrink(6.5);
-    let body_top = glyph.top() + glyph.height() * 0.30;
-    let stroke = Stroke::new(1.6f32, theme.text_secondary);
-    // Tab: rises from the body's top edge, runs right, folds back down.
-    painter.add(egui::Shape::line(
-        vec![
-            pos2(glyph.left(), body_top),
-            pos2(glyph.left(), glyph.top()),
-            pos2(glyph.left() + glyph.width() * 0.34, glyph.top()),
-            pos2(glyph.left() + glyph.width() * 0.46, body_top),
-        ],
-        stroke,
-    ));
-    painter.rect_stroke(
-        egui::Rect::from_min_max(
-            pos2(glyph.left(), body_top),
-            pos2(glyph.right(), glyph.bottom()),
-        ),
-        CornerRadius::same(2),
-        stroke,
-        egui::StrokeKind::Middle,
-    );
-    response
-}
-
+// Resolves `shell.theme.mode` (default dark; `system` asks Windows).
 /// The machine's app-theme preference: Windows 11 personalization's
 /// `AppsUseLightTheme` (1 = light). Any failure to read it — older
 /// Windows, a stripped registry — resolves LIGHT (the user direction's
@@ -578,11 +531,11 @@ fn gradient_midpoint(spec: &shun::config::BackgroundSpec) -> Option<Color32> {
 
 // ── UI copy: the i18n strings of the web shell (shell/web/src/i18n.ts) ──
 
-/// The language the fallback UI renders in — the egui side carries the
-/// two TEXTS tables below, so its first-step language selector offers
-/// these two locales (the web shell offers all eight). The chosen value
-/// is what reaches the install context (and from there `SHUN_LANGUAGE`
-/// for scripts and the install manifest).
+// The language the fallback UI renders in — the egui side carries the
+// two TEXTS tables below, so its first-step language selector offers
+// these two locales (the web shell offers all eight). The chosen value
+// is what reaches the install context (and from there `SHUN_LANGUAGE`
+// for scripts and the install manifest).
 
 /// One locale's wizard copy — deserialized straight from
 /// shell/strings/wizard-strings.json, the SINGLE authored source both
@@ -689,22 +642,6 @@ struct WizardStrings {
 }
 
 impl WizardStrings {
-    /// The picker's entries: every authored locale, named in its own
-    /// script (the web face's LOCALE_OPTIONS).
-    fn options(&self) -> Vec<(String, String)> {
-        self.locales
-            .iter()
-            .map(|code| {
-                (
-                    code.clone(),
-                    self.labels
-                        .get(code)
-                        .cloned()
-                        .unwrap_or_else(|| code.clone()),
-                )
-            })
-            .collect()
-    }
 
     fn texts(&self, locale: &str) -> Texts {
         let fallback = if self.default.is_empty() {
@@ -861,9 +798,9 @@ fn install_system_fonts(ctx: &Context) -> bool {
     false
 }
 
-/// The embedded product logo, decoded to an egui texture (like the
-/// hikari title bar's icon prop). `None` when the manifest declares no
-/// logo or the bytes do not decode.
+// The embedded product logo, decoded to an egui texture (like the
+// hikari title bar's icon prop). `None` when the manifest declares no
+// logo or the bytes do not decode.
 // ── Lucide caption icons — the webview face's exact icon set ────────────
 //
 // HkTitleBar embeds lucide SVGs inline (lucide-vue-next at 14px,
@@ -1113,7 +1050,6 @@ struct FallbackApp {
     language: String,
     /// Whether a CJK-capable system font registered (informational —
     /// the face renders the OS font stack now).
-    cjk_font: bool,
     texts: Texts,
     theme: Theme,
     /// The pinned light/dark state behind the title-bar toggle (the
@@ -1226,7 +1162,6 @@ struct FallbackApp {
 // to the webview face's SCSS (--hk-tb-height).
 const CAPTION_W: f32 = 46.0;
 const TITLEBAR_H: f32 = 32.0;
-const CONTROL_H: f32 = 36.0;
 const COMBO_W: f32 = 380.0;
 
 impl FallbackApp {
@@ -1237,8 +1172,7 @@ impl FallbackApp {
         reason: FallbackReason,
         uninstall_mode: bool,
         language: String,
-        cjk_font: bool,
-        receiver: Receiver<WorkerMsg>,
+            receiver: Receiver<WorkerMsg>,
         logo: Option<TextureHandle>,
 
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
@@ -1288,8 +1222,7 @@ impl FallbackApp {
             payload,
             reason,
             language,
-            cjk_font,
-            texts,
+                texts,
             dark_theme: resolved_dark,
             mode_pinned: false,
             dwm_rounded: false,
@@ -1311,7 +1244,7 @@ impl FallbackApp {
             dir_writable: None,
             probed_dir: String::new(),
             drive_open: false,
-            flavor: flavor,
+            flavor,
             theme,
             accent: shell.theme.as_ref().and_then(|theme| theme.accent),
             user_adjustable: shell
@@ -1376,7 +1309,7 @@ impl FallbackApp {
         if let Ok(step) = std::env::var("SHUN_DEBUG_STEP") {
             self.step = step.parse().unwrap_or(self.step);
         }
-        if std::env::var("SHUN_DEBUG_LANG_POPUP").map_or(false, |v| v == "1") {
+        if std::env::var("SHUN_DEBUG_LANG_POPUP").is_ok_and(|v| v == "1") {
             self.lang_combo_open = true;
         }
         let Ok(stage) = std::env::var("SHUN_DEBUG_STAGE") else {
@@ -1401,7 +1334,7 @@ impl FallbackApp {
             };
             self.terminal.push(kind, text);
         }
-        if std::env::var("SHUN_DEBUG_LOG_OPEN").map_or(false, |v| v == "1") {
+        if std::env::var("SHUN_DEBUG_LOG_OPEN").is_ok_and(|v| v == "1") {
             self.terminal.open = true;
         }
         match stage.as_str() {
@@ -1857,7 +1790,7 @@ pub fn run(
             cc.egui_ctx.set_visuals(visuals);
             // A CJK font is the egui renderer's proxy for "the machine
             // can render the Zh table" (the historical `zh = font_found`).
-            let font_found = install_system_fonts(&cc.egui_ctx);
+            let _font_found = install_system_fonts(&cc.egui_ctx);
             // Chrome copy is not content: dragging across headings and
             // labels must not paint selection bands (the path input
             // keeps its selection — only LABELS are gated here).
@@ -1902,7 +1835,6 @@ pub fn run(
                 reason,
                 uninstall,
                 language,
-                font_found,
                 receiver,
                 logo,
                 license_docs,
@@ -1946,7 +1878,7 @@ impl FallbackApp {
         // same geometry every frame.
         let (strip, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), TITLEBAR_H), Sense::hover());
-        ui.allocate_new_ui(
+        ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(strip)
                 .layout(Layout::left_to_right(Align::Center)),
@@ -2389,7 +2321,7 @@ impl FallbackApp {
     fn ghost_icon_button(
         ui: &mut egui::Ui,
         theme: Theme,
-        icons: &CaptionIcons,
+        _icons: &CaptionIcons,
         icon: &TextureHandle,
         label: &str,
         min_w: f32,
@@ -2437,75 +2369,6 @@ impl FallbackApp {
             theme.text,
         );
         response
-    }
-
-    /// A hikari quick-pick chip: lucide icon + mono label in a soft
-    /// pill, one click target. Unwritable candidates dim and swap to
-    /// the alert glyph; `accent` paints the steer-to highlight. The
-    /// icon aligns to the label's optical middle (see
-    /// [`Self::ghost_icon_button`]). Returns true on click.
-    fn quick_chip(
-        ui: &mut egui::Ui,
-        theme: Theme,
-        icons: &CaptionIcons,
-        icon: &TextureHandle,
-        label: &str,
-        writable: bool,
-        accent: bool,
-    ) -> bool {
-        let chip_w = 42.0 + label.len() as f32 * 7.5;
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(chip_w, 28.0), egui::Sense::click());
-        let response = Self::hand(response);
-        let painter = ui.painter_at(rect);
-        if accent || response.hovered() {
-            painter.rect_filled(
-                rect,
-                CornerRadius::same(8),
-                mix(
-                    theme.background,
-                    theme.primary,
-                    if accent { 0.15 } else { 0.08 },
-                ),
-            );
-        }
-        let font = egui::FontId::monospace(12.0);
-        let galley = painter.layout_no_wrap(
-            label.to_string(),
-            font.clone(),
-            if writable {
-                theme.text
-            } else {
-                theme.text_secondary
-            },
-        );
-        let icon_center = Self::icon_center_for(
-            &painter,
-            label,
-            font,
-            pos2(rect.left() + 15.0, rect.center().y),
-        );
-        let icon_tint = if writable {
-            theme.text
-        } else {
-            theme.text_secondary.gamma_multiply(0.55)
-        };
-        painter.image(
-            icon.id(),
-            egui::Rect::from_center_size(icon_center, egui::vec2(13.0, 13.0)),
-            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            icon_tint,
-        );
-        painter.galley(
-            pos2(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
-            galley,
-            if writable {
-                theme.text
-            } else {
-                theme.text_secondary
-            },
-        );
-        response.clicked()
     }
 
     /// The hikari checkbox, drawn round like the web face's: a filled
@@ -2626,7 +2489,7 @@ impl FallbackApp {
                                 } else {
                                     (line, 12.5, false, 0.0, false)
                                 };
-                            let plain = text.replace("**", "").replace('*', "").replace('`', "");
+                            let plain = text.replace(['*', '`'], "");
                             let color = if muted {
                                 theme.text_secondary
                             } else {
@@ -2655,7 +2518,6 @@ impl FallbackApp {
         // option list the web face's picker shows (the system font
         // stack carries all ten, so no font gate on the offer).
         let labels = &wizard_strings().labels;
-        let options = wizard_strings().options();
 
         // The unified fixed-origin column: heading, sub and picker all
         // start at the pane's left inset — no centering, no offsets.
@@ -2724,7 +2586,7 @@ impl FallbackApp {
                     .show(ui.ctx(), |ui| {
                         let popup = egui::Frame::default()
                             .fill(theme.surface)
-                            .stroke(Stroke::new(1.0, border_idle))
+                            .stroke(Stroke::new(1.0_f32, border_idle))
                             .shadow(egui::Shadow {
                                 offset: [0, 8],
                                 blur: 24,
@@ -2787,7 +2649,7 @@ impl FallbackApp {
                 let hover_pos = ui.input(|i| i.pointer.hover_pos());
                 let outside = ui.input(|i| i.pointer.any_click())
                     && !resp.clicked()
-                    && hover_pos.map_or(true, |p| !popup_rect.contains(p) && !rect.contains(p));
+                    && !hover_pos.is_some_and(|p| popup_rect.contains(p) || rect.contains(p));
                 if outside {
                     self.lang_combo_open = false;
                 }
@@ -2868,7 +2730,7 @@ impl FallbackApp {
                     .find(|(m, _, _)| {
                         self.dir
                             .get(..m.len())
-                            .map_or(false, |prefix| prefix.eq_ignore_ascii_case(m))
+                            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(m))
                     })
                     .map(|(m, _, _)| m.clone());
                 let mount = matched_mount.clone().unwrap_or_else(|| {
@@ -2882,8 +2744,7 @@ impl FallbackApp {
                     pos2(field_rect.left() + 6.0, field_rect.top() + 6.0),
                     egui::vec2(chip_w, field_h - 12.0),
                 );
-                let chip_resp = ui
-                    .allocate_new_ui(
+                let _chip_scope = ui.scope_builder(
                         egui::UiBuilder::new()
                             .max_rect(chip_rect)
                             .layout(Layout::left_to_right(Align::Center)),
@@ -2965,7 +2826,7 @@ impl FallbackApp {
                     .trim_start_matches(['\\', '/'])
                     .to_string();
                 let mut rest_edit = rest.clone();
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(input_rect), |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(input_rect), |ui| {
                     TextEdit::singleline(&mut rest_edit)
                         .frame(false)
                         // The computed baseline-true offset (see above).
@@ -3125,7 +2986,7 @@ impl FallbackApp {
                 .show(ui.ctx(), |ui| {
                     let popup = egui::Frame::default()
                         .fill(theme.surface)
-                        .stroke(Stroke::new(1.0, border_idle))
+                        .stroke(Stroke::new(1.0_f32, border_idle))
                         .shadow(egui::Shadow {
                             offset: [0, 8],
                             blur: 24,
@@ -3218,9 +3079,12 @@ impl FallbackApp {
                                         // The drive's config-driven defaults,
                                         // indented beneath the group header.
                                         for (ckind, cwritable, cpath) in self.candidates.clone() {
-                                            if !cpath.get(..mount.len()).map_or(false, |prefix| {
-                                                prefix.eq_ignore_ascii_case(&mount)
-                                            }) {
+                                            if !cpath
+                                                .get(..mount.len())
+                                                .is_some_and(|prefix| {
+                                                    prefix.eq_ignore_ascii_case(&mount)
+                                                })
+                                            {
                                                 continue;
                                             }
                                             let clabel = match ckind.as_str() {
@@ -3308,8 +3172,8 @@ impl FallbackApp {
             let hover_pos = ui.input(|i| i.pointer.hover_pos());
             let outside = ui.input(|i| i.pointer.any_click())
                 && !chip_clicked
-                && hover_pos.map_or(true, |p| {
-                    !popup_rect.contains(p) && !chip_rect_out.contains(p)
+                && !hover_pos.is_some_and(|p| {
+                    popup_rect.contains(p) || chip_rect_out.contains(p)
                 });
             if outside {
                 self.drive_open = false;
@@ -4351,7 +4215,7 @@ impl eframe::App for FallbackApp {
                     pos2(outer.left() + PAD_L, outer.top() + PAD_T),
                     pos2(outer.right() - PAD_R, outer.bottom()),
                 );
-                ui.allocate_new_ui(
+                ui.scope_builder(
                     egui::UiBuilder::new()
                         .max_rect(content)
                         .layout(Layout::top_down(Align::LEFT)),
