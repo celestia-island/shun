@@ -2817,7 +2817,7 @@ impl FallbackApp {
                     pos2(edit_right, field_rect.bottom() - 6.0),
                 );
                 let margin_top =
-                    (field_rect.center().y + ascent * 0.35 - baseline_offset - input_rect.top())
+                    (field_rect.center().y + ascent * 0.15 - baseline_offset - input_rect.top())
                         .round() as i8;
                 let rest = self
                     .dir
@@ -3380,38 +3380,58 @@ impl FallbackApp {
                     .color(theme.text),
                 );
                 ui.add_space(16.0);
-                if uninstalling {
-                    // Uninstalling has no payload phases to weigh — the
-                    // indeterminate sweep, like the web page's loading bar.
+                // The web face's HkProgressBar: a thin rounded track
+                // with a primary fill, full pane width. The percent
+                // rides the live-step line below (no in-bar text).
+                let fraction = if uninstalling {
+                    // No payload phases to weigh — the indeterminate
+                    // sweep, like the web page's loading bar.
                     let t = ui.input(|i| i.time) as f32;
                     let sweep = (t * 0.9).sin() * 0.5 + 0.5;
                     ui.ctx().request_repaint();
-                    let bar = egui::ProgressBar::new(sweep.clamp(0.02, 0.98))
-                        .fill(theme.primary)
-                        .corner_radius(CornerRadius::same(8));
-                    ui.add(bar.desired_width(320.0).desired_height(8.0));
+                    sweep.clamp(0.02, 0.98)
                 } else {
-                    let percent = self.overall.unwrap_or(0);
-                    let bar = egui::ProgressBar::new(f32::from(percent) / 100.0)
-                        .show_percentage()
-                        .fill(theme.primary)
-                        .corner_radius(CornerRadius::same(8));
-                    ui.add(bar.desired_width(320.0).desired_height(16.0));
-                }
+                    f32::from(self.overall.unwrap_or(0)) / 100.0
+                };
+                let (track, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 6.0),
+                    egui::Sense::hover(),
+                );
+                let track_painter = ui.painter_at(track);
+                track_painter.rect_filled(
+                    track,
+                    CornerRadius::same(3),
+                    mix(theme.background, theme.text, 0.08),
+                );
+                let fill_w = (track.width() * fraction.clamp(0.0, 1.0)).max(6.0);
+                track_painter.rect_filled(
+                    egui::Rect::from_min_size(track.min, vec2(fill_w, 6.0)),
+                    CornerRadius::same(3),
+                    theme.primary,
+                );
                 ui.add_space(10.0);
                 // The live step under the bar — the one thing actually
-                // happening (the percent headline rides the bar itself).
+                // happening, with the percent riding along for
+                // determinate runs (the web bar's showLabel).
                 let step = self
                     .progress
                     .as_ref()
                     .map(|(step, _)| step.clone())
                     .unwrap_or_else(|| self.texts.installing.clone());
-                ui.label(RichText::new(step).size(12.0).color(theme.text_tertiary));
+                let step_text = match self.overall {
+                    Some(pct) if !uninstalling => format!("{step} · {pct}%"),
+                    _ => step,
+                };
+                ui.label(
+                    RichText::new(step_text)
+                        .size(12.0)
+                        .color(theme.text_tertiary),
+                );
             },
         );
         // Pin the strip to the pane's bottom edge: fill the gap between
         // the block and the strip with exactly the space that remains.
-        let gap = ui.max_rect().bottom() - strip_h - 18.0 - ui.cursor().top();
+        let gap = ui.max_rect().bottom() - strip_h - 16.0 - ui.cursor().top();
         ui.add_space(gap.max(0.0));
         // The web logs block: hairline separator above the strip, then
         // 10pt of air before the header bar.
@@ -3679,7 +3699,7 @@ impl FallbackApp {
                 false,
                 theme.text_secondary,
                 Color32::TRANSPARENT,
-                Some(theme.border),
+                None,
                 8,
                 Some(theme.primary),
                 &glow,
@@ -3924,12 +3944,12 @@ impl FallbackApp {
                                 )
                                 .size()
                                 .x
-                                + 48.0,
-                            44.0,
+                                + 32.0,
+                            40.0,
                         ),
                         &label,
                         13.5,
-                        24.0,
+                        16.0,
                         true,
                         on,
                         plate,
@@ -4028,7 +4048,7 @@ impl FallbackApp {
                         false,
                         theme.text_secondary,
                         Color32::TRANSPARENT,
-                        Some(theme.border),
+                        None,
                         8,
                         Some(theme.primary),
                         &glow,
