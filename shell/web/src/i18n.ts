@@ -289,7 +289,7 @@ const zhHans: InstallerStrings = {
   },
   done: {
     failedTitle: "安装失败",
-    title: "✔ 安装完成",
+    title: "安装完成",
     hintLocal:
       "%PRODUCT% 已登记到系统「应用」列表；勾选的快捷方式会在点击「完成安装」时创建。",
     hintUsb: "便携副本已就绪：数据全部留在可移动磁盘内。",
@@ -409,7 +409,7 @@ const zhHant: InstallerStrings = {
   },
   done: {
     failedTitle: "安裝失敗",
-    title: "✔ 安裝完成",
+    title: "安裝完成",
     hintLocal:
       "%PRODUCT% 已登錄到系統「應用程式」清單；勾選的捷徑會在點擊「完成安裝」時建立。",
     hintUsb: "可攜副本已就緒：資料全部留在可移動磁碟內。",
@@ -532,7 +532,7 @@ const en: InstallerStrings = {
   },
   done: {
     failedTitle: "Install failed",
-    title: "✔ Install complete",
+    title: "Install complete",
     hintLocal: "%PRODUCT% is registered in the system's app list; the checked shortcuts are created when you click Finish.",
     hintUsb: "The portable copy is ready: all data stays on the removable drive.",
     shortcutMenu: "Create a Start-menu shortcut",
@@ -651,7 +651,7 @@ const ru: InstallerStrings = {
   },
   done: {
     failedTitle: "Установка не удалась",
-    title: "✔ Установка завершена",
+    title: "Установка завершена",
     hintLocal: "%PRODUCT% зарегистрирован в списке приложений системы; выбранные ярлыки будут созданы после нажатия «Готово».",
     hintUsb: "Портативная копия готова: все данные остаются на съёмном диске.",
     shortcutMenu: "Создать ярлык в меню «Пуск»",
@@ -783,7 +783,7 @@ const ja: InstallerStrings = {
   },
   done: {
     failedTitle: "インストールに失敗しました",
-    title: "✔ インストール完了",
+    title: "インストール完了",
     hintLocal:
       "%PRODUCT% はシステムのアプリ一覧に登録されました。チェックしたショートカットは「インストール完了」をクリックしたときに作成されます。",
     hintUsb: "ポータブルコピーの準備ができました。データはすべてリムーバブルドライブ内に保存されます。",
@@ -919,7 +919,7 @@ const ko: InstallerStrings = {
   },
   done: {
     failedTitle: "설치 실패",
-    title: "✔ 설치 완료",
+    title: "설치 완료",
     hintLocal:
       "%PRODUCT%가 시스템의 앱 목록에 등록되었습니다. 선택한 바로 가기는 '설치 완료'를 클릭할 때 만들어집니다.",
     hintUsb: "휴대용 복사본이 준비되었습니다. 모든 데이터는 이동식 드라이브 안에 보관됩니다.",
@@ -1048,7 +1048,7 @@ const fr: InstallerStrings = {
   },
   done: {
     failedTitle: "Échec de l'installation",
-    title: "✔ Installation terminée",
+    title: "Installation terminée",
     hintLocal:
       "%PRODUCT% est enregistré dans la liste des applications du système ; les raccourcis cochés sont créés quand vous cliquez sur Terminer.",
     hintUsb: "La copie portable est prête : toutes les données restent sur le lecteur amovible.",
@@ -1181,7 +1181,7 @@ const es: InstallerStrings = {
   },
   done: {
     failedTitle: "Error de instalación",
-    title: "✔ Instalación completada",
+    title: "Instalación completada",
     hintLocal:
       "%PRODUCT% está registrado en la lista de aplicaciones del sistema; los accesos directos marcados se crean al pulsar «Finalizar».",
     hintUsb: "La copia portátil está lista: todos los datos permanecen en la unidad extraíble.",
@@ -1313,7 +1313,7 @@ const de: InstallerStrings = {
   },
   done: {
     failedTitle: "Installation fehlgeschlagen",
-    title: "✔ Installation abgeschlossen",
+    title: "Installation abgeschlossen",
     hintLocal:
       "%PRODUCT% ist in der App-Liste des Systems registriert; die markierten Verknüpfungen werden beim Klick auf „Fertigstellen“ erstellt.",
     hintUsb: "Die portable Kopie ist bereit: Alle Daten bleiben auf dem Wechseldatenträger.",
@@ -1446,7 +1446,7 @@ const pt: InstallerStrings = {
   },
   done: {
     failedTitle: "Falha na instalação",
-    title: "✔ Instalação concluída",
+    title: "Instalação concluída",
     hintLocal:
       "O %PRODUCT% está registado na lista de aplicações do sistema; os atalhos assinalados são criados quando clica em «Concluir».",
     hintUsb: "A cópia portátil está pronta: todos os dados ficam na unidade amovível.",
