@@ -205,6 +205,7 @@ fn text_button(
     desired: egui::Vec2,
     label: &str,
     font_size: f32,
+    pad_x: f32,
     strong: bool,
     text_color: Color32,
     fill: Color32,
@@ -246,7 +247,7 @@ fn text_button(
     // which at fractional DPI rode ~1.5pt high on a filled plate.
     let baseline_y = rect.center().y + ascent * 0.35 + 1.5;
     painter.galley(
-        pos2(rect.left() + 16.0, baseline_y - baseline_offset),
+        pos2(rect.left() + pad_x, baseline_y - baseline_offset),
         galley,
         text_color,
     );
@@ -3810,6 +3811,7 @@ Frame::default()
                 ),
                 label,
                 13.0,
+                16.0,
                 false,
                 theme.text_secondary,
                 Color32::TRANSPARENT,
@@ -3837,6 +3839,7 @@ Frame::default()
                 ),
                 label,
                 13.5,
+                16.0,
                 true,
                 theme.on_primary,
                 fill,
@@ -4064,6 +4067,7 @@ Frame::default()
                         ),
                         &label,
                         13.5,
+                        24.0,
                         true,
                         on,
                         plate,
@@ -4159,6 +4163,7 @@ Frame::default()
                         ),
                         label,
                         13.0,
+                        16.0,
                         false,
                         theme.text_secondary,
                         Color32::TRANSPARENT,
