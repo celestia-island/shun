@@ -238,6 +238,36 @@ impl ShunConfig {
                 crate::error::ShunError::Config(format!("{what} document `{path}`: {e}"))
             })
         };
+        // License texts are plain legal prose that hard-wraps with
+        // manual indentation — markdown reads those indents as code
+        // blocks and the panes render them mis-aligned. Strip the
+        // leading whitespace of every line for license documents only
+        // (content steps keep their markdown semantics).
+        let read_license = |path: &str| -> Result<String, crate::error::ShunError> {
+            read_markdown(path, "license").map(|text| {
+                let trimmed = text
+                    .lines()
+                    .map(|line| line.trim_start())
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    );
+                if text.ends_with(
+                    "
+",
+                ) && !trimmed.ends_with(
+                    "
+",
+                ) {
+                    trimmed
+                        + "
+"
+                } else {
+                    trimmed
+                }
+            })
+        };
 
         let pipeline: Vec<StepConfig> = match &self.steps {
             Some(steps) => {
@@ -320,7 +350,7 @@ impl ShunConfig {
             if let Some(path) = sugar {
                 docs.push(ResolvedLicenseDoc {
                     title: None,
-                    body: read_markdown(&path.display().to_string(), "license")?,
+                    body: read_license(&path.display().to_string())?,
                 });
             }
             for doc in &self.licenses {
@@ -329,7 +359,7 @@ impl ShunConfig {
                     .unwrap_or(&doc.path);
                 docs.push(ResolvedLicenseDoc {
                     title: doc.title.clone(),
-                    body: read_markdown(&path.display().to_string(), "license")?,
+                    body: read_license(&path.display().to_string())?,
                 });
             }
             Ok(docs)

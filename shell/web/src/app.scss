@@ -110,7 +110,15 @@ body {
   padding: 0;
 }
 
-.wizard-pane {
+/* The footer primary rides size=lg, whose 24px lateral padding reads
+   lopsided next to the 16px ghosts — footers use md metrics on both
+   faces (user direction). */
+  .hk-btn-lg {
+    padding: var(--space-8) var(--space-16);
+    min-height: 2.5rem;
+  }
+
+  .wizard-pane {
   flex: 1;
   min-height: 0;
   display: flex;
