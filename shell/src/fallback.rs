@@ -242,7 +242,9 @@ fn text_button(
         .map(|g| g.pos.y)
         .unwrap_or(galley.size().y * 0.8);
     let ascent = galley.size().y * 0.55;
-    let baseline_y = rect.center().y + ascent * 0.35;
+    // +1.5pt: egui snaps the rasterized baseline to physical pixels,
+    // which at fractional DPI rode ~1.5pt high on a filled plate.
+    let baseline_y = rect.center().y + ascent * 0.35 + 1.5;
     painter.galley(
         pos2(rect.left() + 16.0, baseline_y - baseline_offset),
         galley,
