@@ -244,7 +244,7 @@ fn text_button(
     let ascent = galley.size().y * 0.55;
     let baseline_y = rect.center().y + ascent * 0.35;
     painter.galley(
-        pos2(rect.left() + 12.0, baseline_y - baseline_offset),
+        pos2(rect.left() + 16.0, baseline_y - baseline_offset),
         galley,
         text_color,
     );
@@ -3803,8 +3803,8 @@ Frame::default()
                         )
                         .size()
                         .x
-                        + 24.0,
-                    32.0,
+                        + 32.0,
+                    40.0,
                 ),
                 label,
                 13.0,
@@ -3830,8 +3830,8 @@ Frame::default()
                         )
                         .size()
                         .x
-                        + 24.0,
-                    32.0,
+                        + 32.0,
+                    40.0,
                 ),
                 label,
                 13.5,
@@ -4057,8 +4057,8 @@ Frame::default()
                                 )
                                 .size()
                                 .x
-                                + 24.0,
-                            30.0,
+                                + 48.0,
+                            44.0,
                         ),
                         &label,
                         13.5,
@@ -4152,8 +4152,8 @@ Frame::default()
                                 )
                                 .size()
                                 .x
-                                + 24.0,
-                            30.0,
+                                + 32.0,
+                            40.0,
                         ),
                         label,
                         13.0,
