@@ -270,6 +270,32 @@ impl Default for GlowCache {
     }
 }
 
+/// Complementary error function, Abramowitz & Stegun 7.1.26
+/// (|ε| ≤ 1.5e-7) — pixel work needs no better.
+fn erfc(x: f32) -> f32 {
+    if x < 0.0 {
+        return 2.0 - erfc(-x);
+    }
+    let t = 1.0 / (1.0 + 0.5 * x);
+    let poly = t * (-x * x - 1.26551223
+        + t * (1.00002368
+            + t * (0.37409196
+                + t * (0.09678418
+                    + t * (-0.18628806
+                        + t * (0.27886807
+                            + t * (-1.13520398
+                                + t * (1.48851587
+                                    + t * (-0.82215223 + t * 0.17087277)))))))))
+        .exp();
+    poly
+}
+
+/// The blurred shadow's alpha ratio at `d` points past the shape
+/// boundary: the 50% contour rides the edge, ~2% remains at 2σ.
+fn glow_alpha(d: f32, sigma: f32) -> f32 {
+    0.5 * erfc(d / (sigma * core::f32::consts::SQRT_2))
+}
+
 /// The shadow's reach past the button edge: blur (≈2σ) plus the 4pt
 /// drop.
 const GLOW_MARGIN: f32 = 18.0;
@@ -328,7 +354,6 @@ impl GlowCache {
         let w = (size.x + 2.0 * margin).round() as usize;
         let h = (size.y + 2.0 * margin).round() as usize;
         let sigma = 7.0f32;
-        let two_sigma_sq = 2.0 * sigma * sigma;
         let half = egui::vec2(size.x / 2.0, size.y / 2.0);
         let center = egui::vec2(w as f32 / 2.0, h as f32 / 2.0 + 4.0);
         let r = f32::from(radius).min(half.x.min(half.y));
@@ -343,11 +368,11 @@ impl GlowCache {
                 let outside = egui::vec2(q.x.max(0.0), q.y.max(0.0)).length()
                     + q.x.max(q.y).min(0.0)
                     - r;
-                let a = if outside <= 0.0 {
-                    1.0
-                } else {
-                    (-(outside * outside) / two_sigma_sq).exp()
-                };
+                // A box-shadow blur CONVOLVES the shape with the
+                // kernel: the boundary sits at exactly 50%, decaying
+                // like the error function (0.5·erfc(d/σ√2)) — not the
+                // per-pixel gaussian, which reads far too deep.
+                let a = glow_alpha(outside, sigma);
                 let alpha = (a * 255.0).round() as u8;
                 pixels.push(255);
                 pixels.push(255);
@@ -4359,4 +4384,30 @@ fn apply_dwm_rounding(frame: &eframe::Frame) {
                 4,
             );
         }
+}
+
+#[cfg(test)]
+mod glow_tests {
+    use super::*;
+
+    #[test]
+    fn glow_falloff_matches_box_shadow_semantics() {
+        let sigma = 7.0f32;
+        let at = |d: f32| glow_alpha(d, sigma);
+        // The 50% contour rides the boundary (CSS blur semantics).
+        assert!((at(0.0) - 0.5).abs() < 0.01, "edge = {}", at(0.0));
+        // ~16% one sigma out, ~2% two sigmas out.
+        assert!((at(7.0) - 0.16).abs() < 0.02, "sigma = {}", at(7.0));
+        assert!(at(14.0) < 0.03, "two sigma = {}", at(14.0));
+        // Deep inside: saturated (asymptotic - 97.7% at 2σ in).
+        assert!(at(-14.0) > 0.95, "inside = {}", at(-14.0));
+        // Monotonic decay outward.
+        let mut prev = 1.0f32;
+        for step in 0..40 {
+            let d = step as f32;
+            let a = at(d);
+            assert!(a <= prev + 1e-6);
+            prev = a;
+        }
+    }
 }
