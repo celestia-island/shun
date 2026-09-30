@@ -464,6 +464,63 @@ pub fn read_manifest(install_dir: &Path) -> Result<InstallManifest, ShunError> {
     })
 }
 
+/// Runs the config's phase script hooks (docs/en/design/scripting.md):
+/// `prepare` (before any payload work), `post-install` (after the flow
+/// completes, before the wizard's done page), `pre-uninstall` (before
+/// the removal begins). The scripts ride the payload (`prepare` and
+/// `pre-uninstall` read them pre-extraction) and run on the embedded
+/// duckscript interpreter with the wizard language exported
+/// (`SHUN_LANGUAGE`). A failing hook fails the flow: a silently
+/// skipped hook would lie about what ran.
+pub fn run_phase_hooks(
+    phase: &str,
+    config: &crate::config::ShunConfig,
+    ctx: &InstallContext,
+    on_event: &mut dyn FnMut(FlowEvent),
+    read: &dyn Fn(&Path) -> Option<Vec<u8>>,
+) -> Result<(), ShunError> {
+    use crate::flow::FlowLog;
+    use duckscript::types::runtime::Context as DuckContext;
+
+    let Some(hooks) = &config.script else {
+        return Ok(());
+    };
+    if hooks.runner != "duckscript" {
+        return Err(ShunError::Config(format!(
+            "unsupported script runner: {} (only `duckscript` ships)",
+            hooks.runner
+        )));
+    }
+    for hook in hooks.hooks.iter().filter(|h| h.phase == phase) {
+        let path = Path::new(&hook.script);
+        let bytes = read(path).ok_or_else(|| ShunError::MissingEntry(path.to_path_buf()))?;
+        let script = std::str::from_utf8(&bytes)
+            .map_err(|e| ShunError::Config(format!("script {} is not utf-8: {e}", hook.script)))?;
+        on_event(FlowEvent::Log {
+            record: FlowLog::ScriptBegin {
+                name: hook.script.clone(),
+            },
+        });
+        let mut context = DuckContext::new();
+        duckscriptsdk::load(&mut context.commands)
+            .map_err(|e| ShunError::Config(format!("duckscript sdk load: {e}")))?;
+        // The wizard language rides into the script's environment.
+        for (key, value) in ctx.script_env() {
+            // SAFETY: the flow runs single-threaded here, and the vars
+            // are shun's own SHUN_* namespace.
+            unsafe { std::env::set_var(&key, &value) };
+        }
+        duckscript::runner::run_script(script, context, None)
+            .map_err(|e| ShunError::Config(format!("script {}: {e}", hook.script)))?;
+        on_event(FlowEvent::Log {
+            record: FlowLog::CommandDone {
+                command: hook.script.clone(),
+            },
+        });
+    }
+    Ok(())
+}
+
 /// The install delivery flow: extract the payload with progress, persist
 /// the on-disk manifest (consumed by uninstall), then either register
 /// (local mode) or drop the portable marker (portable mode).

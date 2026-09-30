@@ -160,6 +160,11 @@ export interface InstallerStrings {
     warnNoWritable: string;
     /** Note shown after the root-drive nesting pass rewrites the path. */
     nestedNote: string;
+    /** Optional-components block: heading + the bundled badge. */
+    attachTitle: string;
+    attachBundled: string;
+    /** Flash-target notice line on the location pane. */
+    flashHint: string;
   };
   flavors: { full: string; fullWebview2: string };
   license: {
@@ -212,6 +217,7 @@ export interface InstallerStrings {
 const zhHans: InstallerStrings = {
   title: "%PRODUCT% 安装器",
   uninstallTitle: "%PRODUCT% 卸载",
+  themeToggle: "切换明暗模式",
   steps: { language: "安装语言", mode: "安装位置", license: "用户协议", install: "安装", done: "完成" },
   language: {
     title: "选择安装向导的语言",
@@ -233,13 +239,15 @@ const zhHans: InstallerStrings = {
   target: {
     label: "安装位置",
     dialogTitle: "选择安装位置",
-    quickTitle: "常用路径",
     hintLocal: "数据写入 %APPDATA%，可自动更新；卸载信息会登记到系统。",
     hintUsb: "检测到可移动磁盘时自动定位；否则回退到本机路径。",
     hintUsbDetected: "已检测到可移动磁盘。",
     warnUnwritable: "当前目录不可写，安装会被拒绝——建议选择上方标亮的候选位置。",
     warnNoWritable: "未检测到可写的候选位置，请手动选择有权限的目录。",
     nestedNote: "已自动垫一层文件夹，避免直接安装到盘符根目录。",
+    attachTitle: "可选组件",
+    attachBundled: "已内置",
+    flashHint: "本交付还包含一个设备刷写步骤，安装完成后进行。",
   },
   flavors: {
     full: "完整版",
@@ -351,13 +359,15 @@ const zhHant: InstallerStrings = {
   target: {
     label: "安裝位置",
     dialogTitle: "選擇安裝位置",
-    quickTitle: "常用路徑",
     hintLocal: "資料寫入 %APPDATA%，可自動更新；解除安裝資訊會登錄到系統。",
     hintUsb: "偵測到可移動磁碟時自動定位；否則回退到本機路徑。",
     hintUsbDetected: "已偵測到可移動磁碟。",
     warnUnwritable: "目前目錄不可寫，安裝會被拒絕——建議選擇上方標亮的候選位置。",
     warnNoWritable: "未偵測到可寫的候選位置，請手動選擇有權限的目錄。",
     nestedNote: "已自動墊一層資料夾，避免直接安裝到磁碟根目錄。",
+    attachTitle: "可選元件",
+    attachBundled: "已內建",
+    flashHint: "本交付還包含一個裝置燒錄步驟，安裝完成後進行。",
   },
   flavors: {
     full: "完整版",
@@ -469,13 +479,15 @@ const en: InstallerStrings = {
   target: {
     label: "Install location",
     dialogTitle: "Choose the install location",
-    quickTitle: "Common locations",
     hintLocal: "Data is written to %APPDATA% with auto-updates; the uninstall entry is registered with the system.",
     hintUsb: "Located automatically when a removable drive is present; otherwise falls back to a local path.",
     hintUsbDetected: "Removable drive detected.",
     warnUnwritable: "The current directory is not writable and the install would be rejected — pick one of the highlighted candidates above.",
     warnNoWritable: "No writable candidate location was found — pick a directory you have access to.",
     nestedNote: "A folder layer was added automatically so the payload never lands on the drive root.",
+    attachTitle: "Optional components",
+    attachBundled: "Bundled",
+    flashHint: "This delivery also includes a device flash step, run after the install.",
   },
   flavors: {
     full: "Full edition",
@@ -589,13 +601,15 @@ const ru: InstallerStrings = {
   target: {
     label: "Папка установки",
     dialogTitle: "Выберите папку установки",
-    quickTitle: "Частые папки",
     hintLocal: "Данные записываются в %APPDATA%, доступно автообновление; сведения об удалении регистрируются в системе.",
     hintUsb: "Определяется автоматически при наличии съёмного диска; иначе используется локальный путь.",
     hintUsbDetected: "Съёмный диск обнаружен.",
     warnUnwritable: "Текущий каталог недоступен для записи, установка будет отклонена — выберите один из подсвеченных вариантов выше.",
     warnNoWritable: "Доступных для записи вариантов не найдено — выберите папку, к которой у вас есть доступ.",
     nestedNote: "Автоматически добавлен уровень папки, чтобы установка не шла в корень диска.",
+    attachTitle: "Частые компоненты",
+    attachBundled: "В комплекте",
+    flashHint: "Этот пакет также включает шаг прошивки устройства после установки.",
   },
   flavors: {
     full: "Полная версия",
@@ -714,7 +728,6 @@ const ja: InstallerStrings = {
   target: {
     label: "インストール先",
     dialogTitle: "インストール先を選択",
-    quickTitle: "よく使う場所",
     hintLocal:
       "データは %APPDATA% に書き込まれ、自動更新が利用できます。アンインストール情報もシステムに登録されます。",
     hintUsb:
@@ -726,6 +739,9 @@ const ja: InstallerStrings = {
       "書き込み可能な候補場所が見つかりません。アクセス権のあるディレクトリを手動で選択してください。",
     nestedNote:
       "ドライブのルートに直接インストールされないよう、フォルダーを一階層自動で追加しました。",
+    attachTitle: "追加コンポーネント",
+    attachBundled: "同梱済み",
+    flashHint: "この配信にはインストール後のデバイス書き込みステップも含まれます。",
   },
   flavors: {
     full: "完全版",
@@ -849,7 +865,6 @@ const ko: InstallerStrings = {
   target: {
     label: "설치 위치",
     dialogTitle: "설치 위치 선택",
-    quickTitle: "일반 위치",
     hintLocal:
       "데이터는 %APPDATA%에 기록되며 자동 업데이트를 사용할 수 있습니다. 제거 정보도 시스템에 등록됩니다.",
     hintUsb: "이동식 드라이브가 있으면 자동으로 지정되고, 없으면 로컬 경로로 대체됩니다.",
@@ -860,6 +875,9 @@ const ko: InstallerStrings = {
       "쓸 수 있는 후보 위치를 찾지 못했습니다. 권한이 있는 디렉터리를 직접 선택하세요.",
     nestedNote:
       "드라이브 루트에 바로 설치되지 않도록 폴더를 한 단계 자동으로 추가했습니다.",
+    attachTitle: "선택 구성 요소",
+    attachBundled: "포함됨",
+    flashHint: "이 배포에는 설치 후 기기 플래시 단계도 포함됩니다.",
   },
   flavors: {
     full: "풀 버전",
@@ -973,7 +991,6 @@ const fr: InstallerStrings = {
   target: {
     label: "Emplacement d'installation",
     dialogTitle: "Choisir l'emplacement d'installation",
-    quickTitle: "Emplacements courants",
     hintLocal:
       "Les données sont écrites dans %APPDATA% avec mise à jour automatique ; l'entrée de désinstallation est enregistrée dans le système.",
     hintUsb:
@@ -985,6 +1002,9 @@ const fr: InstallerStrings = {
       "Aucun emplacement inscriptible n'a été trouvé — choisissez un répertoire auquel vous avez accès.",
     nestedNote:
       "Un niveau de dossier a été ajouté automatiquement afin que l'installation n'atterrisse jamais à la racine du lecteur.",
+    attachTitle: "Composants facultatifs",
+    attachBundled: "Inclus",
+    flashHint: "Cette livraison inclut également une étape de flashage après l'installation.",
   },
   flavors: {
     full: "Édition complète",
@@ -1104,7 +1124,6 @@ const es: InstallerStrings = {
   target: {
     label: "Ubicación de instalación",
     dialogTitle: "Elegir la ubicación de instalación",
-    quickTitle: "Ubicaciones frecuentes",
     hintLocal:
       "Los datos se escriben en %APPDATA% con actualizaciones automáticas; la información de desinstalación se registra en el sistema.",
     hintUsb:
@@ -1116,6 +1135,9 @@ const es: InstallerStrings = {
       "No se encontró ninguna ubicación con permiso de escritura: elige un directorio al que tengas acceso.",
     nestedNote:
       "Se añadió automáticamente un nivel de carpeta para que la instalación nunca caiga en la raíz de la unidad.",
+    attachTitle: "Componentes opcionales",
+    attachBundled: "Incluido",
+    flashHint: "Esta entrega también incluye un paso de flasheo tras la instalación.",
   },
   flavors: {
     full: "Edición completa",
@@ -1235,7 +1257,6 @@ const de: InstallerStrings = {
   target: {
     label: "Installationsort",
     dialogTitle: "Installationsort wählen",
-    quickTitle: "Häufige Speicherorte",
     hintLocal:
       "Die Daten werden unter %APPDATA% abgelegt, mit automatischen Updates; der Deinstallationseintrag wird im System registriert.",
     hintUsb:
@@ -1247,6 +1268,9 @@ const de: InstallerStrings = {
       "Kein beschreibbarer Kandidatenort gefunden — wählen Sie ein Verzeichnis, auf das Sie zugreifen dürfen.",
     nestedNote:
       "Automatisch wurde eine Ordnerebene eingefügt, damit nichts direkt im Wurzelverzeichnis des Laufwerks landet.",
+    attachTitle: "Optionale Komponenten",
+    attachBundled: "Enthalten",
+    flashHint: "Diese Auslieferung umfasst zudem einen Flash-Schritt nach der Installation.",
   },
   flavors: {
     full: "Vollversion",
@@ -1365,7 +1389,6 @@ const pt: InstallerStrings = {
   target: {
     label: "Local de instalação",
     dialogTitle: "Escolher o local de instalação",
-    quickTitle: "Locais comuns",
     hintLocal:
       "Os dados são escritos em %APPDATA%, com atualizações automáticas; a entrada de desinstalação é registada no sistema.",
     hintUsb:
@@ -1377,6 +1400,9 @@ const pt: InstallerStrings = {
       "Não foi encontrado nenhum local com permissão de escrita — escolha um diretório a que tenha acesso.",
     nestedNote:
       "Foi adicionado automaticamente um nível de pastas para que a instalação nunca caia na raiz da unidade.",
+    attachTitle: "Componentes opcionais",
+    attachBundled: "Incluído",
+    flashHint: "Esta entrega inclui também um passo de gravação após a instalação.",
   },
   flavors: {
     full: "Edição completa",

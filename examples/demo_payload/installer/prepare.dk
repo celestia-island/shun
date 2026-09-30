@@ -1,0 +1,4 @@
+# The screenshot window: hold the prepare phase for ~5s so the
+# running page can be captured mid-install (shun demo only — real
+# products ship no hold). duckscript's sleep takes milliseconds.
+sleep 5000

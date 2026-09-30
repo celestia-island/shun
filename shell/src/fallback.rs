@@ -24,16 +24,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 
+use crate::SHUN_FLAVOR;
 use egui::{
-    Align, Button, Color32, Context, CornerRadius, FontDefinitions, FontFamily, Frame,
-    Layout, Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2, pos2, vec2,
+    Align, Button, Color32, Context, CornerRadius, FontDefinitions, FontFamily, Frame, Layout,
+    Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2, pos2, vec2,
 };
+use serde::Deserialize;
 use shun::config::{ShunConfig, TargetConfig};
 use shun::flow::{FlowEvent, FlowPhase};
 use shun::payload::ArchivePayload;
-use serde::Deserialize;
 use shun::wizard::{InstallRequest, WizardCore};
-use crate::SHUN_FLAVOR;
 
 /// Why the fallback UI is running — drives the banner text.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -48,6 +48,24 @@ pub enum FallbackReason {
 enum WorkerMsg {
     Event(FlowEvent),
     Done(Result<(), String>),
+}
+
+/// One configure pane of the wizard's flow, built from the resolved
+/// pipeline: custom content steps slot in at their declaration position
+/// relative to the license (mode/scope fold into the location pane —
+/// the scope pane is a known gap).
+#[derive(Clone)]
+enum Page {
+    Language,
+    Location,
+    Content { title: String, body: String },
+    License,
+}
+
+impl Page {
+    fn is_license(&self) -> bool {
+        matches!(self, Page::License)
+    }
 }
 
 /// Wizard stage — the step rail and the content area follow it.
@@ -92,6 +110,11 @@ pub(crate) struct Theme {
     /// The manifest's terminal-pane background (a solid or a gradient's
     /// midpoint), when the theme declares one.
     pub(crate) terminal_bg_override: Option<Color32>,
+    /// The rail layer's flat fill (`shell.theme.rail-background`) — a
+    /// gradient mixes to its midpoint.
+    pub(crate) rail_bg_override: Option<Color32>,
+    /// The content pane's flat fill (`shell.theme.pane-background`).
+    pub(crate) pane_bg_override: Option<Color32>,
 }
 
 impl Theme {
@@ -118,6 +141,8 @@ impl Theme {
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(230, 170, 50),
             terminal_bg_override: None,
+            rail_bg_override: None,
+            pane_bg_override: None,
         }
     }
 
@@ -139,20 +164,9 @@ impl Theme {
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(190, 140, 30),
             terminal_bg_override: None,
+            rail_bg_override: None,
+            pane_bg_override: None,
         }
-    }
-
-    /// Terminal pane background (a shade between page and surface).
-    pub(crate) fn terminal_bg(&self) -> Color32 {
-        if let Some(override_bg) = self.terminal_bg_override {
-            return override_bg;
-        }
-        mix(self.background, self.surface, 0.6)
-    }
-
-    /// Terminal plain-echo foreground.
-    pub(crate) fn terminal_fg(&self) -> Color32 {
-        self.text_secondary
     }
 
     /// Warning banner fill (warning at ~12% over the background).
@@ -164,6 +178,207 @@ impl Theme {
     fn error_tint(&self) -> Color32 {
         mix(self.background, self.error, 0.12)
     }
+}
+
+/// A hand-drawn text button — the egui Button widget cannot host the
+/// glow underlay: a second widget on the same rect (hover probe under
+/// a click-sensed button) never reports hover, because egui's hit
+/// test hands the pointer to the topmost click-sensed widget. This
+/// allocates ONE click-sensed rect, draws glow -> fill/border ->
+/// baseline-true text on it, and returns the response.
+#[allow(clippy::too_many_arguments)]
+fn text_button(
+    ui: &mut egui::Ui,
+    desired: egui::Vec2,
+    label: &str,
+    font_size: f32,
+    pad_x: f32,
+    _strong: bool,
+    text_color: Color32,
+    fill: Color32,
+    stroke_color: Option<Color32>,
+    radius: u8,
+    glow_color: Option<Color32>,
+    glow: &GlowCache,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
+    let response = FallbackApp::hand(response);
+    let hover_t = ui.ctx().animate_bool_with_time(
+        response.id.with("glow"),
+        response.hovered() || response.is_pointer_button_down_on(),
+        0.15,
+    );
+    if let Some(glow_color) = glow_color {
+        glow.draw(ui, rect, radius, glow_color, hover_t);
+    }
+    let painter = ui.painter_at(rect);
+    if let Some(stroke_color) = stroke_color {
+        hairline_box(&painter, rect, radius, stroke_color, fill);
+    } else {
+        painter.rect_filled(rect, CornerRadius::same(radius), fill);
+    }
+    let font = egui::FontId::proportional(font_size);
+    let galley = painter.layout_no_wrap(label.to_owned(), font.clone(), text_color);
+    let baseline_offset = galley
+        .rows
+        .first()
+        .and_then(|row| row.glyphs.first())
+        .map(|g| g.pos.y)
+        .unwrap_or(galley.size().y * 0.8);
+    let ascent = galley.size().y * 0.55;
+    // +1.5pt: egui snaps the rasterized baseline to physical pixels,
+    // which at fractional DPI rode ~1.5pt high on a filled plate.
+    let baseline_y = rect.center().y + ascent * 0.35 + 1.5;
+    painter.galley(
+        pos2(rect.left() + pad_x, baseline_y - baseline_offset),
+        galley,
+        text_color,
+    );
+    response
+}
+
+/// The web face's button glow (`--shadow-button: 0 4px 14px
+/// primary/35%`), BAKED: a rounded-rect SDF run through a gaussian
+/// (σ = blur/2) rasterizes once per button size into a texture; hover
+/// drawing is a single tinted image call. Layered plates cannot blur —
+/// they read as an enlarged border.
+type GlowTextureMap =
+    std::cell::RefCell<std::collections::HashMap<(u32, u32, [u8; 3]), TextureHandle>>;
+
+pub(crate) struct GlowCache {
+    textures: GlowTextureMap,
+}
+
+impl Default for GlowCache {
+    fn default() -> Self {
+        Self {
+            textures: std::cell::RefCell::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+/// Complementary error function, Abramowitz & Stegun 7.1.26
+/// (|ε| ≤ 1.5e-7) — pixel work needs no better.
+fn erfc(x: f32) -> f32 {
+    if x < 0.0 {
+        return 2.0 - erfc(-x);
+    }
+    let t = 1.0 / (1.0 + 0.5 * x);
+    t * (-x * x - 1.2655122
+        + t * (1.0000237
+            + t * (0.374092
+                + t * (0.0967842
+                    + t * (-0.18628806
+                        + t * (0.2788681
+                            + t * (-1.135204
+                                + t * (1.4885159 + t * (-0.8221522 + t * 0.1708728)))))))))
+        .exp()
+}
+
+/// The blurred shadow's alpha ratio at `d` points past the shape
+/// boundary: the 50% contour rides the edge, ~2% remains at 2σ.
+fn glow_alpha(d: f32, sigma: f32) -> f32 {
+    0.5 * erfc(d / (sigma * core::f32::consts::SQRT_2))
+}
+
+/// The shadow's reach past the button edge: blur (≈2σ) plus the 4pt
+/// drop.
+const GLOW_MARGIN: f32 = 18.0;
+
+impl GlowCache {
+    /// Draws the glow for `rect` at `strength` (0..1). The baked shape
+    /// is the button shifted down 4pt (the shadow's y offset).
+    pub fn draw(&self, ui: &egui::Ui, rect: egui::Rect, radius: u8, color: Color32, strength: f32) {
+        if strength <= 0.01 {
+            return;
+        }
+        let size = rect.size();
+        let key = (
+            size.x.to_bits(),
+            size.y.to_bits(),
+            [color.r(), color.g(), color.b()],
+        );
+        let texture = self
+            .textures
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| Self::bake(ui.ctx(), size, radius, color))
+            .clone();
+        let tint = Color32::from_rgba_unmultiplied(
+            color.r(),
+            color.g(),
+            color.b(),
+            (255.0 * 0.35 * strength).round() as u8,
+        );
+        ui.painter().image(
+            texture.id(),
+            egui::Rect::from_min_size(
+                rect.min - egui::vec2(GLOW_MARGIN, GLOW_MARGIN),
+                size + 2.0 * egui::vec2(GLOW_MARGIN, GLOW_MARGIN),
+            ),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        );
+    }
+
+    /// Rasterizes the blurred shadow into a white-alpha bitmap: signed
+    /// distance to the offset rounded rect, gaussian falloff
+    /// (σ = blur/2 = 7), 1.0 inside.
+    fn bake(ctx: &egui::Context, size: egui::Vec2, radius: u8, color: Color32) -> TextureHandle {
+        let margin = GLOW_MARGIN;
+        let w = (size.x + 2.0 * margin).round() as usize;
+        let h = (size.y + 2.0 * margin).round() as usize;
+        let sigma = 7.0f32;
+        let half = egui::vec2(size.x / 2.0, size.y / 2.0);
+        let center = egui::vec2(w as f32 / 2.0, h as f32 / 2.0 + 4.0);
+        let r = f32::from(radius).min(half.x.min(half.y));
+        let mut pixels = Vec::with_capacity(w * h * 4);
+        for py in 0..h {
+            for px in 0..w {
+                let p = egui::vec2(px as f32 + 0.5, py as f32 + 0.5) - center;
+                let q = egui::vec2(p.x.abs() - (half.x - r), p.y.abs() - (half.y - r));
+                let outside =
+                    egui::vec2(q.x.max(0.0), q.y.max(0.0)).length() + q.x.max(q.y).min(0.0) - r;
+                // A box-shadow blur CONVOLVES the shape with the
+                // kernel: the boundary sits at exactly 50%, decaying
+                // like the error function (0.5·erfc(d/σ√2)) — not the
+                // per-pixel gaussian, which reads far too deep.
+                let a = glow_alpha(outside, sigma);
+                let alpha = (a * 255.0).round() as u8;
+                pixels.push(255);
+                pixels.push(255);
+                pixels.push(255);
+                pixels.push(alpha);
+            }
+        }
+        let _ = color;
+        ctx.load_texture(
+            "button-glow",
+            egui::ColorImage::from_rgba_unmultiplied([w, h], &pixels),
+            egui::TextureOptions {
+                magnification: egui::TextureFilter::Linear,
+                minification: egui::TextureFilter::Linear,
+                ..Default::default()
+            },
+        )
+    }
+}
+
+/// Paints a rounded box with a UNIFORM 1px border: the border color
+/// fills the plate, the fill color lays an inner plate shrunk by one
+/// pixel (radius stepped down to match). egui's `rect_stroke` feathers
+/// the arc segments, so rounded corners read a pixel thicker than the
+/// straight edges; the sandwich models a CSS border-box and cannot.
+pub(crate) fn hairline_box(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    radius: u8,
+    border: Color32,
+    fill: Color32,
+) {
+    painter.rect_filled(rect, CornerRadius::same(radius), border);
+    let inner = rect.shrink(1.0);
+    painter.rect_filled(inner, CornerRadius::same(radius.saturating_sub(1)), fill);
 }
 
 /// Alpha-blends `over` onto `base`.
@@ -179,46 +394,23 @@ fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
     )
 }
 
-/// Resolves `shell.theme.mode` (default dark; `system` asks Windows).
-/// Folder badge prefixing the target row — the shittim-chest file-picker
-/// look: a primary-tinted rounded square carrying an outlined folder
-/// glyph (no font dependency, pure painter strokes).
-fn folder_badge(ui: &mut egui::Ui, theme: &Theme, size: f32) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    let painter = ui.painter_at(rect);
-    // Neutral plate: the accent-blue tile clashed with the dark pane —
-    // the badge now sits in the surface tone with a hairline border and
-    // a muted glyph.
-    painter.rect_filled(rect, CornerRadius::same(7), theme.surface);
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(7),
-        Stroke::new(1.0f32, theme.border),
-        egui::StrokeKind::Inside,
-    );
-    let glyph = rect.shrink(6.5);
-    let body_top = glyph.top() + glyph.height() * 0.30;
-    let stroke = Stroke::new(1.6f32, theme.text_secondary);
-    // Tab: rises from the body's top edge, runs right, folds back down.
-    painter.add(egui::Shape::line(
-        vec![
-            pos2(glyph.left(), body_top),
-            pos2(glyph.left(), glyph.top()),
-            pos2(glyph.left() + glyph.width() * 0.34, glyph.top()),
-            pos2(glyph.left() + glyph.width() * 0.46, body_top),
-        ],
-        stroke,
-    ));
-    painter.rect_stroke(
-        egui::Rect::from_min_max(
-            pos2(glyph.left(), body_top),
-            pos2(glyph.right(), glyph.bottom()),
-        ),
-        CornerRadius::same(2),
-        stroke,
-        egui::StrokeKind::Middle,
-    );
-    response
+// Resolves `shell.theme.mode` (default dark; `system` asks Windows).
+/// The machine's app-theme preference: Windows 11 personalization's
+/// `AppsUseLightTheme` (1 = light). Any failure to read it — older
+/// Windows, a stripped registry — resolves LIGHT (the user direction's
+/// floor), and so does every non-Windows platform.
+#[cfg(windows)]
+fn os_prefers_light() -> bool {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    hkcu.open_subkey_with_flags(
+        r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        KEY_READ,
+    )
+    .and_then(|key| key.get_value::<u32, _>("AppsUseLightTheme"))
+    .map(|value| value != 0)
+    .unwrap_or(true)
 }
 
 fn resolve_theme(config: &ShunConfig) -> Theme {
@@ -233,25 +425,34 @@ fn resolve_theme(config: &ShunConfig) -> Theme {
     // explicit light/dark pin.
     let mut theme = match shell.theme.as_ref().and_then(|theme| theme.mode) {
         Some(shun::config::ThemeMode::Light) => Theme::light(accent),
-        Some(shun::config::ThemeMode::System) => {
-            let (lat, lng) = solar::timezone_estimate();
-            if solar::prefers_light(lat, lng) {
+        Some(shun::config::ThemeMode::Dark) => Theme::dark(accent),
+        // `system` (and unset): follow the MACHINE's app theme —
+        // Windows 11's personalization light/dark — not the sun.
+        // Undetectable resolves light (user direction).
+        Some(shun::config::ThemeMode::System) | None => {
+            if os_prefers_light() {
                 Theme::light(accent)
             } else {
                 Theme::dark(accent)
             }
         }
-        Some(shun::config::ThemeMode::Dark) | None => Theme::dark(accent),
     };
     // The manifest's background tints the tokens: solid applies as-is, a
     // gradient mixes to its midpoint (egui paints flat fills). Panes and
     // the rail then derive from it, so the whole face shifts with the
     // manifest's theme.
-    let background = shell
-        .theme
-        .as_ref()
-        .and_then(|theme| theme.background.as_ref());
-    match background {
+    apply_theme_layers(&mut theme, &shell);
+    theme
+}
+
+/// Applies the manifest's background layers onto a base token set —
+/// shared by the startup resolution AND every mode flip (a flip rebuilds
+/// the base tokens and must re-tint, or the manifest background would
+/// silently vanish the first time the sun or the user changes sides).
+/// Wallpapers have no egui renderer — the face stays on the token
+/// background (the banner already says "no effects").
+fn apply_theme_layers(theme: &mut Theme, shell: &shun::config::ShellUiConfig) {
+    match shell.theme.as_ref().and_then(|t| t.background.as_ref()) {
         Some(shun::config::BackgroundSpec::Color(color)) => {
             if let Some(rgba) = css_color_to32(color) {
                 theme.background = rgba;
@@ -266,11 +467,30 @@ fn resolve_theme(config: &ShunConfig) -> Theme {
                 theme.terminal_bg_override = Some(mix(mid, theme.text, 0.1));
             }
         }
-        // Wallpapers have no egui renderer — the face stays on the
-        // token background (the banner already says "no effects").
         _ => {}
     }
-    theme
+    // The rail/pane layers: a configured color (or a gradient's
+    // midpoint) becomes the layer's flat fill — egui's honest
+    // approximation of the web face's per-layer CSS.
+    let flat = |spec: Option<&shun::config::BackgroundSpec>| -> Option<Color32> {
+        match spec {
+            Some(shun::config::BackgroundSpec::Color(color)) => css_color_to32(color),
+            Some(spec @ shun::config::BackgroundSpec::Gradient { .. }) => gradient_midpoint(spec),
+            _ => None,
+        }
+    };
+    theme.rail_bg_override = flat(
+        shell
+            .theme
+            .as_ref()
+            .and_then(|t| t.rail_background.as_ref()),
+    );
+    theme.pane_bg_override = flat(
+        shell
+            .theme
+            .as_ref()
+            .and_then(|t| t.pane_background.as_ref()),
+    );
 }
 
 /// Parses the CSS color shapes the theme accepts for egui fills:
@@ -309,169 +529,13 @@ fn gradient_midpoint(spec: &shun::config::BackgroundSpec) -> Option<Color32> {
     ))
 }
 
-// ── The solar theme clock — ported 1:1 from hikari's useSolarTime.ts ────
-//
-// `system` theme mode resolves day/night from the SUN, not the OS
-// preference: the sun's altitude at the device's coordinates decides
-// (day → light, dusk/night → dark). Coordinates cascade like hikari's:
-// the Windows location service fix when one lands, else the first-paint
-// estimate (hikari's default latitude + the timezone-offset longitude).
-// The clock re-evaluates every five minutes, so dawn and dusk flip the
-// face while it sits open.
-mod solar {
-    const DEG: f64 = core::f64::consts::PI / 180.0;
-    const RAD: f64 = 180.0 / core::f64::consts::PI;
-
-    fn to_julian_date(unix_ms: i64) -> f64 {
-        unix_ms as f64 / 86_400_000.0 + 2_440_587.5
-    }
-
-    fn greenwich_sidereal_time(jd: f64) -> f64 {
-        let t = (jd - 2_451_545.0) / 36_525.0;
-        let mut theta = (280.460_618_37
-            + 360.985_647_366_29 * (jd - 2_451_545.0)
-            + 0.000_387_933 * t * t
-            - t * t * t / 38_710_000.0)
-            % 360.0;
-        if theta < 0.0 {
-            theta += 360.0;
-        }
-        theta
-    }
-
-    /// Sun declination (radians) and right ascension (degrees).
-    fn sun_equatorial(jd: f64) -> (f64, f64) {
-        let t = (jd - 2_451_545.0) / 36_525.0;
-        let l0 = (280.466_46 + 36_000.769_83 * t) % 360.0;
-        let m = ((357.529_11 + 35_999.050_29 * t) % 360.0) * DEG;
-        let c = (1.914_6 - 0.004_817 * t) * m.sin() + (0.019_993 - 0.000_101 * t) * (2.0 * m).sin();
-        let mut sun_lon = (l0 + c) % 360.0;
-        if sun_lon < 0.0 {
-            sun_lon += 360.0;
-        }
-        let omega = (125.04 - 1_934.136 * t) * DEG;
-        let lambda = sun_lon * DEG - 0.005_69 * DEG - 0.004_78 * DEG * omega.sin();
-        let epsilon = (23.439_291 - 0.013_004 * t) * DEG;
-        let decl = (epsilon.sin() * lambda.sin()).asin();
-        let ra = (epsilon.cos() * lambda.sin()).atan2(lambda.cos());
-        (decl, ra * RAD)
-    }
-
-    /// The sun's altitude in degrees at the given coordinates right now.
-    pub(crate) fn solar_altitude(lat_deg: f64, lng_deg: f64) -> f64 {
-        let unix_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        let jd = to_julian_date(unix_ms);
-        let (decl, ra) = sun_equatorial(jd);
-        let mut ha = greenwich_sidereal_time(jd) + lng_deg - ra;
-        ha = (((ha + 180.0) % 360.0) + 360.0) % 360.0 - 180.0;
-        let (lat_r, ha_r) = (lat_deg * DEG, ha * DEG);
-        (lat_r.sin() * decl.sin() + lat_r.cos() * decl.cos() * ha_r.cos()).asin() * RAD
-    }
-
-    /// hikari's bands: day above +6°, civil twilight in between, night
-    /// below −6°. Light only in full day — matching `useTheme`'s
-    /// `resolveEffectiveMode` (day → light, dusk/night → dark).
-    pub(crate) fn prefers_light(lat_deg: f64, lng_deg: f64) -> bool {
-        solar_altitude(lat_deg, lng_deg) > 6.0
-    }
-
-    /// First-paint estimate: hikari's default latitude plus the
-    /// timezone-offset longitude (offset minutes / 4 = degrees).
-    pub(crate) fn timezone_estimate() -> (f64, f64) {
-        (31.23, f64::from(local_utc_offset_minutes()) / 4.0)
-    }
-
-    /// Windows location service fix resolved on a worker thread — the
-    /// native slot for hikari's geolocation provider. `None` when the
-    /// service is off, permission is denied, or no fix lands in time.
-    #[cfg(windows)]
-    pub(crate) fn spawn_fix_resolver() -> std::sync::mpsc::Receiver<Option<(f64, f64)>> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(winrt_fix());
-        });
-        rx
-    }
-
-    #[cfg(windows)]
-    fn winrt_fix() -> Option<(f64, f64)> {
-        use std::sync::mpsc;
-        use std::time::Duration;
-        // The WinRT call needs an initialized apartment; the UI thread
-        // keeps its own — init MTA here.
-        unsafe {
-            windows_sys::Win32::System::Com::CoInitializeEx(
-                std::ptr::null(),
-                windows_sys::Win32::System::Com::COINIT_MULTITHREADED as u32,
-            );
-        }
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let fix = (|| -> Option<(f64, f64)> {
-                use windows::Devices::Geolocation::Geolocator;
-                let op = Geolocator::new().ok()?.GetGeopositionAsync().ok()?;
-                let position = op.get().ok()?;
-                let basic = position
-                    .Coordinate()
-                    .ok()?
-                    .Point()
-                    .ok()?
-                    .Position()
-                    .ok()?;
-                Some((basic.Latitude, basic.Longitude))
-            })();
-            let _ = tx.send(fix);
-        });
-        // A wedged service must not hold the theme clock hostage: the
-        // worker leaks (one short-lived stack), the face keeps the
-        // timezone estimate.
-        rx.recv_timeout(Duration::from_secs(4)).ok().flatten()
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn spawn_fix_resolver() -> std::sync::mpsc::Receiver<Option<(f64, f64)>> {
-        let (_, rx) = std::sync::mpsc::channel();
-        rx
-    }
-
-    /// Minutes east of UTC (DST-adjusted) for the longitude estimate.
-    #[cfg(windows)]
-    fn local_utc_offset_minutes() -> i32 {
-        use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
-        unsafe {
-            let mut tz: TIME_ZONE_INFORMATION = std::mem::zeroed();
-            // 1 = standard time active, 2 = daylight; the active bias
-            // rides along. Bias is minutes WEST (UTC = local + Bias).
-            let state = GetTimeZoneInformation(&mut tz);
-            let mut bias = tz.Bias;
-            if state == 2 {
-                bias += tz.DaylightBias;
-            } else if state == 1 {
-                bias += tz.StandardBias;
-            }
-            -bias
-        }
-    }
-
-    #[cfg(not(windows))]
-    fn local_utc_offset_minutes() -> i32 {
-        480 // UTC+8 — the estimate's honest default
-    }
-}
-
 // ── UI copy: the i18n strings of the web shell (shell/web/src/i18n.ts) ──
 
-/// The language the fallback UI renders in — the egui side carries the
-/// two TEXTS tables below, so its first-step language selector offers
-/// these two locales (the web shell offers all eight). The chosen value
-/// is what reaches the install context (and from there `SHUN_LANGUAGE`
-/// for scripts and the install manifest).
-
-
-
+// The language the fallback UI renders in — the egui side carries the
+// two TEXTS tables below, so its first-step language selector offers
+// these two locales (the web shell offers all eight). The chosen value
+// is what reaches the install context (and from there `SHUN_LANGUAGE`
+// for scripts and the install manifest).
 
 /// One locale's wizard copy — deserialized straight from
 /// shell/strings/wizard-strings.json, the SINGLE authored source both
@@ -506,10 +570,15 @@ struct Texts {
     quick_title: String,
     dir_empty: String,
     desktop_shortcut: String,
+    menu_shortcut: String,
+    launch_after: String,
     hint_local: String,
     hint_portable: String,
     location_sub: String,
     target_hint_local: String,
+    attach_title: String,
+    attach_bundled: String,
+    flash_hint: String,
     warn_unwritable: String,
     warn_no_writable: String,
     flavor_full: String,
@@ -530,6 +599,17 @@ struct Texts {
     open_dir: String,
     finish: String,
     retry: String,
+    // The standalone uninstaller page (web `uninstall` block): confirm →
+    // running → done/failed with the repair variant.
+    un_heading: String,
+    un_sub: String,
+    un_cancel: String,
+    un_repair: String,
+    un_close: String,
+    un_repairing: String,
+    done_repair: String,
+    failed_uninstall: String,
+    failed_repair: String,
     log: String,
     log_expand: String,
     log_collapse: String,
@@ -541,18 +621,14 @@ struct Texts {
     warn_aumid_blocked: String,
 }
 
-
-
 /// The single authored string source, shared with the web face:
 /// `shell/web` exports it (`pnpm dump-strings`) and both faces render
 /// from it. Parsed once, on first touch.
 fn wizard_strings() -> &'static WizardStrings {
     static WIZARD_STRINGS: std::sync::OnceLock<WizardStrings> = std::sync::OnceLock::new();
     WIZARD_STRINGS.get_or_init(|| {
-        serde_json::from_str(include_str!(
-            "../strings/wizard-strings.json"
-        ))
-        .expect("wizard-strings.json parses")
+        serde_json::from_str(include_str!("../strings/wizard-strings.json"))
+            .expect("wizard-strings.json parses")
     })
 }
 
@@ -566,20 +642,6 @@ struct WizardStrings {
 }
 
 impl WizardStrings {
-    /// The picker's entries: every authored locale, named in its own
-    /// script (the web face's LOCALE_OPTIONS).
-    fn options(&self) -> Vec<(String, String)> {
-        self.locales
-            .iter()
-            .map(|code| {
-                (
-                    code.clone(),
-                    self.labels.get(code).cloned().unwrap_or_else(|| code.clone()),
-                )
-            })
-            .collect()
-    }
-
     fn texts(&self, locale: &str) -> Texts {
         let fallback = if self.default.is_empty() {
             "zh-Hans".to_string()
@@ -637,7 +699,6 @@ fn system_locale_tag() -> Option<String> {
     None
 }
 
-
 /// Registers a system CJK font as a glyph fallback so the Chinese UI
 /// renders. Returns `false` when none is found (the UI falls back to
 /// English strings). Only single-file `.ttf` fonts are probed — egui
@@ -657,10 +718,14 @@ fn install_system_fonts(ctx: &Context) -> bool {
     let mut fonts = FontDefinitions::default();
 
     // (path, face index, registry name) — order matters: the family
-    // list is a glyph-fallback chain, so Latin must precede CJK.
-    const FACES: [(&str, u32, &str); 3] = [
+    // list is a glyph-fallback chain, so Latin must precede CJK, and
+    // Malgun Gothic completes the locale list's script set (Hangul —
+    // 한국어 is in neither Segoe UI nor YaHei, and without it the
+    // picker rendered tofu).
+    const FACES: [(&str, u32, &str); 4] = [
         (r"C:\Windows\Fonts\segoeui.ttf", 0, "segoe-ui"),
         (r"C:\Windows\Fonts\msyh.ttc", 0, "ms-yahei"),
+        (r"C:\Windows\Fonts\malgun.ttf", 0, "malgun-gothic"),
         (r"C:\Windows\Fonts\consola.ttf", 0, "consolas"),
     ];
     let mut loaded = std::collections::BTreeSet::new();
@@ -694,9 +759,13 @@ fn install_system_fonts(ctx: &Context) -> bool {
     chain(
         &mut fonts,
         FontFamily::Proportional,
-        &["segoe-ui", "ms-yahei"],
+        &["segoe-ui", "ms-yahei", "malgun-gothic"],
     );
-    chain(&mut fonts, FontFamily::Monospace, &["consolas", "ms-yahei"]);
+    chain(
+        &mut fonts,
+        FontFamily::Monospace,
+        &["consolas", "ms-yahei", "malgun-gothic"],
+    );
     let system_cjk = loaded.contains("ms-yahei");
 
     if system_cjk {
@@ -720,11 +789,7 @@ fn install_system_fonts(ctx: &Context) -> bool {
             .font_data
             .insert("cjk".into(), egui::FontData::from_owned(bytes).into());
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
-            fonts
-                .families
-                .entry(family)
-                .or_default()
-                .push("cjk".into());
+            fonts.families.entry(family).or_default().push("cjk".into());
         }
         ctx.set_fonts(fonts);
         return true;
@@ -732,9 +797,9 @@ fn install_system_fonts(ctx: &Context) -> bool {
     false
 }
 
-/// The embedded product logo, decoded to an egui texture (like the
-/// hikari title bar's icon prop). `None` when the manifest declares no
-/// logo or the bytes do not decode.
+// The embedded product logo, decoded to an egui texture (like the
+// hikari title bar's icon prop). `None` when the manifest declares no
+// logo or the bytes do not decode.
 // ── Lucide caption icons — the webview face's exact icon set ────────────
 //
 // HkTitleBar embeds lucide SVGs inline (lucide-vue-next at 14px,
@@ -783,7 +848,11 @@ impl CaptionIcons {
             // 28px raster drawn at 14 logical pt — crisp at 2× DPI.
             let image = render_svg(&svg, 28.0)
                 .unwrap_or_else(|| panic!("lucide icon {name} must rasterize"));
-            ctx.load_texture(format!("lucide-{name}"), image, egui::TextureOptions::LINEAR)
+            ctx.load_texture(
+                format!("lucide-{name}"),
+                image,
+                egui::TextureOptions::LINEAR,
+            )
         };
         Self {
             minus: render("minus", lucide::MINUS),
@@ -804,10 +873,7 @@ fn render_svg(svg: &str, px: f32) -> Option<egui::ColorImage> {
     let opt = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_str(svg, &opt).ok()?;
     let size = tree.size();
-    let transform = resvg::tiny_skia::Transform::from_scale(
-        px / size.width(),
-        px / size.height(),
-    );
+    let transform = resvg::tiny_skia::Transform::from_scale(px / size.width(), px / size.height());
     let mut pixmap = resvg::tiny_skia::Pixmap::new(px as u32, px as u32)?;
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     // tiny-skia stores premultiplied alpha; egui wants it straight.
@@ -889,9 +955,81 @@ fn nested_dir(config: &ShunConfig, raw: &str) -> String {
 
 /// Whether the install target's desktop-shortcut policy is `ask` (the
 /// wizard checkbox); `always`/`never` never consult the user.
+/// The configure flow from the resolved pipeline (`shun-steps.json`):
+/// language + location, then the pipeline's content steps and the
+/// license at their declaration positions (license always present —
+/// the pipeline resolves one even for license-less configs, an empty
+/// documents list then renders an empty agreement pane).
+fn wizard_pages() -> Vec<Page> {
+    let pipeline: Vec<shun::config::ResolvedStep> =
+        serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/shun-steps.json")))
+            .unwrap_or_default();
+    let mut pages = vec![Page::Language, Page::Location];
+    let mut license = false;
+    for step in &pipeline {
+        match step.kind {
+            shun::config::StepKind::Content => pages.push(Page::Content {
+                title: step.title.clone(),
+                body: step.body.clone().unwrap_or_default(),
+            }),
+            shun::config::StepKind::License => {
+                pages.push(Page::License);
+                license = true;
+            }
+            _ => {}
+        }
+    }
+    if !license {
+        pages.push(Page::License);
+    }
+    pages
+}
+
+/// Fetches the manifest wallpaper's first IMAGE source off-thread
+/// (ureq; video/pipeline sources have no egui renderer and stand down).
+/// `None` on any failure — the face paints its token background.
+fn spawn_wallpaper_fetcher(config: &ShunConfig) -> std::sync::mpsc::Receiver<Option<Vec<u8>>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let url = config
+        .shell
+        .as_ref()
+        .and_then(|shell| shell.theme.as_ref())
+        .and_then(|theme| theme.wallpaper.as_ref())
+        .and_then(|wallpaper| {
+            wallpaper.sources.iter().find_map(|source| match source {
+                shun::config::WallpaperSourceSpec::Image { image } => Some(image.clone()),
+                _ => None,
+            })
+        });
+    std::thread::spawn(move || {
+        let Some(url) = url else {
+            return;
+        };
+        let bytes = ureq::get(&url).call().ok().and_then(|resp| {
+            let mut bytes = Vec::new();
+            use std::io::Read;
+            resp.into_reader()
+                .take(64 * 1024 * 1024)
+                .read_to_end(&mut bytes)
+                .ok()
+                .map(|_| bytes)
+        });
+        let _ = tx.send(bytes);
+    });
+    rx
+}
+
 fn desktop_policy_asks(config: &ShunConfig) -> bool {
     install_of(config)
         .map(|install| install.desktop_shortcut == shun::config::DesktopShortcutPolicy::Ask)
+        .unwrap_or(false)
+}
+
+/// Same gate for the start-menu checkbox (`ShortcutPolicy` is the same
+/// enum — the manifest may pin the menu shortcut to always/never).
+fn menu_policy_asks(config: &ShunConfig) -> bool {
+    install_of(config)
+        .map(|install| install.start_menu_shortcut == shun::config::DesktopShortcutPolicy::Ask)
         .unwrap_or(false)
 }
 
@@ -911,7 +1049,6 @@ struct FallbackApp {
     language: String,
     /// Whether a CJK-capable system font registered (informational —
     /// the face renders the OS font stack now).
-    cjk_font: bool,
     texts: Texts,
     theme: Theme,
     /// The pinned light/dark state behind the title-bar toggle (the
@@ -922,18 +1059,18 @@ struct FallbackApp {
     mode_pinned: bool,
     /// The Windows location fix once it lands; `None` keeps the
     /// timezone estimate driving the solar clock.
-    geo: Option<(f64, f64)>,
-    geo_rx: Receiver<Option<(f64, f64)>>,
     /// The solar clock's last verdict and tick time — re-evaluated
     /// every five minutes so dawn/dusk flip a `system`-mode face.
-    solar_dark: Option<bool>,
-    last_solar_tick: std::time::Instant,
     /// The DWM round/shadow hint is applied once, on the first frame.
     dwm_rounded: bool,
     /// The install-location candidates + drive list — probed once from
     /// the same shun sources the web face's default_dir/list_drives
     /// commands ride (kind, writable, path) / (mount, kind, label).
     candidates: Vec<(String, bool, String)>,
+    /// Optional attachments resolved against the payload (key, title,
+    /// bundled?, size, picked?) — the location pane's block; picked
+    /// non-bundled ones stream in right after the install in the worker.
+    attachments: Vec<(String, String, bool, Option<u64>, bool)>,
     drives: Vec<(String, String, Option<String>)>,
     /// Live writability of the shown path, probed when it changes.
     dir_writable: Option<bool>,
@@ -945,6 +1082,14 @@ struct FallbackApp {
     user_adjustable: bool,
     timeline_left: bool,
     logo: Option<TextureHandle>,
+    /// The manifest's wallpaper (first IMAGE source), fetched
+    /// off-thread after boot and painted as the pane's backdrop;
+    /// video/pipeline sources stand down (no egui renderer — the
+    /// degraded-face line), a failed fetch paints nothing.
+    wallpaper: Option<TextureHandle>,
+    wallpaper_rx: std::sync::mpsc::Receiver<Option<Vec<u8>>>,
+    /// The baked glow textures (per button size + color).
+    glow: std::rc::Rc<GlowCache>,
     /// The lucide caption glyphs (loaded once; tinted per state).
     caption_icons: CaptionIcons,
     stage: Stage,
@@ -953,6 +1098,11 @@ struct FallbackApp {
     /// The wizard's answer to the `ask` desktop-shortcut policy
     /// (default checked, the NSIS convention).
     desktop_shortcut: bool,
+    /// The wizard's answer to the `ask` start-menu-shortcut policy
+    /// (default checked — the web done page's second checkbox).
+    start_menu: bool,
+    /// The done page's immediate-launch answer (default checked).
+    launch_after: bool,
     /// The wizard's answer to the `ask` install-scope policy
     /// (default per-user).
     machine: bool,
@@ -961,7 +1111,10 @@ struct FallbackApp {
     /// shared with the web shell); the license step re-picks from this
     /// map when the language changes, falling back to `steps`.
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
-    /// Cursor into `steps` while on `Stage::Configure`.
+    /// The configure panes in walk order (language, location, the
+    /// pipeline's content steps around the license, license).
+    pages: Vec<Page>,
+    /// Cursor into `pages` while on `Stage::Configure`.
     step: usize,
     /// The license checkbox (`license` steps gate progression on it).
     license_accepted: bool,
@@ -988,6 +1141,14 @@ struct FallbackApp {
     phase_active: Option<FlowPhase>,
     /// What the running worker is doing; `true` = uninstalling.
     uninstalling: Option<bool>,
+    /// The standalone uninstaller face (`/uninstall` without `--silent`,
+    /// the ARP entry's GUI spelling): replaces the whole wizard with the
+    /// web face's confirm → running → done/failed page, repair included.
+    uninstall_mode: bool,
+    /// Which action the uninstall page's run came from — repair relabels
+    /// the running/done/failed copy (the web phases repairing/repaired/
+    /// repair_failed).
+    repairing: bool,
     outcome: Option<Outcome>,
     entry: Option<PathBuf>,
     receiver: Receiver<WorkerMsg>,
@@ -1000,7 +1161,6 @@ struct FallbackApp {
 // to the webview face's SCSS (--hk-tb-height).
 const CAPTION_W: f32 = 46.0;
 const TITLEBAR_H: f32 = 32.0;
-const CONTROL_H: f32 = 36.0;
 const COMBO_W: f32 = 380.0;
 
 impl FallbackApp {
@@ -1009,13 +1169,13 @@ impl FallbackApp {
         config: ShunConfig,
         payload: ArchivePayload,
         reason: FallbackReason,
+        uninstall_mode: bool,
         language: String,
-        cjk_font: bool,
         receiver: Receiver<WorkerMsg>,
         logo: Option<TextureHandle>,
 
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
-        geo_rx: Receiver<Option<(f64, f64)>>,
+        wallpaper_rx: std::sync::mpsc::Receiver<Option<Vec<u8>>>,
         caption_icons: CaptionIcons,
         flavor: String,
     ) -> Self {
@@ -1042,25 +1202,34 @@ impl FallbackApp {
             Some(shun::config::ThemeMode::Dark)
         );
         let texts = wizard_strings().texts(&language);
+        let attachments: Vec<(String, String, bool, Option<u64>, bool)> =
+            shun::attachments::resolve(&config, &payload)
+                .into_iter()
+                .map(|a| {
+                    (
+                        a.config.key,
+                        a.config.title,
+                        a.included,
+                        a.config.size,
+                        true,
+                    )
+                })
+                .collect();
         Self {
             dir,
             config,
             payload,
             reason,
             language,
-            cjk_font,
             texts,
             dark_theme: resolved_dark,
             mode_pinned: false,
-            geo: None,
-            geo_rx,
-            solar_dark: None,
-            last_solar_tick: std::time::Instant::now(),
             dwm_rounded: false,
             candidates: probed
                 .into_iter()
                 .map(|c| (c.kind.to_string(), c.writable, c.path))
                 .collect(),
+            attachments,
             drives: shun::fs_probe::list_drives()
                 .into_iter()
                 .map(|d| {
@@ -1074,7 +1243,7 @@ impl FallbackApp {
             dir_writable: None,
             probed_dir: String::new(),
             drive_open: false,
-            flavor: flavor,
+            flavor,
             theme,
             accent: shell.theme.as_ref().and_then(|theme| theme.accent),
             user_adjustable: shell
@@ -1087,10 +1256,16 @@ impl FallbackApp {
             // horizontal strip.
             timeline_left: shell.timeline != Some(shun::config::TimelineOrientation::Top),
             logo,
+            wallpaper: None,
+            wallpaper_rx,
+            glow: std::rc::Rc::new(GlowCache::default()),
             caption_icons,
             stage: Stage::Configure,
+            pages: wizard_pages(),
             mode,
             desktop_shortcut: true,
+            start_menu: true,
+            launch_after: true,
             machine: false,
             license_docs,
             step: 0,
@@ -1100,11 +1275,19 @@ impl FallbackApp {
             license_doc_index: 0,
             progress: None,
             overall: None,
-            terminal: crate::terminal::Terminal::new(true),
+            // The log drawer mirrors the web pane's defaults: collapsed
+            // until opened (or forced by an error line), newest-first
+            // unless the manifest pins `shell.log-order = "oldest"`.
+            terminal: crate::terminal::Terminal::new(
+                false,
+                matches!(shell.log_order, Some(shun::config::LogOrder::Oldest)),
+            ),
             log_level: shell.log_level.unwrap_or(shun::config::LogVerbosity::All),
             phases_done: Vec::new(),
             phase_active: None,
             uninstalling: None,
+            uninstall_mode,
+            repairing: false,
             outcome: None,
             entry: None,
             receiver,
@@ -1115,51 +1298,84 @@ impl FallbackApp {
     /// documents and the document pager all follow, and the choice is
     /// remembered for the next run — unless the selected mode is
     /// portable, in which case nothing leaves this process.
+    /// Visual-debug hook (debug builds only): SHUN_DEBUG_STAGE =
+    /// running|finished|failed forces the pane, SHUN_DEBUG_LOG_LINES
+    /// fills sample log rows, SHUN_DEBUG_LOG_OPEN=1 opens the drawer —
+    /// so `--screenshot` can capture states the wizard only reaches
+    /// after interactive clicks (release builds carry none of it).
+    #[cfg(debug_assertions)]
+    fn debug_force_stage(&mut self) {
+        if let Ok(step) = std::env::var("SHUN_DEBUG_STEP") {
+            self.step = step.parse().unwrap_or(self.step);
+        }
+        if std::env::var("SHUN_DEBUG_LANG_POPUP").is_ok_and(|v| v == "1") {
+            self.lang_combo_open = true;
+        }
+        let Ok(stage) = std::env::var("SHUN_DEBUG_STAGE") else {
+            return;
+        };
+        let lines = std::env::var("SHUN_DEBUG_LOG_LINES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(40);
+        for i in 0..lines {
+            // A realistic mix: file writes echo, script markers step,
+            // completions ok (no errors - the capture is the happy run).
+            let kind = match i % 9 {
+                0 => crate::terminal::LineKind::Step,
+                4 => crate::terminal::LineKind::Ok,
+                _ => crate::terminal::LineKind::Echo,
+            };
+            let text = match i % 9 {
+                0 => format!("running script installer/post-install.dk [{i:>2}]"),
+                4 => format!("verified data/packs/chapter_{i:03}.json"),
+                _ => format!("write data/packs/chapter_{i:03}.json"),
+            };
+            self.terminal.push(kind, text);
+        }
+        if std::env::var("SHUN_DEBUG_LOG_OPEN").is_ok_and(|v| v == "1") {
+            self.terminal.open = true;
+        }
+        match stage.as_str() {
+            "running" => {
+                self.stage = Stage::Running;
+                self.progress = Some(("Extracting chapter_042.pack".into(), Some(42)));
+                self.overall = Some(42);
+            }
+            "finished" => {
+                self.stage = Stage::Finished;
+                self.outcome = Some(Outcome::InstallOk);
+            }
+            "failed" => {
+                self.stage = Stage::Finished;
+                self.outcome = Some(Outcome::Failed(
+                    "the extract step failed: archive truncated".into(),
+                ));
+            }
+            _ => {}
+        }
+    }
+
     /// Rebuild the tokens + egui visuals for a light/dark flip — the
     /// one path both the caption toggle and the solar clock go through.
     fn apply_mode(&mut self, ctx: &Context, dark: bool) {
         self.dark_theme = dark;
-        self.theme = if dark {
-            Theme::dark(self.accent)
+        let accent = self.accent;
+        let mut theme = if dark {
+            Theme::dark(accent)
         } else {
-            Theme::light(self.accent)
+            Theme::light(accent)
         };
+        // The rebuilt tokens re-tint from the manifest's layers — a side
+        // flip must not drop the configured background (the same
+        // application the startup resolution runs).
+        apply_theme_layers(&mut theme, &self.config.shell.clone().unwrap_or_default());
+        self.theme = theme;
         ctx.set_visuals(if dark {
             egui::Visuals::dark()
         } else {
             egui::Visuals::light()
         });
-    }
-
-    /// The theme clock (hikari's `useTheme`): while the manifest leaves
-    /// the mode on `system` and the user hasn't pinned a side, the sun
-    /// decides — re-evaluated when the location fix lands and every
-    /// five minutes after, so dawn and dusk flip the face live.
-    fn tick_solar_clock(&mut self, ctx: &Context) {
-        let mut got_fix = false;
-        while let Ok(fix) = self.geo_rx.try_recv() {
-            self.geo = fix;
-            got_fix = true;
-        }
-        let pinned = matches!(
-            self.config
-                .shell
-                .as_ref()
-                .and_then(|t| t.theme.as_ref())
-                .and_then(|t| t.mode),
-            Some(shun::config::ThemeMode::Light) | Some(shun::config::ThemeMode::Dark)
-        ) || self.mode_pinned;
-        let due = self.last_solar_tick.elapsed().as_secs() >= 300;
-        if pinned || (!got_fix && !due) {
-            return;
-        }
-        self.last_solar_tick = std::time::Instant::now();
-        let (lat, lng) = self.geo.unwrap_or_else(solar::timezone_estimate);
-        let dark = !solar::prefers_light(lat, lng);
-        if self.solar_dark != Some(dark) {
-            self.solar_dark = Some(dark);
-            self.apply_mode(ctx, dark);
-        }
     }
 
     fn apply_language(&mut self, language: &str) {
@@ -1250,6 +1466,7 @@ impl FallbackApp {
         let repaint = ctx.clone();
         let payload = self.payload.clone();
         let config = self.config.clone();
+        let attachments = self.attachments.clone();
         std::thread::spawn(move || {
             // The shared driver, exactly what the webview and TUI faces
             // ride: writability gate, overwrite hygiene, the flow, the
@@ -1259,15 +1476,66 @@ impl FallbackApp {
             let result = if uninstalling {
                 shun::wizard::run_uninstall(&core).map_err(|e| e.to_string())
             } else {
-                shun::wizard::run_install(&core, &payload, &request, &mut |event| {
+                let install = shun::wizard::run_install(&core, &payload, &request, &mut |event| {
                     let _ = sender.send(WorkerMsg::Event(event.clone()));
                     repaint.request_repaint();
                 })
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string());
+                // Picked non-bundled attachments stream in right after
+                // the payload (the web face's download pass, same
+                // channel). A failed attachment fails the run — half an
+                // install lies about what it delivered.
+                install.and_then(|()| {
+                    for (key, _, included, _, picked) in &attachments {
+                        if *included || !*picked {
+                            continue;
+                        }
+                        let Some(attachment) =
+                            core.config.attachments.iter().find(|a| &a.key == key)
+                        else {
+                            continue;
+                        };
+                        let dir = request.dir.trim().trim_end_matches('\\');
+                        shun::attachments::download(
+                            attachment,
+                            std::path::Path::new(dir),
+                            &mut |event| {
+                                let _ = sender.send(WorkerMsg::Event(event.clone()));
+                                repaint.request_repaint();
+                            },
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                    Ok(())
+                })
             };
             let _ = sender.send(WorkerMsg::Done(result));
             repaint.request_repaint();
         });
+    }
+
+    /// The wallpaper's fetch landing: decode and upload once, then the
+    /// backdrop paints every frame in update() before any panel.
+    fn drain_wallpaper(&mut self, ctx: &Context) {
+        if self.wallpaper.is_some() {
+            return;
+        }
+        let Ok(bytes) = self.wallpaper_rx.try_recv() else {
+            return;
+        };
+        let Some(bytes) = bytes else { return };
+        let decoded = image::load_from_memory(&bytes)
+            .ok()
+            .map(|img| img.into_rgba8());
+        if let Some(rgba) = decoded {
+            let (w, h) = (rgba.width(), rgba.height());
+            let texture = ctx.load_texture(
+                "wallpaper",
+                egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw()),
+                egui::TextureOptions::default(),
+            );
+            self.wallpaper = Some(texture);
+        }
     }
 
     fn drain_worker(&mut self) {
@@ -1429,14 +1697,20 @@ const ALL_PHASES: [FlowPhase; 5] = [
 ];
 
 /// The egui window title (the screenshot path locates the window by it).
-pub fn window_title(config: &ShunConfig) -> String {
+/// Uninstall runs carry the uninstaller spelling — the same frame title
+/// the webview face resolves (`卸载 {product}` et al).
+pub fn window_title(config: &ShunConfig, uninstall: bool) -> String {
     // The same locale resolution the webview face applies to its frame
     // (saved wizard language → system locale → zh-Hans default); the
     // English literal below is the non-Windows floor.
     #[cfg(windows)]
-    return crate::os_window_title(config, false);
+    return crate::os_window_title(config, uninstall);
     #[cfg(not(windows))]
-    return format!("{} Installer", config.product.name);
+    return if uninstall {
+        format!("Uninstall {}", config.product.name)
+    } else {
+        format!("{} Installer", config.product.name)
+    };
 }
 
 /// Opens a directory in the platform file manager.
@@ -1474,11 +1748,12 @@ pub fn run(
     config: ShunConfig,
     payload: ArchivePayload,
     reason: FallbackReason,
+    uninstall: bool,
     logo_kind: &str,
     logo_bytes: &[u8],
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
 ) {
-    let title = window_title(&config);
+    let title = window_title(&config, uninstall);
     // DPI contract: the whole face is designed in logical points. The
     // ONLY place actual DPI enters is egui's pixels_per_point — eframe
     // picks the monitor scale once and applies it as a single uniform
@@ -1514,7 +1789,7 @@ pub fn run(
             cc.egui_ctx.set_visuals(visuals);
             // A CJK font is the egui renderer's proxy for "the machine
             // can render the Zh table" (the historical `zh = font_found`).
-            let font_found = install_system_fonts(&cc.egui_ctx);
+            let _font_found = install_system_fonts(&cc.egui_ctx);
             // Chrome copy is not content: dragging across headings and
             // labels must not paint selection bands (the path input
             // keeps its selection — only LABELS are gated here).
@@ -1551,24 +1826,24 @@ pub fn run(
                 });
             let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
             let (_sender, receiver) = channel::<WorkerMsg>();
-            // The theme clock's geolocation fix — resolved off-thread so
-            // a slow or unavailable location service never delays the
-            // first frame (the estimate covers until it lands).
-            let geo_rx = solar::spawn_fix_resolver();
+            let wallpaper_rx = spawn_wallpaper_fetcher(&config);
             let caption_icons = CaptionIcons::load(&cc.egui_ctx);
-            Ok(Box::new(FallbackApp::new(
+            let mut app = FallbackApp::new(
                 config,
                 payload,
                 reason,
+                uninstall,
                 language,
-                font_found,
                 receiver,
                 logo,
                 license_docs,
-                geo_rx,
+                wallpaper_rx,
                 caption_icons,
                 SHUN_FLAVOR.trim().to_string(),
-            )))
+            );
+            #[cfg(debug_assertions)]
+            app.debug_force_stage();
+            Ok(Box::new(app))
         }),
     );
     if let Err(err) = result {
@@ -1602,7 +1877,7 @@ impl FallbackApp {
         // same geometry every frame.
         let (strip, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), TITLEBAR_H), Sense::hover());
-        ui.allocate_new_ui(
+        ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(strip)
                 .layout(Layout::left_to_right(Align::Center)),
@@ -1619,7 +1894,7 @@ impl FallbackApp {
                     RichText::new(format!(
                         "{} {}",
                         self.config.product.name,
-                        if self.uninstalling == Some(true) {
+                        if self.uninstall_mode || self.uninstalling == Some(true) {
                             texts.titlebar_uninstall
                         } else {
                             texts.titlebar_installer
@@ -1636,120 +1911,129 @@ impl FallbackApp {
                         .size(10.0),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                // HkTitleBar's buttons are FLUSH — 46pt plates touching.
-                // Zero egui's automatic item spacing or every pair of
-                // plates grows an 8pt gap the web face doesn't have.
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                // Caption plates, HkTitleBar geometry: full-band-height
-                // 46pt rectangles flush to the window edge, VECTOR
-                // glyphs (egui's default fonts carry no caption
-                // dingbats — strokes and discs render everywhere).
-                // Hover rides the accent at 12%; the close plate turns
-                // #e81123 with a white glyph and rounds the window's
-                // top-right corner, exactly like the SCSS.
-                enum CaptionIcon {
-                    Minimize,
-                    ThemeToggle,
-                    Close,
-                }
-                let dark_now = self.dark_theme;
-                let caption = move |ui: &mut egui::Ui, icon: CaptionIcon| -> egui::Response {
-                let (rect, response) = ui.allocate_exact_size(
-                    Vec2::new(CAPTION_W, TITLEBAR_H),
-                    egui::Sense::click(),
-                );
-                let response = Self::hand(response);
-                    let painter = ui.painter_at(rect);
-                    let close = matches!(icon, CaptionIcon::Close);
-                    let hovered = response.hovered();
-                    let active = response.is_pointer_button_down_on();
-                    // The SCSS's 0.12s background transition, immediate
-                    // mode's way: animate the hover toward its fill and
-                    // paint the fade. Pressed steps the wash up (and the
-                    // close plate to its lighter #f1707a).
-                    let hover_t = ui
-                        .ctx()
-                        .animate_bool_with_time(response.id.with("hover"), hovered, 0.12);
-                    if hover_t > 0.0 || active {
-                        let radius = if close {
-                            egui::CornerRadius {
-                                nw: 0,
-                                ne: 8,
-                                sw: 0,
-                                se: 0,
-                            }
-                        } else {
-                            CornerRadius::ZERO
-                        };
-                        let fill = if close {
-                            if active {
-                                Color32::from_rgb(0xf1, 0x70, 0x7a)
+                    // HkTitleBar's buttons are FLUSH — 46pt plates touching.
+                    // Zero egui's automatic item spacing or every pair of
+                    // plates grows an 8pt gap the web face doesn't have.
+                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                    // Caption plates, HkTitleBar geometry: full-band-height
+                    // 46pt rectangles flush to the window edge, VECTOR
+                    // glyphs (egui's default fonts carry no caption
+                    // dingbats — strokes and discs render everywhere).
+                    // Hover rides the accent at 12%; the close plate turns
+                    // #e81123 with a white glyph and rounds the window's
+                    // top-right corner, exactly like the SCSS.
+                    enum CaptionIcon {
+                        Minimize,
+                        ThemeToggle,
+                        Close,
+                    }
+                    let dark_now = self.dark_theme;
+                    let caption = move |ui: &mut egui::Ui, icon: CaptionIcon| -> egui::Response {
+                        let (rect, response) = ui.allocate_exact_size(
+                            Vec2::new(CAPTION_W, TITLEBAR_H),
+                            egui::Sense::click(),
+                        );
+                        let response = Self::hand(response);
+                        let painter = ui.painter_at(rect);
+                        let close = matches!(icon, CaptionIcon::Close);
+                        let hovered = response.hovered();
+                        let active = response.is_pointer_button_down_on();
+                        // The SCSS's 0.12s background transition, immediate
+                        // mode's way: animate the hover toward its fill and
+                        // paint the fade. Pressed steps the wash up (and the
+                        // close plate to its lighter #f1707a).
+                        let hover_t = ui.ctx().animate_bool_with_time(
+                            response.id.with("hover"),
+                            hovered,
+                            0.12,
+                        );
+                        if hover_t > 0.0 || active {
+                            let radius = if close {
+                                egui::CornerRadius {
+                                    nw: 0,
+                                    ne: 8,
+                                    sw: 0,
+                                    se: 0,
+                                }
+                            } else {
+                                CornerRadius::ZERO
+                            };
+                            let fill = if close {
+                                if active {
+                                    Color32::from_rgb(0xf1, 0x70, 0x7a)
+                                } else {
+                                    mix(
+                                        theme.background,
+                                        Color32::from_rgb(0xe8, 0x11, 0x23),
+                                        hover_t,
+                                    )
+                                }
                             } else {
                                 mix(
                                     theme.background,
-                                    Color32::from_rgb(0xe8, 0x11, 0x23),
-                                    hover_t,
+                                    theme.primary,
+                                    0.12 * hover_t + f32::from(active) * 0.08,
                                 )
-                            }
-                        } else {
-                            mix(theme.background, theme.primary, 0.12 * hover_t + f32::from(active) * 0.08)
-                        };
-                        painter.rect_filled(rect, radius, fill);
-                    }
-                    let c = rect.center();
-                    let icon_color = if close && (hovered || active) {
-                        Color32::WHITE
-                    } else if hovered || active {
-                        theme.text
-                    } else {
-                        theme.text_secondary
-                    };
-                    // The lucide glyph texture (same path data the webview
-                    // face renders), tinted like `stroke="currentColor"`.
-                    let texture = match icon {
-                        CaptionIcon::Minimize => &icons.minus,
-                        CaptionIcon::Close => &icons.x,
-                        CaptionIcon::ThemeToggle => {
-                            if dark_now {
-                                &icons.sun
-                            } else {
-                                &icons.moon
-                            }
+                            };
+                            painter.rect_filled(rect, radius, fill);
                         }
+                        let c = rect.center();
+                        let icon_color = if close && (hovered || active) {
+                            Color32::WHITE
+                        } else if hovered || active {
+                            theme.text
+                        } else {
+                            theme.text_secondary
+                        };
+                        // The lucide glyph texture (same path data the webview
+                        // face renders), tinted like `stroke="currentColor"`.
+                        let texture = match icon {
+                            CaptionIcon::Minimize => &icons.minus,
+                            CaptionIcon::Close => &icons.x,
+                            CaptionIcon::ThemeToggle => {
+                                if dark_now {
+                                    &icons.sun
+                                } else {
+                                    &icons.moon
+                                }
+                            }
+                        };
+                        painter.image(
+                            texture.id(),
+                            egui::Rect::from_center_size(c, egui::vec2(14.0, 14.0)),
+                            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                            icon_color,
+                        );
+                        response
                     };
-                    painter.image(
-                        texture.id(),
-                        egui::Rect::from_center_size(c, egui::vec2(14.0, 14.0)),
-                        egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                        icon_color,
-                    );
-                    response
-                };
 
-                // Theme toggle — manifest-gated (user-adjustable), the
-                // sun/moon picked by the live mode. Right-to-left row:
-                // emit the CLOSE first so it lands right-most (the
-                // Windows convention), minimize to its left, and the
-                // theme toggle left-most of the cluster.
-                let close = caption(ui, CaptionIcon::Close);
-                if close.clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                let minimize = caption(ui, CaptionIcon::Minimize);
-                if minimize.clicked() {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                }
-                if self.user_adjustable {
-                    let r = caption(ui, CaptionIcon::ThemeToggle);
-                    if r.clicked() {
-                        // A manual toggle pins the side for the session
-                        // (hikari's `setMode`): the solar clock stands
-                        // down until the process restarts.
-                        self.mode_pinned = true;
-                        self.apply_mode(ui.ctx(), !self.dark_theme);
+                    // Theme toggle — manifest-gated (user-adjustable), the
+                    // sun/moon picked by the live mode. Not offered on the
+                    // standalone uninstall page (the web face renders no
+                    // custom action there either). Right-to-left row: emit
+                    // the CLOSE first so it lands right-most (the Windows
+                    // convention), minimize to its left, and the theme
+                    // toggle left-most of the cluster.
+                    let show_toggle = self.user_adjustable && !self.uninstall_mode;
+                    let close = caption(ui, CaptionIcon::Close);
+                    if close.clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                }
+                    let minimize = caption(ui, CaptionIcon::Minimize);
+                    if minimize.clicked() {
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
+                    if show_toggle {
+                        let r = caption(ui, CaptionIcon::ThemeToggle);
+                        if r.clicked() {
+                            // A manual toggle pins the side for the session
+                            // (hikari's `setMode`): the solar clock stands
+                            // down until the process restarts.
+                            self.mode_pinned = true;
+                            self.apply_mode(ui.ctx(), !self.dark_theme);
+                        }
+                    }
                 });
             },
         );
@@ -1758,7 +2042,11 @@ impl FallbackApp {
         // rect registered after the button cluster sits ON TOP of it and
         // eats every click (buttons only responded at the window's outer
         // pixel). Shrink the drag rect to the cluster's left edge.
-        let caption_count = if self.user_adjustable { 3 } else { 2 };
+        let caption_count = if self.user_adjustable && !self.uninstall_mode {
+            3
+        } else {
+            2
+        };
         let mut drag_rect = strip;
         let cluster_left = drag_rect.right() - (CAPTION_W * caption_count as f32 + 2.0);
         drag_rect.set_right(cluster_left.max(drag_rect.left()));
@@ -1782,21 +2070,26 @@ impl FallbackApp {
         // The fixed five steps, webview-face parity: done steps carry a
         // check in a filled circle, the active step its number in a
         // ring, pending steps their number in a muted ring.
-        let labels = [
-            self.texts.step_language.to_owned(),
-            self.texts.step_location.to_owned(),
-            self.texts.step_license.to_owned(),
-            self.texts.step_install.to_owned(),
-            self.texts.step_done.to_owned(),
-        ];
+        let mut labels: Vec<String> = self
+            .pages
+            .iter()
+            .map(|page| match page {
+                Page::Language => self.texts.step_language.to_owned(),
+                Page::Location => self.texts.step_location.to_owned(),
+                Page::License => self.texts.step_license.to_owned(),
+                Page::Content { title, .. } => title.clone(),
+            })
+            .collect();
+        labels.push(self.texts.step_install.to_owned());
+        labels.push(self.texts.step_done.to_owned());
         let active_marker = match current {
-            Stage::Configure => Some(self.step.min(2)),
+            Stage::Configure => Some(self.step.min(labels.len() - 1)),
             _ => None,
         };
         let order_current = match current {
-            Stage::Configure => self.step.min(2),
-            Stage::Running => 3,
-            Stage::Finished => 4,
+            Stage::Configure => self.step.min(labels.len() - 1),
+            Stage::Running => labels.len() - 2,
+            Stage::Finished => labels.len() - 1,
         };
         let items: Vec<(bool, bool, String)> = labels
             .iter()
@@ -1832,17 +2125,27 @@ impl FallbackApp {
         // primary fill with a white check; active = primary 15% wash
         // under a 2px primary ring with the primary number; pending =
         // surface fill under a 2px hairline ring with the muted number.
-        let paint_node = |painter: &egui::Painter, center: egui::Pos2, active: bool, done: bool, number: usize| {
+        let paint_node = |painter: &egui::Painter,
+                          center: egui::Pos2,
+                          active: bool,
+                          done: bool,
+                          number: usize| {
             let r = circle_d / 2.0;
             if done {
                 painter.circle_filled(center, r, theme.primary);
                 let stroke = Stroke::new(2.0_f32, theme.on_primary);
                 painter.line_segment(
-                    [pos2(center.x - 4.0, center.y + 0.5), pos2(center.x - 1.0, center.y + 3.5)],
+                    [
+                        pos2(center.x - 4.0, center.y + 0.5),
+                        pos2(center.x - 1.0, center.y + 3.5),
+                    ],
                     stroke,
                 );
                 painter.line_segment(
-                    [pos2(center.x - 1.0, center.y + 3.5), pos2(center.x + 4.5, center.y - 3.5)],
+                    [
+                        pos2(center.x - 1.0, center.y + 3.5),
+                        pos2(center.x + 4.5, center.y - 3.5),
+                    ],
                     stroke,
                 );
             } else if active {
@@ -1869,12 +2172,12 @@ impl FallbackApp {
         };
 
         if vertical {
-            // Deterministic centering, both axes: computed vertical
-            // offset for the fixed-metric block, computed left offset
-            // for the block width (egui's aligns nest unreliably through
-            // the pane's fixed-width block).
-            let total = items.len() as f32 * circle_d + (items.len() as f32 - 1.0) * connector_h;
-            let top = ((ui.available_height() - total) / 2.0).max(0.0);
+            // TOP-anchored at the unified heading position: the rail's
+            // panel margin (48pt under the titlebar) puts the first
+            // node's top at the same 80pt the pane's heading starts at
+            // — no vertical centering, the rail reads as a header
+            // element like the web face's. Horizontal stays centered.
+            let top = 0.0;
             let left = ((ui.available_width() - block_w) / 2.0).max(0.0);
             let cx = left + circle_d / 2.0;
 
@@ -1892,7 +2195,14 @@ impl FallbackApp {
                             pos2(cx, cursor_y - connector_h + 2.0),
                             pos2(cx, cy - circle_d / 2.0 - 2.0),
                         ],
-                        Stroke::new(2.0_f32, if prev_done { theme.primary } else { border_soft }),
+                        Stroke::new(
+                            2.0_f32,
+                            if prev_done {
+                                theme.primary
+                            } else {
+                                border_soft
+                            },
+                        ),
                     );
                 }
                 paint_node(ui.painter(), pos2(cx, cy), *active, *done, index + 1);
@@ -1918,11 +2228,15 @@ impl FallbackApp {
                 for (index, (active, done, label)) in items.iter().enumerate() {
                     if index > 0 {
                         let prev_done = items[index - 1].1;
-                        ui.label(RichText::new("——").color(if prev_done {
-                            theme.primary
-                        } else {
-                            border_soft
-                        }).small());
+                        ui.label(
+                            RichText::new("——")
+                                .color(if prev_done {
+                                    theme.primary
+                                } else {
+                                    border_soft
+                                })
+                                .small(),
+                        );
                         ui.add_space(6.0);
                     }
                     let cy = ui.cursor().top() + 12.0;
@@ -2006,7 +2320,7 @@ impl FallbackApp {
     fn ghost_icon_button(
         ui: &mut egui::Ui,
         theme: Theme,
-        icons: &CaptionIcons,
+        _icons: &CaptionIcons,
         icon: &TextureHandle,
         label: &str,
         min_w: f32,
@@ -2015,9 +2329,9 @@ impl FallbackApp {
         let (rect, response) = ui.allocate_exact_size(vec2(min_w, h), egui::Sense::click());
         let response = Self::hand(response);
         let painter = ui.painter_at(rect);
-        let hover_t = ui
-            .ctx()
-            .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+        let hover_t =
+            ui.ctx()
+                .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
         if hover_t > 0.0 {
             painter.rect_filled(
                 rect,
@@ -2037,64 +2351,23 @@ impl FallbackApp {
             egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             theme.text,
         );
+        // Baseline-true: draw the galley so the glyphs' mass center
+        // (baseline minus a third of the ascent) sits on the row's
+        // center — centering the LINE BOX reads high, DPI-dependently.
+        let baseline_offset = galley
+            .rows
+            .first()
+            .and_then(|row| row.glyphs.first())
+            .map(|g| g.pos.y)
+            .unwrap_or(galley.size().y * 0.8);
+        let ascent = galley.size().y * 0.55;
+        let baseline_y = rect.center().y + ascent * 0.35;
         painter.galley(
-            pos2(left + 20.0, rect.center().y - galley.size().y / 2.0),
+            pos2(left + 20.0, baseline_y - baseline_offset),
             galley,
             theme.text,
         );
         response
-    }
-
-    /// A hikari quick-pick chip: lucide icon + mono label in a soft
-    /// pill, one click target. Unwritable candidates dim and swap to
-    /// the alert glyph; `accent` paints the steer-to highlight. The
-    /// icon aligns to the label's optical middle (see
-    /// [`Self::ghost_icon_button`]). Returns true on click.
-    fn quick_chip(
-        ui: &mut egui::Ui,
-        theme: Theme,
-        icons: &CaptionIcons,
-        icon: &TextureHandle,
-        label: &str,
-        writable: bool,
-        accent: bool,
-    ) -> bool {
-        let chip_w = 42.0 + label.len() as f32 * 7.5;
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(chip_w, 28.0), egui::Sense::click());
-        let response = Self::hand(response);
-        let painter = ui.painter_at(rect);
-        if accent || response.hovered() {
-            painter.rect_filled(
-                rect,
-                CornerRadius::same(8),
-                mix(theme.background, theme.primary, if accent { 0.15 } else { 0.08 }),
-            );
-        }
-        let font = egui::FontId::monospace(12.0);
-        let galley = painter.layout_no_wrap(
-            label.to_string(),
-            font.clone(),
-            if writable { theme.text } else { theme.text_secondary },
-        );
-        let icon_center =
-            Self::icon_center_for(&painter, label, font, pos2(rect.left() + 15.0, rect.center().y));
-        let icon_tint = if writable {
-            theme.text
-        } else {
-            theme.text_secondary.gamma_multiply(0.55)
-        };
-        painter.image(
-            icon.id(),
-            egui::Rect::from_center_size(icon_center, egui::vec2(13.0, 13.0)),
-            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            icon_tint,
-        );
-        painter.galley(
-            pos2(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
-            galley,
-            if writable { theme.text } else { theme.text_secondary },
-        );
-        response.clicked()
     }
 
     /// The hikari checkbox, drawn round like the web face's: a filled
@@ -2111,7 +2384,18 @@ impl FallbackApp {
         width: Option<f32>,
     ) {
         let on = *checked;
-        let row_w = width.unwrap_or(ui.available_width());
+        // Default to the CONTENT's width (plate + gap + label), so the
+        // checkbox centers as a unit under a centering parent — a
+        // full-width row would pin the plate to the pane's left edge
+        // and read off-center on every centered pane.
+        let row_w = width.unwrap_or_else(|| {
+            let galley = ui.painter().layout_no_wrap(
+                label.to_owned(),
+                egui::FontId::proportional(13.0),
+                Color32::WHITE,
+            );
+            30.0 + galley.size().x + 4.0
+        });
         let (row, response) = ui.allocate_exact_size(vec2(row_w, 22.0), egui::Sense::click());
         let response = Self::hand(response);
         // The plate sits 4pt off the row's left edge and the paint rect
@@ -2155,11 +2439,73 @@ impl FallbackApp {
     }
 
     fn configure_view(&mut self, ui: &mut egui::Ui) {
-        match self.step {
-            0 => self.language_view(ui),
-            1 => self.location_view(ui),
-            _ => self.license_view(ui),
+        match self.pages[self.step].clone() {
+            Page::Language => self.language_view(ui),
+            Page::Location => self.location_view(ui),
+            Page::Content { title, body } => self.content_view(ui, title, body),
+            Page::License => self.license_view(ui),
         }
+    }
+
+    /// A custom content step: the title + a document card with a
+    /// minimal markdown renderer (headings, lists, quotes, plain
+    /// paragraphs — emphasis marks strip, the egui face carries no
+    /// rich-text engine).
+    fn content_view(&mut self, ui: &mut egui::Ui, title: String, body: String) {
+        let theme = self.theme;
+        ui.label(RichText::new(title).strong().size(22.0).color(theme.text));
+        ui.add_space(10.0);
+        // hairline_box borders: the Frame stroke would feather the
+        // corners thick; paint the uniform sandwich instead.
+        hairline_box(ui.painter(), ui.max_rect(), 10, theme.border, theme.surface);
+        Frame::default()
+            .fill(Color32::TRANSPARENT)
+            .inner_margin(Margin::same(12))
+            .corner_radius(CornerRadius::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .id_salt(ui.id().with("content-doc"))
+                    .max_height(300.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        for raw in body.lines() {
+                            let line = raw.trim_start();
+                            let (text, size, strong, indent, muted) =
+                                if let Some(h) = line.strip_prefix("# ") {
+                                    (h.trim(), 16.0, true, 0.0, false)
+                                } else if let Some(h) = line.strip_prefix("## ") {
+                                    (h.trim(), 14.0, true, 0.0, false)
+                                } else if let Some(h) = line.strip_prefix("### ") {
+                                    (h.trim(), 13.0, true, 0.0, false)
+                                } else if let Some(item) =
+                                    line.strip_prefix("- ").or_else(|| line.strip_prefix("* "))
+                                {
+                                    (item.trim(), 12.5, false, 16.0, false)
+                                } else if let Some(q) = line.strip_prefix("> ") {
+                                    (q.trim(), 12.5, false, 8.0, true)
+                                } else {
+                                    (line, 12.5, false, 0.0, false)
+                                };
+                            let plain = text.replace(['*', '`'], "");
+                            let color = if muted {
+                                theme.text_secondary
+                            } else {
+                                theme.text
+                            };
+                            ui.horizontal(|ui| {
+                                ui.add_space(indent);
+                                let mut text = RichText::new(plain).size(size).color(color);
+                                if strong {
+                                    text = text.strong();
+                                }
+                                ui.label(text);
+                            });
+                            ui.add_space(2.0);
+                        }
+                    });
+            });
     }
 
     fn language_view(&mut self, ui: &mut egui::Ui) {
@@ -2171,180 +2517,147 @@ impl FallbackApp {
         // option list the web face's picker shows (the system font
         // stack carries all ten, so no font gate on the offer).
         let labels = &wizard_strings().labels;
-        let options = wizard_strings().options();
 
-        // Vertical centering, deterministic: measure the parts, offset by
-        // (available - content) / 2, then draw with a fixed-width block
-        // for the horizontal centering. (egui's main-align Center
-        // silently no-ops for sized-to-content content in this nesting.)
-        let heading_font = egui::FontId::proportional(22.0);
-        let heading_h = ui
-            .painter()
-            .layout_no_wrap(texts.lang_heading.to_string(), heading_font, theme.text)
-            .size()
-            .y;
-        let sub_h = 20.0f32;
-        let combo_h = CONTROL_H;
-        let content_h = heading_h + 8.0 + sub_h + 24.0 + combo_h;
-        let avail_h = ui.available_height();
-        ui.add_space(((avail_h - content_h) / 2.0).max(0.0));
-
+        // The unified fixed-origin column: heading, sub and picker all
+        // start at the pane's left inset — no centering, no offsets.
         let block_w = COMBO_W;
-        let block_left = ((ui.available_width() - block_w) / 2.0).max(0.0);
-        // The block centers horizontally in the pane (the webview face's
-        // language step centers its picker the same way); its CONTENT is
-        // left-aligned inside.
-        ui.allocate_ui_with_layout(
-            egui::vec2(block_w, content_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.add_space(2.0);
-                let _ = block_left;
-                ui.label(
-                    RichText::new(texts.lang_heading)
-                        .strong()
-                        .size(22.0)
-                        .color(theme.text),
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new(texts.lang_sub)
-                        .size(13.0)
-                        .color(theme.text_secondary),
-                );
-                ui.add_space(24.0);
-                // HkSelect trigger parity: a 44pt surface row with a
-                // hairline border (text at 14%), 10pt radius, the
-                // selection CENTERED like the SCSS's text-align, and the
-                // lucide chevron at the inline end. Hover lifts the
-                // border to the primary; open pins it.
-                let combo_h = 44.0f32;
-                let border_idle = mix(theme.background, theme.text, 0.14);
-                let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(block_w, combo_h), egui::Sense::click());
-                if resp.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-                let painter = ui.painter_at(rect);
-                let open = self.lang_combo_open;
-                let hover_t = ui
-                    .ctx()
-                    .animate_bool_with_time(resp.id.with("hover"), resp.hovered() || open, 0.12);
-                let border = mix(border_idle, theme.primary, hover_t);
-                painter.rect_filled(rect, CornerRadius::same(10), theme.surface);
-                painter.rect_stroke(
-                    rect,
-                    CornerRadius::same(10),
-                    Stroke::new(1.0, border),
-                    egui::StrokeKind::Middle,
-                );
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    labels.get(&current).cloned().unwrap_or(current.clone()),
-                    egui::FontId::proportional(14.0),
-                    theme.text,
-                );
-                painter.image(
-                    icons.chevron.id(),
-                    egui::Rect::from_center_size(
-                        pos2(rect.right() - 24.0, rect.center().y),
-                        egui::vec2(16.0, 16.0),
-                    ),
-                    egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                    theme.text_secondary,
-                );
-                if resp.clicked() {
-                    self.lang_combo_open = !open;
-                }
-                let mut picked: Option<String> = None;
-                if self.lang_combo_open {
-                    let mut popup_rect = rect;
-                    egui::Area::new(resp.id.with("popup"))
-                        .order(egui::Order::Foreground)
-                        .fixed_pos(rect.left_bottom() + egui::vec2(0.0, 4.0))
-                        .show(ui.ctx(), |ui| {
-                            let popup = egui::Frame::default()
-                                .fill(theme.surface)
-                                .stroke(Stroke::new(1.0, border_idle))
-                                .shadow(egui::Shadow {
-                                    offset: [0, 8],
-                                    blur: 24,
-                                    color: Color32::from_black_alpha(40),
-                                    ..Default::default()
-                                })
-                                .corner_radius(CornerRadius::same(10))
-                                .inner_margin(Margin::same(6))
-                                .show(ui, |ui| {
-                                    ui.set_width(block_w - 12.0);
-                                    // HkSelect's capped panel: the list
-                                    // scrolls internally past six rows
-                                    // instead of stacking to the pane's
-                                    // full height.
-                                    egui::ScrollArea::vertical()
-                                        .id_salt(resp.id.with("popup-scroll"))
-                                        .max_height(6.0 * 30.0)
-                                        .show(ui, |ui| {
-                                    for (code, autonym) in labels.iter() {
-                                        let language = code.clone();
-                                        let selected = language == current;
-                                        let (row, row_resp) = ui.allocate_exact_size(
-                                            egui::vec2(ui.available_width(), 30.0),
-                                            egui::Sense::click(),
-                                        );
-                                        if row_resp.hovered() {
-                                            ui.ctx()
-                                                .set_cursor_icon(egui::CursorIcon::PointingHand);
-                                        }
-                                        let rp = ui.painter_at(row);
-                                        if selected || row_resp.hovered() {
-                                            rp.rect_filled(
-                                                row,
-                                                CornerRadius::same(8),
-                                                mix(
-                                                    theme.background,
-                                                    theme.primary,
-                                                    if selected { 0.12 } else { 0.08 },
-                                                ),
+        {
+            ui.add_space(2.0);
+            ui.label(
+                RichText::new(texts.lang_heading)
+                    .strong()
+                    .size(22.0)
+                    .color(theme.text),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(texts.lang_sub)
+                    .size(13.0)
+                    .color(theme.text_secondary),
+            );
+            ui.add_space(24.0);
+            // HkSelect trigger parity: a 44pt surface row with a
+            // hairline border (text at 14%), 10pt radius, the
+            // selection CENTERED like the SCSS's text-align, and the
+            // lucide chevron at the inline end. Hover lifts the
+            // border to the primary; open pins it.
+            let combo_h = 44.0f32;
+            let border_idle = mix(theme.background, theme.text, 0.14);
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::vec2(block_w, combo_h), egui::Sense::click());
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let painter = ui.painter_at(rect);
+            let open = self.lang_combo_open;
+            let hover_t = ui.ctx().animate_bool_with_time(
+                resp.id.with("hover"),
+                resp.hovered() || open,
+                0.12,
+            );
+            let border = mix(border_idle, theme.primary, hover_t);
+            hairline_box(&painter, rect, 10, border, theme.surface);
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                labels.get(&current).cloned().unwrap_or(current.clone()),
+                egui::FontId::proportional(14.0),
+                theme.text,
+            );
+            painter.image(
+                icons.chevron.id(),
+                egui::Rect::from_center_size(
+                    pos2(rect.right() - 24.0, rect.center().y),
+                    egui::vec2(16.0, 16.0),
+                ),
+                egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                theme.text_secondary,
+            );
+            if resp.clicked() {
+                self.lang_combo_open = !open;
+            }
+            let mut picked: Option<String> = None;
+            if self.lang_combo_open {
+                let mut popup_rect = rect;
+                egui::Area::new(resp.id.with("popup"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(rect.left_bottom() + egui::vec2(0.0, 4.0))
+                    .show(ui.ctx(), |ui| {
+                        let popup = egui::Frame::default()
+                            .fill(theme.surface)
+                            .stroke(Stroke::new(1.0_f32, border_idle))
+                            .shadow(egui::Shadow {
+                                offset: [0, 8],
+                                blur: 24,
+                                color: Color32::from_black_alpha(40),
+                                ..Default::default()
+                            })
+                            .corner_radius(CornerRadius::same(10))
+                            .inner_margin(Margin::same(6))
+                            .show(ui, |ui| {
+                                ui.set_width(block_w - 12.0);
+                                // HkSelect's capped panel: the list
+                                // scrolls internally past six rows
+                                // instead of stacking to the pane's
+                                // full height.
+                                egui::ScrollArea::vertical()
+                                    .id_salt(resp.id.with("popup-scroll"))
+                                    .max_height(6.0 * 30.0)
+                                    .show(ui, |ui| {
+                                        for (code, autonym) in labels.iter() {
+                                            let language = code.clone();
+                                            let selected = language == current;
+                                            let (row, row_resp) = ui.allocate_exact_size(
+                                                egui::vec2(ui.available_width(), 30.0),
+                                                egui::Sense::click(),
                                             );
+                                            if row_resp.hovered() {
+                                                ui.ctx().set_cursor_icon(
+                                                    egui::CursorIcon::PointingHand,
+                                                );
+                                            }
+                                            let rp = ui.painter_at(row);
+                                            if selected || row_resp.hovered() {
+                                                rp.rect_filled(
+                                                    row,
+                                                    CornerRadius::same(8),
+                                                    mix(
+                                                        theme.background,
+                                                        theme.primary,
+                                                        if selected { 0.12 } else { 0.08 },
+                                                    ),
+                                                );
+                                            }
+                                            rp.text(
+                                                row.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                autonym,
+                                                egui::FontId::proportional(14.0),
+                                                if selected { theme.primary } else { theme.text },
+                                            );
+                                            if row_resp.clicked() {
+                                                picked = Some(language);
+                                            }
                                         }
-                                        rp.text(
-                                            row.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            autonym,
-                                            egui::FontId::proportional(14.0),
-                                            if selected {
-                                                theme.primary
-                                            } else {
-                                                theme.text
-                                            },
-                                        );
-                                        if row_resp.clicked() {
-                                            picked = Some(language);
-                                        }
-                                    }
-                                        });
-                                });
-                            popup_rect = popup.response.rect;
-                        });
-                    // Click anywhere outside the trigger and the popup
-                    // closes — the HkSelect behavior.
-                    let hover_pos = ui.input(|i| i.pointer.hover_pos());
-                    let outside = ui.input(|i| i.pointer.any_click())
-                        && !resp.clicked()
-                        && hover_pos.map_or(true, |p| {
-                            !popup_rect.contains(p) && !rect.contains(p)
-                        });
-                    if outside {
-                        self.lang_combo_open = false;
-                    }
-                }
-                if let Some(language) = picked {
+                                    });
+                            });
+                        popup_rect = popup.response.rect;
+                    });
+                // Click anywhere outside the trigger and the popup
+                // closes — the HkSelect behavior.
+                let hover_pos = ui.input(|i| i.pointer.hover_pos());
+                let outside = ui.input(|i| i.pointer.any_click())
+                    && !resp.clicked()
+                    && !hover_pos.is_some_and(|p| popup_rect.contains(p) || rect.contains(p));
+                if outside {
                     self.lang_combo_open = false;
-                    self.apply_language(&language);
                 }
-            },
-        );
+            }
+            if let Some(language) = picked {
+                self.lang_combo_open = false;
+                self.apply_language(&language);
+            }
+        }
     }
 
     /// The location pane — product hero + the install-directory row
@@ -2359,46 +2672,31 @@ impl FallbackApp {
         // HkSelect-style row metric + the shared hairline border tone.
         let border_idle = mix(theme.background, theme.text, 0.14);
 
-        // One start-aligned block for the whole pane: the manifest's
-        // centered step alignment would otherwise re-center individual
-        // rows (the field row drifted under the browse button, the chip
-        // wrap spread apart). The sub rides the manifest's product name
-        // via %PRODUCT%.
-        ui.add_space(4.0);
-        // Vertical centering, deterministic like the language step:
-        // the content height is known (heading + field + hint bands),
-        // so the top offset is (available - content) / 2. egui's
-        // main_align on allocate_new_ui never moves the cursor.
-        let pane_h = ui.available_height();
-        let content_h = 320.0f32; // heading + field + hint bands
-        ui.add_space(((pane_h - content_h) / 2.0).max(0.0));
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), content_h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.label(
-                    RichText::new(texts.location_heading)
-                        .strong()
-                        .size(22.0)
-                        .color(theme.text),
-                );
-                ui.add_space(10.0);
-                ui.label(
-                    RichText::new(
-                        texts.location_sub.replace("%PRODUCT%", &self.config.product.name),
-                    )
-                    .size(13.5)
-                    .color(theme.text_secondary),
-                );
-                ui.add_space(18.0);
-                ui.label(
-                    RichText::new(texts.dir_label)
-                        .size(13.0)
-                        .color(theme.text_secondary),
-                );
-            },
+        // One start-aligned block for the whole pane: heading, sub and
+        // the path field all start at the column's fixed origin. The
+        // sub rides the manifest's product name via %PRODUCT%.
+        ui.label(
+            RichText::new(texts.location_heading)
+                .strong()
+                .size(22.0)
+                .color(theme.text),
         );
-        ui.add_space(8.0);
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(
+                texts
+                    .location_sub
+                    .replace("%PRODUCT%", &self.config.product.name),
+            )
+            .size(13.5)
+            .color(theme.text_secondary),
+        );
+        ui.add_space(18.0);
+        ui.label(
+            RichText::new(texts.dir_label)
+                .size(13.0)
+                .color(theme.text_secondary),
+        );
 
         // ── The path field row: [drive chip | mono path] + browse ──
         let browse_w = 96.0f32;
@@ -2411,141 +2709,162 @@ impl FallbackApp {
             egui::vec2(row_w, field_h),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-            ui.spacing_mut().item_spacing.x = 16.0;
-            let (field_rect, _) =
-                ui.allocate_exact_size(egui::vec2(field_w, field_h), egui::Sense::hover());
-        let painter = ui.painter_at(field_rect);
-        painter.rect_filled(field_rect, CornerRadius::same(10), theme.surface);
-        let field_border = if self.drive_open {
-            theme.primary
-        } else {
-            border_idle
-        };
-        painter.rect_stroke(
-            field_rect,
-            CornerRadius::same(10),
-            Stroke::new(1.0, field_border),
-            egui::StrokeKind::Middle,
-        );
+                ui.spacing_mut().item_spacing.x = 16.0;
+                let (field_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(field_w, field_h), egui::Sense::hover());
+                let painter = ui.painter_at(field_rect);
+                let field_border = if self.drive_open {
+                    theme.primary
+                } else {
+                    border_idle
+                };
+                hairline_box(&painter, field_rect, 10, field_border, theme.surface);
 
-        // Drive chip (PathField's HkAffixPicker): the mount shows once on
-        // the chip; picking one rewrites the path in place, keeping the
-        // typed remainder (an emptied box falls back to the root).
-        let matched_mount = self
-            .drives
-            .iter()
-            .find(|(m, _, _)| {
-                self.dir
-                    .get(..m.len())
-                    .map_or(false, |prefix| prefix.eq_ignore_ascii_case(m))
-            })
-            .map(|(m, _, _)| m.clone());
-        let mount = matched_mount.clone().unwrap_or_else(|| {
-            self.drives
-                .first()
-                .map(|(m, _, _)| m.clone())
-                .unwrap_or_default()
-        });
-        let chip_w = (40.0 + mount.len() as f32 * 9.0).min(field_w * 0.4);
-        let chip_rect = egui::Rect::from_min_size(
-            pos2(field_rect.left() + 6.0, field_rect.top() + 6.0),
-            egui::vec2(chip_w, field_h - 12.0),
-        );
-        let chip_resp = ui
-            .allocate_new_ui(
-                egui::UiBuilder::new()
-                    .max_rect(chip_rect)
-                    .layout(Layout::left_to_right(Align::Center)),
-                |ui| {
-                    let (chip, chip_resp) =
-                        ui.allocate_exact_size(chip_rect.size(), egui::Sense::click());
-                    if chip_resp.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                // Drive chip (PathField's HkAffixPicker): the mount shows once on
+                // the chip; picking one rewrites the path in place, keeping the
+                // typed remainder (an emptied box falls back to the root).
+                let matched_mount = self
+                    .drives
+                    .iter()
+                    .find(|(m, _, _)| {
+                        self.dir
+                            .get(..m.len())
+                            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(m))
+                    })
+                    .map(|(m, _, _)| m.clone());
+                let mount = matched_mount.clone().unwrap_or_else(|| {
+                    self.drives
+                        .first()
+                        .map(|(m, _, _)| m.clone())
+                        .unwrap_or_default()
+                });
+                let chip_w = (40.0 + mount.len() as f32 * 9.0).min(field_w * 0.4);
+                let chip_rect = egui::Rect::from_min_size(
+                    pos2(field_rect.left() + 6.0, field_rect.top() + 6.0),
+                    egui::vec2(chip_w, field_h - 12.0),
+                );
+                let _chip_scope = ui
+                    .scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(chip_rect)
+                            .layout(Layout::left_to_right(Align::Center)),
+                        |ui| {
+                            let (chip, chip_resp) =
+                                ui.allocate_exact_size(chip_rect.size(), egui::Sense::click());
+                            if chip_resp.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            let hover_t = ui.ctx().animate_bool_with_time(
+                                chip_resp.id.with("hover"),
+                                chip_resp.hovered() || self.drive_open,
+                                0.12,
+                            );
+                            if hover_t > 0.0 {
+                                ui.painter_at(chip).rect_filled(
+                                    chip,
+                                    CornerRadius::same(8),
+                                    mix(theme.background, theme.primary, 0.10 * hover_t),
+                                );
+                            }
+                            ui.painter().text(
+                                pos2(chip.left() + 12.0, chip.center().y + 1.5),
+                                egui::Align2::LEFT_CENTER,
+                                &mount,
+                                egui::FontId::monospace(13.0),
+                                theme.text,
+                            );
+                            ui.painter().image(
+                                icons.chevron.id(),
+                                egui::Rect::from_center_size(
+                                    pos2(chip.right() - 14.0, chip.center().y - 1.0),
+                                    egui::vec2(12.0, 12.0),
+                                ),
+                                egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                                theme.text_secondary,
+                            );
+                            chip_clicked = chip_resp.clicked();
+                            chip_rect_out = chip;
+                            chip_resp
+                        },
+                    )
+                    .inner;
+                if chip_clicked {
+                    self.drive_open = !self.drive_open;
+                }
+
+                // The mono path remainder inside the field. Baseline-true
+                // placement: egui's TextEdit draws its galley from the rect's
+                // top plus the margin, so the margin is COMPUTED from the
+                // layout's measured baseline to put the glyphs' mass center on
+                // the field's center - exact at any DPI, where static margins
+                // drifted with the physical-pixel rounding.
+                let probe = ui.painter().layout_no_wrap(
+                    "Ag".to_owned(),
+                    egui::FontId::monospace(13.0),
+                    Color32::WHITE,
+                );
+                let baseline_offset = probe
+                    .rows
+                    .first()
+                    .and_then(|row| row.glyphs.first())
+                    .map(|g| g.pos.y)
+                    .unwrap_or(probe.size().y * 0.8);
+                let ascent = probe.size().y * 0.55;
+                let edit_left = chip_rect.right() + 10.0;
+                let edit_right = field_rect.right() - 12.0;
+                let input_rect = egui::Rect::from_min_max(
+                    pos2(edit_left, field_rect.top() + 6.0),
+                    pos2(edit_right, field_rect.bottom() - 6.0),
+                );
+                let margin_top =
+                    (field_rect.center().y + ascent * 0.35 - baseline_offset - input_rect.top())
+                        .round() as i8;
+                let rest = self
+                    .dir
+                    .strip_prefix(mount.as_str())
+                    .unwrap_or(&self.dir)
+                    .trim_start_matches(['\\', '/'])
+                    .to_string();
+                let mut rest_edit = rest.clone();
+                ui.scope_builder(egui::UiBuilder::new().max_rect(input_rect), |ui| {
+                    TextEdit::singleline(&mut rest_edit)
+                        .frame(false)
+                        // The computed baseline-true offset (see above).
+                        .margin(egui::Margin {
+                            left: 0,
+                            right: 0,
+                            top: margin_top,
+                            bottom: 0,
+                        })
+                        .desired_width(input_rect.width())
+                        .text_color(theme.text)
+                        .font(egui::FontId::monospace(13.0))
+                        .show(ui);
+                });
+                if rest_edit != rest {
+                    self.dir = format!("{mount}{rest_edit}");
+                }
+
+                // Browse: the shared ghost button — borderless, icon and label
+                // on one optical line, and the row's spacing keeps it off the
+                // field.
+                let browse_resp = Self::ghost_icon_button(
+                    ui,
+                    theme,
+                    &icons,
+                    &icons.folder,
+                    texts.browse.as_str(),
+                    browse_w,
+                    field_h,
+                );
+                if browse_resp.clicked() {
+                    if let Some(picked) = rfd::FileDialog::new()
+                        .set_title(texts.browse_title)
+                        .pick_folder()
+                    {
+                        self.dir = nested_dir(&self.config, &picked.to_string_lossy());
                     }
-                    let hover_t = ui.ctx().animate_bool_with_time(
-                        chip_resp.id.with("hover"),
-                        chip_resp.hovered() || self.drive_open,
-                        0.12,
-                    );
-                    if hover_t > 0.0 {
-                        ui.painter_at(chip).rect_filled(
-                            chip,
-                            CornerRadius::same(8),
-                            mix(theme.background, theme.primary, 0.10 * hover_t),
-                        );
-                    }
-                    ui.painter().text(
-                        pos2(chip.left() + 12.0, chip.center().y + 1.5),
-                        egui::Align2::LEFT_CENTER,
-                        &mount,
-                        egui::FontId::monospace(13.0),
-                        theme.text,
-                    );
-                    ui.painter().image(
-                        icons.chevron.id(),
-                        egui::Rect::from_center_size(
-                            pos2(chip.right() - 14.0, chip.center().y - 1.0),
-                            egui::vec2(12.0, 12.0),
-                        ),
-                        egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                        theme.text_secondary,
-                    );
-                    chip_clicked = chip_resp.clicked();
-                    chip_rect_out = chip;
-                    chip_resp
-                },
-            )
-            .inner;
-        if chip_clicked {
-            self.drive_open = !self.drive_open;
-        }
-
-        // The mono path remainder inside the field.
-        let input_rect = egui::Rect::from_min_max(
-            pos2(chip_rect.right() + 10.0, field_rect.top() + 6.0),
-            pos2(field_rect.right() - 12.0, field_rect.bottom() - 6.0),
-        );
-        let rest = self
-            .dir
-            .strip_prefix(mount.as_str())
-            .unwrap_or(&self.dir)
-            .trim_start_matches(['\\', '/'])
-            .to_string();
-        let mut rest_edit = rest.clone();
-        ui.allocate_new_ui(
-            egui::UiBuilder::new().max_rect(input_rect),
-            |ui| {
-                TextEdit::singleline(&mut rest_edit)
-                    .frame(false)
-                    .desired_width(input_rect.width())
-                    .text_color(theme.text)
-                    .font(egui::FontId::monospace(13.0))
-                    .show(ui);
-            },
-        );
-        if rest_edit != rest {
-            self.dir = format!("{mount}{rest_edit}");
-        }
-
-        // Browse: the shared ghost button — borderless, icon and label
-        // on one optical line, and the row's spacing keeps it off the
-        // field.
-        let browse_resp = Self::ghost_icon_button(
-            ui,
-            theme,
-            &icons,
-            &icons.folder,
-            texts.browse.as_str(),
-            browse_w,
-            field_h,
-        );
-        if browse_resp.clicked() {
-            if let Some(picked) =
-                rfd::FileDialog::new().set_title(texts.browse_title).pick_folder()
-            {
-                self.dir = nested_dir(&self.config, &picked.to_string_lossy());
-            }
-        }
+                }
             },
         );
 
@@ -2562,10 +2881,7 @@ impl FallbackApp {
                 );
                 if self.dir_writable == Some(false) {
                     ui.add_space(6.0);
-                    let has_writable = self
-                        .candidates
-                        .iter()
-                        .any(|(_, writable, _)| *writable);
+                    let has_writable = self.candidates.iter().any(|(_, writable, _)| *writable);
                     let warn = if has_writable {
                         texts.warn_unwritable.clone()
                     } else {
@@ -2587,6 +2903,75 @@ impl FallbackApp {
                     .size(13.0)
                     .color(theme.text_secondary),
                 );
+                // The flash-target notice (web `.wizard-target__
+                // flash-hint`): a declared Flash target reads as a
+                // pending post-install step.
+                if self
+                    .config
+                    .targets
+                    .iter()
+                    .any(|t| matches!(t, TargetConfig::Flash(_)))
+                {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(texts.flash_hint.as_str())
+                            .size(12.0)
+                            .color(theme.text_tertiary),
+                    );
+                }
+                // The optional-components block (web `.wizard-
+                // attachments`): one checkbox row per declared
+                // attachment; bundled ones lock checked with the badge.
+                if !self.attachments.is_empty() {
+                    ui.add_space(14.0);
+                    ui.label(
+                        RichText::new(texts.attach_title.as_str())
+                            .size(13.0)
+                            .color(theme.text_secondary),
+                    );
+                    ui.add_space(6.0);
+                    for index in 0..self.attachments.len() {
+                        let (key, title, included, size, _) = self.attachments[index].clone();
+                        ui.horizontal(|ui| {
+                            if included {
+                                // Locked-on: the same plate, a static
+                                // check, no click target.
+                                let (rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(18.0, 18.0),
+                                    egui::Sense::hover(),
+                                );
+                                let painter = ui.painter_at(rect.expand(4.0));
+                                let c = rect.center();
+                                painter.circle_filled(c, 9.0, theme.primary);
+                                let stroke = Stroke::new(1.8f32, theme.on_primary);
+                                painter.line_segment(
+                                    [pos2(c.x - 3.6, c.y + 0.4), pos2(c.x - 1.0, c.y + 3.0)],
+                                    stroke,
+                                );
+                                painter.line_segment(
+                                    [pos2(c.x - 1.0, c.y + 3.0), pos2(c.x + 4.2, c.y - 2.8)],
+                                    stroke,
+                                );
+                                ui.add_space(12.0);
+                            } else {
+                                let picked = &mut self.attachments[index].4;
+                                Self::circle_checkbox(ui, theme, picked, "", None);
+                                ui.add_space(12.0);
+                                let _ = key;
+                            }
+                            ui.label(RichText::new(title).size(13.0).color(theme.text));
+                            ui.add_space(10.0);
+                            let meta = if included {
+                                texts.attach_bundled.clone()
+                            } else {
+                                size.map(|bytes| format!("{:.1} MB", bytes as f32 / 1_048_576.0))
+                                    .unwrap_or_default()
+                            };
+                            ui.label(RichText::new(meta).size(12.0).color(theme.text_tertiary));
+                        });
+                        ui.add_space(6.0);
+                    }
+                }
             },
         );
 
@@ -2601,7 +2986,7 @@ impl FallbackApp {
                 .show(ui.ctx(), |ui| {
                     let popup = egui::Frame::default()
                         .fill(theme.surface)
-                        .stroke(Stroke::new(1.0, border_idle))
+                        .stroke(Stroke::new(1.0_f32, border_idle))
                         .shadow(egui::Shadow {
                             offset: [0, 8],
                             blur: 24,
@@ -2621,165 +3006,162 @@ impl FallbackApp {
                                 .id_salt(egui::Id::new("drive-picker-scroll"))
                                 .max_height(9.0 * 30.0)
                                 .show(ui, |ui| {
-                            for (mount, kind, label) in self.drives.clone() {
-                                let kind_label = match kind.as_str() {
-                                    "removable" => texts.kind_removable.clone(),
-                                    "fixed" => texts.kind_fixed.clone(),
-                                    "network" => texts.kind_network.clone(),
-                                    "cdrom" => texts.kind_cdrom.clone(),
-                                    "ramdisk" => texts.kind_ramdisk.clone(),
-                                    _ => texts.kind_unknown.clone(),
-                                };
-                                let meta = match label.as_deref() {
-                                    Some(l) if !l.is_empty() => {
-                                        format!("{kind_label} · {l}")
-                                    }
-                                    _ => kind_label.to_string(),
-                                };
-                                let drive_active = self.dir.starts_with(&mount);
-                                let (row, row_resp) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), 30.0),
-                                    egui::Sense::click(),
-                                );
-                                if row_resp.hovered() {
-                                    ui.ctx()
-                                        .set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                                let rp = ui.painter_at(row);
-                                if row_resp.hovered() || drive_active {
-                                    rp.rect_filled(
-                                        row,
-                                        CornerRadius::same(8),
-                                        mix(theme.background, theme.primary, 0.08),
-                                    );
-                                }
-                                rp.text(
-                                    pos2(row.left() + 10.0, row.center().y + 1.0),
-                                    egui::Align2::LEFT_CENTER,
-                                    &mount,
-                                    egui::FontId::monospace(13.0),
-                                    if drive_active {
-                                        theme.primary
-                                    } else {
-                                        theme.text
-                                    },
-                                );
-                                rp.text(
-                                    pos2(row.right() - 10.0, row.center().y - 0.5),
-                                    egui::Align2::RIGHT_CENTER,
-                                    meta,
-                                    egui::FontId::proportional(11.0),
-                                    theme.text_secondary,
-                                );
-                                let switch_drive = |dir: &mut String, mount: &str| {
-                                    // PathField's contract: strip the old
-                                    // prefix, keep the typed remainder.
-                                    let old_mount = self
-                                        .drives
-                                        .iter()
-                                        .find(|(m, _, _)| dir.starts_with(m))
-                                        .map(|(m, _, _)| m.clone())
-                                        .unwrap_or_default();
-                                    let rest = dir
-                                        .strip_prefix(old_mount.as_str())
-                                        .map(|r| r.trim_start_matches(['\\', '/']))
-                                        .unwrap_or("")
-                                        .to_string();
-                                    *dir = format!("{mount}{rest}");
-                                };
-                                if row_resp.clicked() {
-                                    switch_drive(&mut self.dir, &mount);
-                                    self.probed_dir.clear();
-                                }
-                                // The drive's config-driven defaults,
-                                // indented beneath the group header.
-                                for (ckind, cwritable, cpath) in self.candidates.clone() {
-                                    if !cpath
-                                        .get(..mount.len())
-                                        .map_or(false, |prefix| {
-                                            prefix.eq_ignore_ascii_case(&mount)
-                                        })
-                                    {
-                                        continue;
-                                    }
-                                    let clabel = match ckind.as_str() {
-                                        "appdata" => "AppData".to_string(),
-                                        "program-files" => "Program Files".to_string(),
-                                        _ => cpath.clone(),
-                                    };
-                                    let (crow, crow_resp) = ui.allocate_exact_size(
-                                        egui::vec2(ui.available_width(), 30.0),
-                                        egui::Sense::click(),
-                                    );
-                                    if crow_resp.hovered() {
-                                        ui.ctx().set_cursor_icon(
-                                            egui::CursorIcon::PointingHand,
+                                    for (mount, kind, label) in self.drives.clone() {
+                                        let kind_label = match kind.as_str() {
+                                            "removable" => texts.kind_removable.clone(),
+                                            "fixed" => texts.kind_fixed.clone(),
+                                            "network" => texts.kind_network.clone(),
+                                            "cdrom" => texts.kind_cdrom.clone(),
+                                            "ramdisk" => texts.kind_ramdisk.clone(),
+                                            _ => texts.kind_unknown.clone(),
+                                        };
+                                        let meta = match label.as_deref() {
+                                            Some(l) if !l.is_empty() => {
+                                                format!("{kind_label} · {l}")
+                                            }
+                                            _ => kind_label.to_string(),
+                                        };
+                                        let drive_active = self.dir.starts_with(&mount);
+                                        let (row, row_resp) = ui.allocate_exact_size(
+                                            egui::vec2(ui.available_width(), 30.0),
+                                            egui::Sense::click(),
                                         );
-                                    }
-                                    let icon = if cwritable {
-                                        match ckind.as_str() {
-                                            "appdata" => &icons.app_window,
-                                            _ => &icons.hard_drive,
+                                        if row_resp.hovered() {
+                                            ui.ctx()
+                                                .set_cursor_icon(egui::CursorIcon::PointingHand);
                                         }
-                                    } else {
-                                        &icons.alert
-                                    };
-                                    let icon_tint = if cwritable {
-                                        theme.text
-                                    } else {
-                                        theme.text_secondary.gamma_multiply(0.55)
-                                    };
-                                    let crp = ui.painter_at(crow);
-                                    if crow_resp.hovered() {
-                                        crp.rect_filled(
-                                            crow,
-                                            CornerRadius::same(8),
-                                            mix(theme.background, theme.primary, 0.08),
+                                        let rp = ui.painter_at(row);
+                                        if row_resp.hovered() || drive_active {
+                                            rp.rect_filled(
+                                                row,
+                                                CornerRadius::same(8),
+                                                mix(theme.background, theme.primary, 0.08),
+                                            );
+                                        }
+                                        rp.text(
+                                            pos2(row.left() + 10.0, row.center().y + 1.0),
+                                            egui::Align2::LEFT_CENTER,
+                                            &mount,
+                                            egui::FontId::monospace(13.0),
+                                            if drive_active {
+                                                theme.primary
+                                            } else {
+                                                theme.text
+                                            },
                                         );
-                                    }
-                                    // Baseline-true pairing: the icon rides
-                                    // the label's own baseline (the shared
-                                    // helper), one consistent 10pt gap to
-                                    // its right.
-                                    let icon_center = Self::icon_center_for(
-                                        &crp,
-                                        &clabel,
-                                        egui::FontId::monospace(12.0),
-                                        pos2(crow.left() + 24.0, crow.center().y),
-                                    );
-                                    crp.image(
-                                        icon.id(),
-                                        egui::Rect::from_center_size(
-                                            icon_center,
-                                            egui::vec2(13.0, 13.0),
-                                        ),
-                                        egui::Rect::from_min_max(
-                                            pos2(0.0, 0.0),
-                                            pos2(1.0, 1.0),
-                                        ),
-                                        icon_tint,
-                                    );
-                                    crp.text(
-                                        pos2(crow.left() + 42.0, crow.center().y),
-                                        egui::Align2::LEFT_CENTER,
-                                        &clabel,
-                                        egui::FontId::monospace(12.0),
-                                        if cwritable {
-                                            theme.text
-                                        } else {
-                                            theme.text_secondary
-                                        },
-                                    );
-                                    if crow_resp.clicked() {
-                                        self.dir = shun::wizard::pad_root_dir(
-                                            &self.config,
-                                            &cpath,
+                                        rp.text(
+                                            pos2(row.right() - 10.0, row.center().y - 0.5),
+                                            egui::Align2::RIGHT_CENTER,
+                                            meta,
+                                            egui::FontId::proportional(11.0),
+                                            theme.text_secondary,
                                         );
-                                        self.probed_dir.clear();
-                                        self.drive_open = false;
+                                        let switch_drive = |dir: &mut String, mount: &str| {
+                                            // PathField's contract: strip the old
+                                            // prefix, keep the typed remainder.
+                                            let old_mount = self
+                                                .drives
+                                                .iter()
+                                                .find(|(m, _, _)| dir.starts_with(m))
+                                                .map(|(m, _, _)| m.clone())
+                                                .unwrap_or_default();
+                                            let rest = dir
+                                                .strip_prefix(old_mount.as_str())
+                                                .map(|r| r.trim_start_matches(['\\', '/']))
+                                                .unwrap_or("")
+                                                .to_string();
+                                            *dir = format!("{mount}{rest}");
+                                        };
+                                        if row_resp.clicked() {
+                                            switch_drive(&mut self.dir, &mount);
+                                            self.probed_dir.clear();
+                                        }
+                                        // The drive's config-driven defaults,
+                                        // indented beneath the group header.
+                                        for (ckind, cwritable, cpath) in self.candidates.clone() {
+                                            if !cpath.get(..mount.len()).is_some_and(|prefix| {
+                                                prefix.eq_ignore_ascii_case(&mount)
+                                            }) {
+                                                continue;
+                                            }
+                                            let clabel = match ckind.as_str() {
+                                                "appdata" => "AppData".to_string(),
+                                                "program-files" => "Program Files".to_string(),
+                                                _ => cpath.clone(),
+                                            };
+                                            let (crow, crow_resp) = ui.allocate_exact_size(
+                                                egui::vec2(ui.available_width(), 30.0),
+                                                egui::Sense::click(),
+                                            );
+                                            if crow_resp.hovered() {
+                                                ui.ctx().set_cursor_icon(
+                                                    egui::CursorIcon::PointingHand,
+                                                );
+                                            }
+                                            let icon = if cwritable {
+                                                match ckind.as_str() {
+                                                    "appdata" => &icons.app_window,
+                                                    _ => &icons.hard_drive,
+                                                }
+                                            } else {
+                                                &icons.alert
+                                            };
+                                            let icon_tint = if cwritable {
+                                                theme.text
+                                            } else {
+                                                theme.text_secondary.gamma_multiply(0.55)
+                                            };
+                                            let crp = ui.painter_at(crow);
+                                            if crow_resp.hovered() {
+                                                crp.rect_filled(
+                                                    crow,
+                                                    CornerRadius::same(8),
+                                                    mix(theme.background, theme.primary, 0.08),
+                                                );
+                                            }
+                                            // Baseline-true pairing: the icon rides
+                                            // the label's own baseline (the shared
+                                            // helper), one consistent 10pt gap to
+                                            // its right.
+                                            let icon_center = Self::icon_center_for(
+                                                &crp,
+                                                &clabel,
+                                                egui::FontId::monospace(12.0),
+                                                pos2(crow.left() + 24.0, crow.center().y),
+                                            );
+                                            crp.image(
+                                                icon.id(),
+                                                egui::Rect::from_center_size(
+                                                    icon_center,
+                                                    egui::vec2(13.0, 13.0),
+                                                ),
+                                                egui::Rect::from_min_max(
+                                                    pos2(0.0, 0.0),
+                                                    pos2(1.0, 1.0),
+                                                ),
+                                                icon_tint,
+                                            );
+                                            crp.text(
+                                                pos2(crow.left() + 42.0, crow.center().y),
+                                                egui::Align2::LEFT_CENTER,
+                                                &clabel,
+                                                egui::FontId::monospace(12.0),
+                                                if cwritable {
+                                                    theme.text
+                                                } else {
+                                                    theme.text_secondary
+                                                },
+                                            );
+                                            if crow_resp.clicked() {
+                                                self.dir = shun::wizard::pad_root_dir(
+                                                    &self.config,
+                                                    &cpath,
+                                                );
+                                                self.probed_dir.clear();
+                                                self.drive_open = false;
+                                            }
+                                        }
                                     }
-                                }
-                            }
                                 });
                         });
                     popup_rect = popup.response.rect;
@@ -2787,9 +3169,7 @@ impl FallbackApp {
             let hover_pos = ui.input(|i| i.pointer.hover_pos());
             let outside = ui.input(|i| i.pointer.any_click())
                 && !chip_clicked
-                && hover_pos.map_or(true, |p| {
-                    !popup_rect.contains(p) && !chip_rect_out.contains(p)
-                });
+                && !hover_pos.is_some_and(|p| popup_rect.contains(p) || chip_rect_out.contains(p));
             if outside {
                 self.drive_open = false;
             }
@@ -2881,9 +3261,11 @@ impl FallbackApp {
             },
         );
         ui.add_space(8.0);
+        // hairline_box borders: the Frame stroke would feather the
+        // corners thick; paint the uniform sandwich instead.
+        hairline_box(ui.painter(), ui.max_rect(), 10, theme.border, theme.surface);
         Frame::default()
-            .fill(theme.surface)
-            .stroke(Stroke::new(1.0f32, theme.border))
+            .fill(Color32::TRANSPARENT)
             .inner_margin(Margin::same(12))
             .corner_radius(CornerRadius::same(10))
             .show(ui, |ui| {
@@ -2902,9 +3284,7 @@ impl FallbackApp {
                                 );
                                 ui.add_space(6.0);
                             }
-                            ui.label(
-                                RichText::new(body).size(12.5).color(theme.text_secondary),
-                            );
+                            ui.label(RichText::new(body).size(12.5).color(theme.text_secondary));
                         });
                 });
             });
@@ -2914,14 +3294,18 @@ impl FallbackApp {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let pager_button = |ui: &mut egui::Ui, glyph: &str, enabled: bool| {
-                    Self::hand(ui.add_enabled(
-                        enabled,
-                        Button::new(RichText::new(glyph).size(13.0).color(theme.text_secondary))
+                    Self::hand(
+                        ui.add_enabled(
+                            enabled,
+                            Button::new(
+                                RichText::new(glyph).size(13.0).color(theme.text_secondary),
+                            )
                             .fill(theme.surface)
                             .stroke(Stroke::new(1.0f32, theme.border))
                             .corner_radius(CornerRadius::same(6))
                             .min_size(Vec2::new(44.0, 24.0)),
-                    ))
+                        ),
+                    )
                 };
                 if pager_button(ui, "[<]", index > 0).clicked() {
                     self.license_doc_index = index - 1;
@@ -2955,53 +3339,86 @@ impl FallbackApp {
             });
         }
         ui.add_space(8.0);
-        Self::circle_checkbox(ui, self.theme, &mut self.license_accepted, self.texts.license_agree.as_str(), None);
+        Self::circle_checkbox(
+            ui,
+            self.theme,
+            &mut self.license_accepted,
+            self.texts.license_agree.as_str(),
+            None,
+        );
     }
 
-    /// Progress view (the "install" pane): per-phase rows like the
-    /// webview UI (which renders download + extract), then the log.
+    /// Progress view (the "install" pane), the web layout verbatim: the
+    /// progress block centers in the space ABOVE, the log strip pins to
+    /// the pane's bottom edge at full pane width (a hairline's gap
+    /// between them). The strip's height is reserved BEFORE the block
+    /// centers, so the two can never overlap or push past the window.
     fn running_view(&mut self, ui: &mut egui::Ui) {
-        let theme = &self.theme;
+        let theme = self.theme;
         let uninstalling = self.uninstalling == Some(true);
 
-        // Headline + real overall progress. Uninstalling has no payload
-        // phases to weigh, so it stays indeterminate (spinner); an
-        // install renders the weighted bar with its live percent.
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new(if uninstalling {
-                self.texts.uninstalling.clone()
-            } else {
-                self.texts.installing_percent.clone()
-            })
-            .strong()
-            .size(16.0)
-            .color(theme.text),
+        let strip_h = self.terminal.height_hint();
+        // The unified fixed-origin column: the progress block starts at
+        // the pane's top-left inset; the log strip pins to the pane's
+        // bottom edge. Nothing centers, nothing drifts.
+        ui.allocate_ui_with_layout(
+            Vec2::new(ui.available_width(), 140.0),
+            Layout::top_down(Align::LEFT),
+            |ui| {
+                if let Some(logo) = &self.logo {
+                    ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(56.0)));
+                    ui.add_space(16.0);
+                }
+                ui.label(
+                    RichText::new(if uninstalling {
+                        self.texts.uninstalling.clone()
+                    } else {
+                        self.config.product.name.clone()
+                    })
+                    .strong()
+                    .size(18.0)
+                    .color(theme.text),
+                );
+                ui.add_space(16.0);
+                if uninstalling {
+                    // Uninstalling has no payload phases to weigh — the
+                    // indeterminate sweep, like the web page's loading bar.
+                    let t = ui.input(|i| i.time) as f32;
+                    let sweep = (t * 0.9).sin() * 0.5 + 0.5;
+                    ui.ctx().request_repaint();
+                    let bar = egui::ProgressBar::new(sweep.clamp(0.02, 0.98))
+                        .fill(theme.primary)
+                        .corner_radius(CornerRadius::same(8));
+                    ui.add(bar.desired_width(320.0).desired_height(8.0));
+                } else {
+                    let percent = self.overall.unwrap_or(0);
+                    let bar = egui::ProgressBar::new(f32::from(percent) / 100.0)
+                        .show_percentage()
+                        .fill(theme.primary)
+                        .corner_radius(CornerRadius::same(8));
+                    ui.add(bar.desired_width(320.0).desired_height(16.0));
+                }
+                ui.add_space(10.0);
+                // The live step under the bar — the one thing actually
+                // happening (the percent headline rides the bar itself).
+                let step = self
+                    .progress
+                    .as_ref()
+                    .map(|(step, _)| step.clone())
+                    .unwrap_or_else(|| self.texts.installing.clone());
+                ui.label(RichText::new(step).size(12.0).color(theme.text_tertiary));
+            },
         );
-        ui.add_space(12.0);
-        if uninstalling {
-            ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new().size(18.0));
-            });
-        } else {
-            let percent = self.overall.unwrap_or(0);
-            let bar = egui::ProgressBar::new(f32::from(percent) / 100.0)
-                .show_percentage()
-                .fill(theme.primary)
-                .corner_radius(CornerRadius::same(8));
-            ui.add(bar.desired_width(ui.available_width()).desired_height(16.0));
-        }
-        // The live step under the bar — the one thing actually happening.
-        if let Some((step, _)) = &self.progress {
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(step.as_str())
-                    .size(12.0)
-                    .color(theme.text_tertiary),
-            );
-        }
-        ui.add_space(12.0);
-
+        // Pin the strip to the pane's bottom edge: fill the gap between
+        // the block and the strip with exactly the space that remains.
+        let gap = ui.max_rect().bottom() - strip_h - 18.0 - ui.cursor().top();
+        ui.add_space(gap.max(0.0));
+        // The web logs block: hairline separator above the strip, then
+        // 10pt of air before the header bar.
+        let (sep, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
+        ui.painter()
+            .rect_filled(sep, CornerRadius::ZERO, theme.border);
+        ui.add_space(10.0);
         self.log_view(ui);
     }
 
@@ -3023,25 +3440,13 @@ impl FallbackApp {
                         Some(self.dir.trim().trim_end_matches('\\').to_string()),
                     ),
                 };
-                // hikari's done hero: a centered column — green ring
-                // check, the success headline in the success color, the
-                // install path in monospace, then the hint and the
-                // shortcut answers.
+                // The done hero, left-aligned at the column origin like
+                // every pane: green ring check, the success headline in
+                // the success color, the install path in monospace, then
+                // the hint and the shortcut answers.
                 ui.add_space(16.0);
-                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
-                    let painter = ui.painter_at(rect);
-                    let c = rect.center();
-                    let stroke = Stroke::new(3.0f32, theme.success);
-                    painter.circle_stroke(c, 24.0, stroke);
-                    painter.line_segment(
-                        [pos2(c.x - 9.0, c.y + 1.0), pos2(c.x - 2.5, c.y + 8.0)],
-                        stroke,
-                    );
-                    painter.line_segment(
-                        [pos2(c.x - 2.5, c.y + 8.0), pos2(c.x + 10.0, c.y - 7.0)],
-                        stroke,
-                    );
+                {
+                    Self::hero_check(ui, &theme);
                     ui.add_space(10.0);
                     ui.label(
                         RichText::new(title)
@@ -3064,24 +3469,53 @@ impl FallbackApp {
                             .size(12.0)
                             .color(theme.text_tertiary),
                     );
-                    // The done-page shortcut answer — the shared driver's
-                    // flow creates none, so the finish button applies it.
-                    // Offered only after a real (non-portable) install:
-                    // an uninstall has nothing to point a shortcut at.
-                    if desktop_asks
-                        && matches!(outcome.as_ref(), Some(Outcome::InstallOk))
-                        && self.mode != "portable"
-                    {
+                    // The done-page answers — the shared driver's flow
+                    // creates nothing, so the finish button applies
+                    // them. Three checkboxes stack left-aligned inside a
+                    // fixed-width block that centers as a unit (the web
+                    // `.wizard-done__shortcuts`); a portable run keeps
+                    // only the launch answer (its shortcuts point
+                    // nowhere).
+                    if matches!(outcome.as_ref(), Some(Outcome::InstallOk)) {
                         ui.add_space(12.0);
+                        let product = self.config.product.name.clone();
+                        let with_product =
+                            |raw: &str| -> String { raw.replace("%PRODUCT%", &product) };
+                        let menu_asks = menu_policy_asks(&self.config);
+                        let portable = self.mode == "portable";
+                        // The answers stack left-aligned at the origin —
+                        // the web `.wizard-done__shortcuts` block; a
+                        // portable run keeps only the launch answer (its
+                        // shortcuts point nowhere).
+                        if menu_asks && !portable {
+                            Self::circle_checkbox(
+                                ui,
+                                theme,
+                                &mut self.start_menu,
+                                with_product(&texts.menu_shortcut).as_str(),
+                                None,
+                            );
+                            ui.add_space(8.0);
+                        }
+                        if desktop_asks && !portable {
+                            Self::circle_checkbox(
+                                ui,
+                                theme,
+                                &mut self.desktop_shortcut,
+                                with_product(&texts.desktop_shortcut).as_str(),
+                                None,
+                            );
+                            ui.add_space(8.0);
+                        }
                         Self::circle_checkbox(
                             ui,
                             theme,
-                            &mut self.desktop_shortcut,
-                            texts.desktop_shortcut.as_str(),
-                            Some(320.0),
+                            &mut self.launch_after,
+                            with_product(&texts.launch_after).as_str(),
+                            None,
                         );
                     }
-                });
+                }
             }
             Outcome::Failed(err) => {
                 // The HAlert error analog.
@@ -3105,8 +3539,13 @@ impl FallbackApp {
                     });
             }
         }
-        ui.add_space(8.0);
-        self.log_view(ui);
+        // The done page shows the log ONLY on the failure variant (the
+        // web failure pane keeps the trail beside the retry action);
+        // success is clean — no log chrome on the celebration page.
+        if matches!(self.outcome, Some(Outcome::Failed(_))) {
+            ui.add_space(8.0);
+            self.log_view(ui);
+        }
     }
 
     fn log_view(&mut self, ui: &mut egui::Ui) {
@@ -3115,13 +3554,267 @@ impl FallbackApp {
             return;
         }
         let theme = &self.theme;
-        self.terminal.render(
-            ui,
-            theme,
-            self.texts.log.as_str(),
-            self.texts.log_expand.as_str(),
-            self.texts.log_collapse.as_str(),
+        self.terminal.render(ui, theme, self.texts.log.as_str());
+    }
+
+    /// The done hero's check ring (hikari's CheckCircle2 at 56pt) — the
+    /// success glyph of the finished pane AND the uninstall page.
+    fn hero_check(ui: &mut egui::Ui, theme: &Theme) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        let c = rect.center();
+        let stroke = Stroke::new(3.0f32, theme.success);
+        painter.circle_stroke(c, 24.0, stroke);
+        painter.line_segment(
+            [pos2(c.x - 9.0, c.y + 1.0), pos2(c.x - 2.5, c.y + 8.0)],
+            stroke,
         );
+        painter.line_segment(
+            [pos2(c.x - 2.5, c.y + 8.0), pos2(c.x + 10.0, c.y - 7.0)],
+            stroke,
+        );
+    }
+
+    /// The failure hero's cross ring (hikari's XCircle at 56pt) — the
+    /// uninstall page's failure glyph.
+    fn hero_cross(ui: &mut egui::Ui, theme: &Theme) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        let c = rect.center();
+        let stroke = Stroke::new(3.0f32, theme.error);
+        painter.circle_stroke(c, 24.0, stroke);
+        painter.line_segment(
+            [pos2(c.x - 9.0, c.y - 9.0), pos2(c.x + 9.0, c.y + 9.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [pos2(c.x + 9.0, c.y - 9.0), pos2(c.x - 9.0, c.y + 9.0)],
+            stroke,
+        );
+    }
+
+    /// Spawns the uninstall page's worker. Uninstall drives the shared
+    /// uninstall (the ARP contract — the install dir this process sits
+    /// in); repair re-runs the local delivery over that same dir, the
+    /// web face's `start_install { mode: "local", dir: current_dir }`
+    /// verbatim (no nesting pass, no shortcut finish).
+    fn spawn_uninstall_worker(&mut self, ctx: &Context, repair: bool) {
+        self.stage = Stage::Running;
+        self.progress = None;
+        self.phases_done.clear();
+        self.phase_active = None;
+        self.terminal.clear();
+        self.overall = None;
+        self.uninstalling = Some(!repair);
+        self.repairing = repair;
+        self.entry = None;
+
+        let (sender, receiver) = channel();
+        self.receiver = receiver;
+        let repaint = ctx.clone();
+        let payload = self.payload.clone();
+        let config = self.config.clone();
+        std::thread::spawn(move || {
+            let core = WizardCore::new(config, BTreeMap::new());
+            let result = if repair {
+                let dir = shun::wizard::current_exe_dir()
+                    .map(|dir| dir.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let request = InstallRequest {
+                    mode: "local".into(),
+                    dir,
+                    language: None,
+                    machine: false,
+                };
+                shun::wizard::run_install(&core, &payload, &request, &mut |event| {
+                    let _ = sender.send(WorkerMsg::Event(event.clone()));
+                    repaint.request_repaint();
+                })
+                .map_err(|e| e.to_string())
+            } else {
+                shun::wizard::run_uninstall(&core).map_err(|e| e.to_string())
+            };
+            let _ = sender.send(WorkerMsg::Done(result));
+            repaint.request_repaint();
+        });
+    }
+
+    /// The standalone uninstaller page — the web face's uninstall pane,
+    /// state for state: confirm (cancel · repair · danger uninstall) →
+    /// indeterminate running (the repair variant relabels) → done/failed
+    /// hero with a single close. The pane carries every action; the
+    /// wizard's rail, footer and degradation banner are suppressed.
+    fn uninstall_view(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme;
+        let texts = self.texts.clone();
+        // %PRODUCT% substitution — the same token the web face's
+        // withProduct() resolves everywhere.
+        let product = self.config.product.name.clone();
+        let with_product = |raw: &str| raw.replace("%PRODUCT%", &product);
+
+        // hikari button analogs, content-sized: ghost = hairline box
+        // with muted text, solid = filled plate (the confirm row's
+        // uninstall rides the error channel).
+        let glow = std::rc::Rc::clone(&self.glow);
+        // The ghost closure paints only (self stays free for the
+        // spawn calls); it returns whether it was clicked.
+        let ghost = |ui: &mut egui::Ui, label: &str| {
+            text_button(
+                ui,
+                Vec2::new(
+                    ui.painter()
+                        .layout_no_wrap(
+                            label.to_owned(),
+                            egui::FontId::proportional(13.0),
+                            Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                        + 32.0,
+                    40.0,
+                ),
+                label,
+                13.0,
+                16.0,
+                false,
+                theme.text_secondary,
+                Color32::TRANSPARENT,
+                Some(theme.border),
+                8,
+                Some(theme.primary),
+                &glow,
+            )
+            .clicked()
+        };
+        let solid = |ui: &mut egui::Ui, label: &str, fill: Color32| {
+            text_button(
+                ui,
+                Vec2::new(
+                    ui.painter()
+                        .layout_no_wrap(
+                            label.to_owned(),
+                            egui::FontId::proportional(13.5),
+                            Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                        + 32.0,
+                    40.0,
+                ),
+                label,
+                13.5,
+                16.0,
+                true,
+                theme.on_primary,
+                fill,
+                None,
+                8,
+                Some(fill),
+                &glow,
+            )
+            .clicked()
+        };
+
+        match self.stage {
+            // Confirm: heading + sub, then the action row.
+            Stage::Configure => {
+                ui.label(
+                    RichText::new(with_product(&texts.un_heading))
+                        .strong()
+                        .size(22.0)
+                        .color(theme.text),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(with_product(&texts.un_sub))
+                        .size(13.5)
+                        .color(theme.text_secondary),
+                );
+                ui.add_space(28.0);
+                // The action row, left-aligned at the column origin —
+                // the unified fixed-origin rule (the web row is
+                // flex-start now too). Content-sized ghost/solid plates.
+                ui.horizontal(|ui| {
+                    if ghost(ui, texts.un_cancel.as_str()) {
+                        std::process::exit(0);
+                    }
+                    if ghost(ui, with_product(&texts.un_repair).as_str()) {
+                        self.spawn_uninstall_worker(ui.ctx(), true);
+                    }
+                    if solid(ui, with_product(&texts.uninstall).as_str(), theme.error) {
+                        self.spawn_uninstall_worker(ui.ctx(), false);
+                    }
+                });
+            }
+            // Running: the indeterminate sweep — shun's uninstall emits
+            // no percents, and the web page keeps its loading bar
+            // indeterminate for the repair too.
+            Stage::Running => {
+                if let Some(logo) = &self.logo {
+                    ui.add(egui::Image::from_texture(logo).fit_to_exact_size(Vec2::splat(56.0)));
+                    ui.add_space(16.0);
+                }
+                let t = ui.input(|i| i.time) as f32;
+                let sweep = (t * 0.9).sin() * 0.5 + 0.5;
+                ui.ctx().request_repaint();
+                let bar = egui::ProgressBar::new(sweep.clamp(0.02, 0.98))
+                    .fill(theme.primary)
+                    .corner_radius(CornerRadius::same(8));
+                ui.add(bar.desired_width(320.0).desired_height(8.0));
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(if self.repairing {
+                        with_product(&texts.un_repairing)
+                    } else {
+                        with_product(&texts.uninstalling)
+                    })
+                    .size(13.0)
+                    .color(theme.text_secondary),
+                );
+            }
+            // Terminal: the success/failure hero plus a close. The
+            // repair variant relabels (repaired / repair failed).
+            Stage::Finished => {
+                let outcome = self.outcome.clone();
+                match outcome.as_ref().expect("Finished implies an outcome") {
+                    Outcome::InstallOk | Outcome::UninstallOk => {
+                        Self::hero_check(ui, &theme);
+                        ui.add_space(12.0);
+                        let title = if self.repairing {
+                            texts.done_repair.clone()
+                        } else {
+                            texts.done_uninstall.clone()
+                        };
+                        ui.label(
+                            RichText::new(title)
+                                .strong()
+                                .size(18.0)
+                                .color(theme.success),
+                        );
+                        ui.add_space(20.0);
+                        if solid(ui, texts.un_close.as_str(), theme.primary) {
+                            std::process::exit(0);
+                        }
+                    }
+                    Outcome::Failed(err) => {
+                        Self::hero_cross(ui, &theme);
+                        ui.add_space(12.0);
+                        let title = if self.repairing {
+                            texts.failed_repair.clone()
+                        } else {
+                            texts.failed_uninstall.clone()
+                        };
+                        ui.label(RichText::new(title).strong().size(18.0).color(theme.error));
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(err.clone()).size(12.5).color(theme.error));
+                        ui.add_space(20.0);
+                        if solid(ui, texts.un_close.as_str(), theme.primary) {
+                            std::process::exit(0);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// The installer footer: live flow step on the left, nav buttons on
@@ -3158,23 +3851,23 @@ impl FallbackApp {
                 let configuring = self.stage == Stage::Configure;
                 // The license step (2) carries the install button;
                 // language and location walk the pipeline.
-                let on_last_step = self.step >= 2;
+                let on_last_step =
+                    self.pages[self.step].is_license() && self.step + 1 == self.pages.len();
                 let step_blocked = self.step_blocked();
                 // The license step's minimum-read countdown (web
                 // parity): the primary stays disabled for the first
                 // three seconds of the step, relabeling each second.
                 let countdown = if configuring && on_last_step {
                     match self.license_entered {
-                        Some(entered) => {
-                            3u32.saturating_sub(entered.elapsed().as_secs() as u32)
-                        }
+                        Some(entered) => 3u32.saturating_sub(entered.elapsed().as_secs() as u32),
                         None => 0,
                     }
                 } else {
                     0
                 };
                 if countdown > 0 {
-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(200));
                 }
                 let (label, enabled) = match self.stage {
                     Stage::Configure if !on_last_step => (self.texts.next.clone(), !step_blocked),
@@ -3207,21 +3900,45 @@ impl FallbackApp {
                     (Stage::Finished, _) => Some((false, false)),
                 };
                 if let Some((uninstalling, _)) = action {
-                    if Self::hand(ui
-                        .add_enabled(
-                            enabled,
-                            Button::new(
-                                RichText::new(label)
-                                    .strong()
-                                    .size(13.5)
-                                    .color(theme.on_primary),
-                            )
-                            .fill(theme.primary)
-                            .corner_radius(CornerRadius::same(8))
-                            .min_size(Vec2::new(112.0, 30.0)),
-                        ))
-                        .clicked()
-                    {
+                    let glow = std::rc::Rc::clone(&self.glow);
+                    // Disabled (countdown running, target unwritable):
+                    // dimmed plate and label, no glow.
+                    let plate = if enabled {
+                        theme.primary
+                    } else {
+                        theme.primary.gamma_multiply(0.55)
+                    };
+                    let on = if enabled {
+                        theme.on_primary
+                    } else {
+                        theme.on_primary.gamma_multiply(0.7)
+                    };
+                    let response = text_button(
+                        ui,
+                        Vec2::new(
+                            ui.painter()
+                                .layout_no_wrap(
+                                    label.clone(),
+                                    egui::FontId::proportional(13.5),
+                                    Color32::WHITE,
+                                )
+                                .size()
+                                .x
+                                + 48.0,
+                            44.0,
+                        ),
+                        &label,
+                        13.5,
+                        24.0,
+                        true,
+                        on,
+                        plate,
+                        None,
+                        8,
+                        if enabled { Some(theme.primary) } else { None },
+                        &glow,
+                    );
+                    if response.clicked() && enabled {
                         match self.stage {
                             Stage::Finished => match self.outcome.as_ref() {
                                 Some(Outcome::Failed(_)) => {
@@ -3233,23 +3950,23 @@ impl FallbackApp {
                                 }
                                 _ => {
                                     // The done page owns the shortcut
-                                    // answer (the shared driver's flow
-                                    // creates none): apply it through the
-                                    // same finish path every face uses,
-                                    // then close. Uninstalls and portable
-                                    // runs never apply shortcuts — there
-                                    // is nothing to point at.
-                                    if matches!(self.outcome, Some(Outcome::InstallOk))
-                                        && self.mode != "portable"
-                                    {
+                                    // answers (the shared driver's flow
+                                    // creates none): apply them through
+                                    // the same finish path every face
+                                    // uses, then close. A portable run
+                                    // carries no shortcut answers —
+                                    // nothing to register — but its
+                                    // launch answer still applies.
+                                    if matches!(self.outcome, Some(Outcome::InstallOk)) {
+                                        let portable = self.mode == "portable";
                                         let core =
                                             WizardCore::new(self.config.clone(), BTreeMap::new());
                                         let _ = shun::wizard::apply_finish(
                                             &core,
                                             self.dir.trim(),
-                                            Some(self.desktop_shortcut),
-                                            Some(true),
-                                            false,
+                                            (!portable).then_some(self.desktop_shortcut),
+                                            (!portable).then_some(self.start_menu),
+                                            self.launch_after,
                                         );
                                     }
                                     std::process::exit(0);
@@ -3262,9 +3979,8 @@ impl FallbackApp {
                                 self.step += 1;
                                 // Arriving on the license step arms its
                                 // minimum-read countdown.
-                                if self.step >= 2 {
-                                    self.license_entered =
-                                        Some(std::time::Instant::now());
+                                if self.pages[self.step].is_license() {
+                                    self.license_entered = Some(std::time::Instant::now());
                                 }
                             }
                             _ => self.spawn_worker(ctx, uninstalling),
@@ -3281,7 +3997,7 @@ impl FallbackApp {
                         )
                         .fill(theme.primary)
                         .corner_radius(CornerRadius::same(8))
-                        .min_size(Vec2::new(112.0, 30.0)),
+                        .min_size(Vec2::new(0.0, 30.0)),
                     );
                 }
 
@@ -3290,14 +4006,33 @@ impl FallbackApp {
                 // after a successful install; open-folder on success.
                 // hikari's secondary actions are bare text — no border
                 // box — with the muted color carrying the hierarchy.
+                let glow = std::rc::Rc::clone(&self.glow);
                 let ghost = |ui: &mut egui::Ui, label: &str| {
-                    Self::hand(ui.add(
-                        Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
-                            .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::new(1.0f32, theme.border))
-                            .corner_radius(CornerRadius::same(8))
-                            .min_size(Vec2::new(88.0, 30.0)),
-                    ))
+                    text_button(
+                        ui,
+                        Vec2::new(
+                            ui.painter()
+                                .layout_no_wrap(
+                                    label.to_owned(),
+                                    egui::FontId::proportional(13.0),
+                                    Color32::WHITE,
+                                )
+                                .size()
+                                .x
+                                + 32.0,
+                            40.0,
+                        ),
+                        label,
+                        13.0,
+                        16.0,
+                        false,
+                        theme.text_secondary,
+                        Color32::TRANSPARENT,
+                        Some(theme.border),
+                        8,
+                        Some(theme.primary),
+                        &glow,
+                    )
                     .clicked()
                 };
                 if configuring {
@@ -3307,7 +4042,7 @@ impl FallbackApp {
                     // standalone uninstaller face) only.
                     if self.step > 0 && ghost(ui, self.texts.back.as_str()) {
                         self.license_doc_index = 0;
-                        if self.step >= 2 {
+                        if self.pages[self.step].is_license() {
                             self.license_entered = None;
                         }
                         self.step -= 1;
@@ -3315,9 +4050,11 @@ impl FallbackApp {
                 } else if self.stage == Stage::Finished
                     && matches!(self.outcome, Some(Outcome::InstallOk))
                 {
-                    if ghost(ui, self.texts.uninstall.as_str()) {
-                        self.spawn_worker(ctx, true);
-                    }
+                    // 打开安装目录 ONLY. No uninstall next to the finish
+                    // button — the flow just succeeded and the ARP entry
+                    // (or the standalone uninstaller page) owns removal;
+                    // offering it here read as "uninstall what you just
+                    // installed".
                     if ghost(ui, self.texts.open_dir.as_str()) {
                         open_directory(self.dir.trim().trim_end_matches('\\'));
                     }
@@ -3330,15 +4067,15 @@ impl FallbackApp {
     /// Whether the current step blocks progression (a license step
     /// without its checkbox ticked).
     fn step_blocked(&self) -> bool {
-        // Step 2 is the license: progression gates on the accept box.
-        self.step >= 2 && !self.license_accepted
+        // The license pane gates progression on the accept box.
+        self.pages[self.step].is_license() && !self.license_accepted
     }
 }
 
 impl eframe::App for FallbackApp {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         self.drain_worker();
-        self.tick_solar_clock(ctx);
+        self.drain_wallpaper(ctx);
         // Frameless windows lose BOTH the rounded corners and the
         // shadow until DWMWCP_ROUND lands. Apply it here — our OWN
         // window handle, not a title lookup (both faces share one
@@ -3351,36 +4088,79 @@ impl eframe::App for FallbackApp {
         }
         let theme = self.theme;
 
+        // The wallpaper backdrop (first IMAGE source): painted cover-
+        // style over the full window behind every panel, tinted down so
+        // content keeps its contrast (the web backdrop's overlay look).
+        if let Some(texture) = &self.wallpaper {
+            let screen = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let scale = (screen.width() / texture.size_vec2().x)
+                .max(screen.height() / texture.size_vec2().y);
+            let size = texture.size_vec2() * scale;
+            painter.image(
+                texture.id(),
+                egui::Rect::from_center_size(screen.center(), size),
+                egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                // The backdrop sits at ~35% strength over the token
+                // background — full-bleed wallpaper under an installer's
+                // dense text needs the dimming to stay legible.
+                Color32::from_white_alpha(89),
+            );
+        }
+
         // ── Caption bar (frameless chrome): one flat HkTitleBar band.
         egui::TopBottomPanel::top("titlebar")
-            .frame(Frame::default().fill(theme.surface).inner_margin(Margin::ZERO))
+            .frame(
+                Frame::default()
+                    .fill(theme.surface)
+                    .inner_margin(Margin::ZERO),
+            )
             .show(ctx, |ui| {
                 self.title_bar(ui);
             });
 
-        // ── Footer: live step + nav.
-        egui::TopBottomPanel::bottom("footer")
-            .frame(
-                Frame::default()
-                    .fill(theme.background)
-                    .inner_margin(Margin::symmetric(20, 6)),
-            )
-            .show(ctx, |ui| {
-                self.footer(ui, ctx);
-            });
+        // ── Footer: live step + nav. The standalone uninstall page
+        // carries its actions in the pane itself — no footer, exactly
+        // like the web face's uninstall layout.
+        if !self.uninstall_mode {
+            egui::TopBottomPanel::bottom("footer")
+                .frame(
+                    Frame::default()
+                        .fill(theme.background)
+                        .inner_margin(Margin::symmetric(20, 6)),
+                )
+                .show(ctx, |ui| {
+                    self.footer(ui, ctx);
+                });
+        }
 
-        // ── Optional left rail (`shell.timeline = "left"`).
+        // ── Optional left rail (`shell.timeline = "left"`). The
+        // uninstall page has no step rail to draw.
         let timeline_left = self.timeline_left;
-        if timeline_left {
+        if timeline_left && !self.uninstall_mode {
             egui::SidePanel::left("timeline")
                 .exact_width(200.0)
                 .frame(
                     Frame::default()
                         // The brightness split, web-face direction: the
                         // rail sits a shade DARKER than the pane's page
-                        // background (the old surface fill inverted it).
-                        .fill(mix(theme.background, theme.text, 0.04))
-                        .inner_margin(Margin::same(16)),
+                        // background (the old surface fill inverted it);
+                        // a manifest `rail-background` overrides the
+                        // split outright.
+                        .fill(
+                            theme
+                                .rail_bg_override
+                                .unwrap_or_else(|| mix(theme.background, theme.text, 0.04)),
+                        )
+                        // Top inset 54: the first node's CENTER lands
+                        // at 32+54+12 = 98pt — the heading's first-line
+                        // center (the heading tops out at 32+52=84).
+                        .inner_margin(Margin {
+                            left: 16,
+                            right: 16,
+                            top: 54,
+                            bottom: 16,
+                        }),
                 )
                 .show(ctx, |ui| {
                     self.timeline(ui, true);
@@ -3391,61 +4171,62 @@ impl eframe::App for FallbackApp {
         egui::CentralPanel::default()
             .frame(
                 Frame::default()
-                    .fill(theme.background)
-                    .inner_margin(Margin::symmetric(20, 12)),
+                    // The pane layer: the token background, or the
+                    // manifest's `pane-background` when it declares one.
+                    // ZERO margin — the content rect below owns ALL the
+                    // insets, so the cross-face numbers are exact (the
+                    // web pane's 48/40px padding, measured from the same
+                    // rail edge).
+                    .fill(theme.pane_bg_override.unwrap_or(theme.background))
+                    .inner_margin(Margin::ZERO),
             )
             .show(ctx, |ui| {
-                if !timeline_left {
+                if !timeline_left && !self.uninstall_mode {
                     self.timeline(ui, false);
                     ui.add_space(10.0);
                 }
                 // The degradation banner is information, not decoration:
                 // show it only when the runtime forced the fallback (no
                 // WebView2). A deliberate --no-webview launch needs no
-                // warning about itself.
-                if self.reason == FallbackReason::MissingWebview2 {
+                // warning about itself, and the uninstall page mirrors
+                // the web uninstaller (which never banners).
+                if self.reason == FallbackReason::MissingWebview2 && !self.uninstall_mode {
                     self.banner(ui);
                     ui.add_space(12.0);
                 }
-                // Every pane centers its content block — horizontally
-                // always, vertically too (content panes that read as
-                // documents keep their start-aligned text inside the
-                // block; the running pane centers its bar). A fixed max
-                // width keeps wizard content off the window edges.
-                let align = shun::config::StepAlign::Center;
-                let pane = egui::Layout {
-                    main_wrap: false,
-                    main_dir: egui::Direction::TopDown,
-                    cross_align: egui::Align::Center,
-                    main_align: match self.stage {
-                        Stage::Running => egui::Align::Min,
-                        _ => egui::Align::Center,
-                    },
-                    main_justify: false,
-                    cross_justify: false,
-                };
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width().min(560.0), ui.available_height()),
-                    pane,
+                // THE unified content origin (user direction: both faces
+                // left-align everything at a FIXED inset — no per-page
+                // centering, so the heading parks at the same spot on
+                // every page and the distance from the pane's left edge
+                // never varies with content). 48/48 lateral matches the
+                // web pane's padding; PAD_T is 40 + the 12px titlebar
+                // clearance the web pane carries in its padding-top calc,
+                // so both headings land 84pt under the window top.
+                const PAD_L: f32 = 48.0;
+                const PAD_T: f32 = 52.0;
+                const PAD_R: f32 = 48.0;
+                let outer = ui.max_rect();
+                let content = egui::Rect::from_min_max(
+                    pos2(outer.left() + PAD_L, outer.top() + PAD_T),
+                    pos2(outer.right() - PAD_R, outer.bottom()),
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(content)
+                        .layout(Layout::top_down(Align::LEFT)),
                     |ui| {
-                        // The inner column fixes the text alignment;
-                        // the outer layout centers the block.
-                        let text_align = if self.stage == Stage::Configure {
-                            match align {
-                                shun::config::StepAlign::Center => egui::Align::Center,
-                                shun::config::StepAlign::Start => egui::Align::LEFT,
-                            }
-                        } else {
-                            egui::Align::Center
-                        };
-                        ui.with_layout(egui::Layout::top_down(text_align), |ui| {
-                            ui.set_width(ui.available_width().min(560.0));
-                            match self.stage {
-                                Stage::Configure => self.configure_view(ui),
-                                Stage::Running => self.running_view(ui),
-                                Stage::Finished => self.finished_view(ui),
-                            }
-                        });
+                        ui.set_width(content.width());
+                        // The standalone uninstaller page replaces the
+                        // wizard panes entirely (one flow, every face).
+                        if self.uninstall_mode {
+                            self.uninstall_view(ui);
+                            return;
+                        }
+                        match self.stage {
+                            Stage::Configure => self.configure_view(ui),
+                            Stage::Running => self.running_view(ui),
+                            Stage::Finished => self.finished_view(ui),
+                        }
                     },
                 );
             });
@@ -3465,16 +4246,42 @@ fn apply_dwm_rounding(frame: &eframe::Frame) {
     let RawWindowHandle::Win32(win) = handle.as_raw() else {
         return;
     };
-        const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
-        const DWMWCP_ROUND: u32 = 2;
-        // SAFETY: plain dwmapi call with our own window handle and a
-        // 4-byte attribute.
-        unsafe {
-            windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-                win.hwnd.get() as *mut core::ffi::c_void,
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                &DWMWCP_ROUND as *const u32 as *const core::ffi::c_void,
-                4,
-            );
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_ROUND: u32 = 2;
+    // SAFETY: plain dwmapi call with our own window handle and a
+    // 4-byte attribute.
+    unsafe {
+        windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+            win.hwnd.get() as *mut core::ffi::c_void,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &DWMWCP_ROUND as *const u32 as *const core::ffi::c_void,
+            4,
+        );
+    }
+}
+
+#[cfg(test)]
+mod glow_tests {
+    use super::*;
+
+    #[test]
+    fn glow_falloff_matches_box_shadow_semantics() {
+        let sigma = 7.0f32;
+        let at = |d: f32| glow_alpha(d, sigma);
+        // The 50% contour rides the boundary (CSS blur semantics).
+        assert!((at(0.0) - 0.5).abs() < 0.01, "edge = {}", at(0.0));
+        // ~16% one sigma out, ~2% two sigmas out.
+        assert!((at(7.0) - 0.16).abs() < 0.02, "sigma = {}", at(7.0));
+        assert!(at(14.0) < 0.03, "two sigma = {}", at(14.0));
+        // Deep inside: saturated (asymptotic - 97.7% at 2σ in).
+        assert!(at(-14.0) > 0.95, "inside = {}", at(-14.0));
+        // Monotonic decay outward.
+        let mut prev = 1.0f32;
+        for step in 0..40 {
+            let d = step as f32;
+            let a = at(d);
+            assert!(a <= prev + 1e-6);
+            prev = a;
         }
+    }
 }

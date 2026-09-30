@@ -37,6 +37,11 @@ pub struct ShunConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webview2: Option<Webview2Strategy>,
 
+    /// Payload script hooks (docs/en/design/scripting.md) — runner
+    /// scripts the delivery flow executes at phase boundaries. `None`
+    /// keeps the flow script-free.
+    pub script: Option<ScriptHooksConfig>,
+
     /// Delivery targets enabled for this product.
     pub targets: Vec<TargetConfig>,
 
@@ -1013,11 +1018,37 @@ pub struct CustomStepConfig {
     pub markdown: String,
 }
 
+/// Payload script hooks (docs/en/design/scripting.md): the delivery
+/// flow executes the declared scripts at their phase boundaries. One
+/// runner per product (only `duckscript` — the embedded interpreter —
+/// ships today); each hook names a payload-relative script.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ScriptHooksConfig {
+    /// The script runner id. `duckscript` is the only mounted runner.
+    pub runner: String,
+    /// The hooks, in declaration order.
+    #[serde(default)]
+    pub hooks: Vec<ScriptHookConfig>,
+}
+
+/// One phase-boundary script hook.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ScriptHookConfig {
+    /// Where in the flow the script runs: `prepare` (before any payload
+    /// work — the screenshot-window hook), `post-install`,
+    /// `pre-uninstall`. Unknown phases are ignored.
+    pub phase: String,
+    /// Payload-relative script path (packed with the payload).
+    pub script: String,
+}
+
 /// One wizard step in the declarative pipeline. Steps render in
 /// declaration order; the pipeline must contain exactly one `install`
-/// step (the delivery run itself). Panes center their content by
-/// default (`align = "start"` opts a step into left-aligned text —
-/// agreements and documents; the vertical axis stays centered).
+/// step (the delivery run itself). Panes render on the unified
+/// fixed-origin left column; the per-step `align` knob is retained for
+/// schema compatibility.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct StepConfig {
@@ -1266,6 +1297,9 @@ struct ShunMetadataDraft {
     /// `[package.metadata.shun.shell]` — runtime UI knobs.
     #[serde(default)]
     shell: Option<ShellUiConfig>,
+    /// `[package.metadata.shun.script]` — payload script hooks.
+    #[serde(default)]
+    script: Option<ScriptHooksConfig>,
     /// `[[package.metadata.shun.variant]]` — named build variants
     /// (manifest key is singular `variant`, the table-array idiom).
     #[serde(default, rename = "variant")]
@@ -1331,6 +1365,7 @@ impl ShunMetadataDraft {
         }
 
         ShunConfig {
+            script: self.script,
             variants: self.variants,
             product: ProductIdentity {
                 name: self.product.unwrap_or(product_name),
@@ -1427,6 +1462,7 @@ mod tests {
 
     fn sample() -> ShunConfig {
         ShunConfig {
+            script: None,
             variants: None,
             product: ProductIdentity {
                 name: "ShunDemo".into(),

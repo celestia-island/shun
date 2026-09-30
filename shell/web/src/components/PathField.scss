@@ -15,6 +15,12 @@
   // behind the drive chip.
   .hk-input-element {
     font-family: var(--font-mono);
+    // Deterministic vertical centering: the shared element styles
+    // balance padding-block against a min-height box, which leaves the
+    // line a couple of pixels high; a line-height pinned to the box
+    // height centers the single line exactly.
+    padding-block: 0;
+    line-height: 2.5rem;
   }
 }
 

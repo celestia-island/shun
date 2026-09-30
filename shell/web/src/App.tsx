@@ -32,6 +32,7 @@ import {
   resolveSystemLocale,
   strings,
   type InstallerLocale,
+  type InstallerStrings,
 } from "./i18n";
 import { renderRichText } from "./richText";
 import { invoke, listen, openDirectory, tauriWindow } from "./tauri";
@@ -59,7 +60,7 @@ import { invoke, listen, openDirectory, tauriWindow } from "./tauri";
  */
 
 type Mode = "local";
-type StepKey = "language" | "mode" | "license" | "install" | "done";
+type StepKey = "language" | "mode" | "license" | "install" | "done" | `content:${string}`;
 
 interface DirCandidate {
   kind: string;
@@ -104,7 +105,43 @@ interface FlowEventPayload {
 // Step keys in rail order (language leads, the wizard's first step); the
 // labels resolve from the string table per render so a locale switch
 // relabels the timeline live.
-const STEP_KEYS = ["language", "mode", "license", "install", "done"] as const;
+const BASE_STEP_KEYS = ["language", "mode", "license", "install", "done"] as const;
+
+/** One flow entry: the pane key + its timeline label. */
+interface FlowStep {
+  key: StepKey;
+  label: string;
+  kind: string;
+  /** The resolved pipeline step backing a `content:` pane. */
+  step?: { kind: string; title: string; body?: string | null };
+}
+
+/** The wizard's flow from the resolved pipeline: content steps slot in
+ * at their DECLARATION position relative to the license (steps render
+ * in declaration order); mode/scope fold into the location pane and
+ * install/done cap the array. */
+function buildFlow(
+  steps: { kind: string; title: string; body?: string | null }[] | null,
+  labels: { language: string; mode: string; license: string; install: string; done: string },
+): FlowStep[] {
+  const out: FlowStep[] = [
+    { key: "language", label: labels.language, kind: "language" },
+    { key: "mode", label: labels.mode, kind: "mode" },
+  ];
+  let license = false;
+  for (const st of steps ?? []) {
+    if (st.kind === "content") {
+      out.push({ key: `content:${out.length}`, label: st.title, kind: "content", step: st });
+    } else if (st.kind === "license") {
+      out.push({ key: "license", label: labels.license, kind: "license" });
+      license = true;
+    }
+  }
+  if (!license) out.splice(2, 0, { key: "license", label: labels.license, kind: "license" });
+  out.push({ key: "install", label: labels.install, kind: "install" });
+  out.push({ key: "done", label: labels.done, kind: "done" });
+  return out;
+}
 
 export default defineComponent({
   name: "InstallerApp",
@@ -115,7 +152,7 @@ export default defineComponent({
       "step",
     ) ?? "") as StepKey;
     const step = ref<StepKey>(
-      (STEP_KEYS as readonly string[]).includes(initialStep) ? initialStep : "language",
+      (BASE_STEP_KEYS as readonly string[]).includes(initialStep as never) ? (initialStep as StepKey) : "language",
     );
     const mode = ref<Mode>("local");
     // Wizard locale — resolved synchronously from the system so first paint
@@ -133,6 +170,17 @@ export default defineComponent({
     const hintError = ref("");
     const drives = ref<DriveInfo[]>([]);
     const candidates = ref<DirCandidate[]>([]);
+    // Optional attachments (get_config): the checkbox row per component
+    // that is NOT bundled into this build — bundled ones list as
+    // included, the checked ones stream in right after the install.
+    // The resolved wizard pipeline (get_config) — content steps render
+    // from here at their declaration position.
+    const stepsCfg = ref<{ kind: string; title: string; body?: string | null }[]>([]);
+    const flashDeclared = ref(false);
+    const attachments = ref<
+      { key: string; title: string; included: boolean; size: number | null }[]
+    >([]);
+    const attachmentPicked = ref<Record<string, boolean>>({});
     // Live writability of the shown path: null while the probe is in
     // flight or the box is empty, true/false once the backend answered.
     const dirWritable = ref<boolean | null>(null);
@@ -389,17 +437,24 @@ export default defineComponent({
           if (logo) logoUrl.value = `data:image/${logo.kind};base64,${logo.data}`;
         })
         .catch(() => {});
-      invoke<{ product: { name: string } }>("get_config")
+      invoke<{ product: { name: string }; flash?: boolean } & { attachments?: { key: string; title: string; included: boolean; size: number | null }[] }>("get_config")
         .then((view) => {
           product.value = view.product?.name ?? "";
+          const viewSteps = (view as { steps?: { kind: string; title: string; body?: string | null }[] }).steps ?? [];
+          stepsCfg.value = viewSteps;
+          flashDeclared.value = Boolean(view.flash);
+          attachments.value = view.attachments ?? [];
+          attachmentPicked.value = Object.fromEntries(
+            attachments.value.map((a) => [a.key, true]),
+          );
           theme.value = (view as { theme?: unknown }).theme as typeof theme.value;
           applyThemeMode();
           bootWallpaper();
-          // The solar clock: re-resolve every five minutes while the
-          // mode is unpinned, so dusk flips the wizard live.
-          window.setInterval(() => {
+          // The OS theme clock: an OS light/dark flip re-applies
+          // while the mode is unpinned, so the wizard follows live.
+          prefersDark?.addEventListener?.("change", () => {
             if (userPinned.value === null) applyThemeMode();
-          }, 5 * 60 * 1000);
+          });
         })
         .catch(() => {});
       invoke<DriveInfo[]>("list_drives")
@@ -532,6 +587,16 @@ export default defineComponent({
           dir: dir.value.trim(),
           language: locale.value,
         });
+        // Optional components the user picked (not bundled in this
+        // build) stream in now — their progress lands in the log pane
+        // through the same install-progress channel.
+        for (const a of attachments.value) {
+          if (a.included || !attachmentPicked.value[a.key]) continue;
+          await invoke("download_attachment", {
+            key: a.key,
+            dir: dir.value.trim(),
+          });
+        }
         // No shortcut work here: the install creates none, and the done
         // pane's toggles take effect only on the final confirmation.
         overall.value = 100;
@@ -631,56 +696,25 @@ export default defineComponent({
     // minutes so dawn and dusk flip a live wizard. `light`/`dark` pin
     // via [data-mode]; an explicit user toggle (when the manifest
     // allows it) wins for the session.
-    const solarAltitude = (latDeg: number, lngDeg: number): number => {
-      const DEG = Math.PI / 180;
-      const RAD = 180 / Math.PI;
-      const jd = Date.now() / 86400000 + 2440587.5;
-      const T = (jd - 2451545.0) / 36525;
-      let theta =
-        (280.46061837 +
-          360.98564736629 * (jd - 2451545.0) +
-          0.000387933 * T * T -
-          (T * T * T) / 38710000) %
-        360;
-      if (theta < 0) theta += 360;
-      const L0 = (280.46646 + 36000.76983 * T) % 360;
-      const M = ((357.52911 + 35999.05029 * T) % 360) * DEG;
-      const C =
-        (1.9146 - 0.004817 * T) * Math.sin(M) +
-        (0.019993 - 0.000101 * T) * Math.sin(2 * M);
-      let sunLon = (L0 + C) % 360;
-      if (sunLon < 0) sunLon += 360;
-      const omega = (125.04 - 1934.136 * T) * DEG;
-      const lambda = sunLon * DEG - 0.00569 * DEG - 0.00478 * DEG * Math.sin(omega);
-      const epsilon = (23.439291 - 0.013004 * T) * DEG;
-      const decl = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
-      const ra = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
-      let ha = theta + lngDeg - ra * RAD;
-      ha = (((ha + 180) % 360) + 360) % 360 - 180;
-      const lat = latDeg * DEG;
-      const haRad = ha * DEG;
-      return (
-        Math.asin(
-          Math.sin(lat) * Math.sin(decl) +
-            Math.cos(lat) * Math.cos(decl) * Math.cos(haRad),
-        ) * RAD
-      );
-    };
-    const systemWantsDark = (): boolean => {
-      // 31.23°N is hikari's estimate latitude; the longitude comes
-      // from the timezone offset (minutes / 4 = degrees east).
-      const offsetMin = -new Date().getTimezoneOffset();
-      const lng = offsetMin / 4;
-      return solarAltitude(31.23, lng) <= 6;
-    };
+    // Light/dark resolution (hikari rules, user direction): `system`
+    // follows the MACHINE's app theme — WebView2 honors Windows 11's
+    // personalization light/dark through the prefers-color-scheme
+    // query — not the sun. The query unavailable resolves LIGHT
+    // (the documented floor). A live OS flip re-applies while the
+    // wizard sits open; a user toggle (when the manifest allows it)
+    // wins for the session.
+    const systemWantsDark = (): boolean =>
+      window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)");
     const themeMode = ref<"system" | "light" | "dark">("system");
     const userPinned = ref<"light" | "dark" | null>(null);
     const applyThemeMode = () => {
       const resolved =
         userPinned.value ?? theme.value?.mode ?? "system";
       // themeMode carries the EFFECTIVE side (system resolves against
-      // the sun), so the caption toggle's sun/moon reflects what the
-      // page actually shows instead of pinning on the raw "system".
+      // the OS preference), so the caption toggle's sun/moon reflects
+      // what the page actually shows instead of pinning on the raw
+      // "system".
       const effective =
         resolved === "system"
           ? systemWantsDark()
@@ -737,7 +771,7 @@ export default defineComponent({
       if (uninstallMode.value) {
         const uninstallPane =
           uninstallPhase.value === "idle" ? (
-            <section class="wizard-pane wizard-pane--center wizard-uninstall">
+            <section class="wizard-pane wizard-uninstall">
               <h1>{s.uninstall.heading}</h1>
               <p class="wizard-sub">{s.uninstall.sub}</p>
               <div class="wizard-uninstall__actions">
@@ -753,7 +787,7 @@ export default defineComponent({
               </div>
             </section>
           ) : uninstallPhase.value === "running" || uninstallPhase.value === "repairing" ? (
-            <section class="wizard-pane wizard-pane--center wizard-uninstall">
+            <section class="wizard-pane wizard-uninstall">
               <img src={logoUrl.value} alt="" class="wizard-logo" />
               <HkProgressBar status="loading" size="md" />
               <p class="wizard-step">
@@ -761,7 +795,7 @@ export default defineComponent({
               </p>
             </section>
           ) : uninstallPhase.value === "done" || uninstallPhase.value === "repaired" ? (
-            <section class="wizard-pane wizard-pane--center wizard-uninstall">
+            <section class="wizard-pane wizard-uninstall">
               <CheckCircle2
                 size={56}
                 color="rgb(var(--color-success))"
@@ -777,7 +811,7 @@ export default defineComponent({
               </div>
             </section>
           ) : (
-            <section class="wizard-pane wizard-pane--center wizard-uninstall">
+            <section class="wizard-pane wizard-uninstall">
               <XCircle
                 size={56}
                 color="rgb(var(--color-error))"
@@ -806,14 +840,13 @@ export default defineComponent({
         );
       }
 
-      const timelineSteps = STEP_KEYS.map((key) => ({
-        key,
-        label: withProduct(strings(locale.value)).steps[key],
-      }));
+      const flow = buildFlow(stepsCfg.value, withProduct(strings(locale.value)).steps);
+      const flowIndex = (key: string) => flow.findIndex((f) => f.key === key);
+      const timelineSteps = flow.map((f) => ({ key: f.key, label: f.label }));
 
       const pane =
         step.value === "language" ? (
-          <section class="wizard-pane wizard-pane--center wizard-language">
+          <section class="wizard-pane wizard-language">
             <h1>{s.language.title}</h1>
             <p class="wizard-sub">{s.language.sub}</p>
             <div class="wizard-language__select">
@@ -825,7 +858,7 @@ export default defineComponent({
             </div>
           </section>
         ) : step.value === "mode" ? (
-          <section class="wizard-pane wizard-pane--center">
+          <section class="wizard-pane">
             <h1>{s.mode.title}</h1>
             <p class="wizard-sub">{s.mode.sub}</p>
 
@@ -870,8 +903,54 @@ export default defineComponent({
                       : identity.value.flavor}
                 </p>
               )}
+              {flashDeclared.value && (
+                <p class="wizard-target__flash-hint">{s.target.flashHint}</p>
+              )}
+              {attachments.value.length > 0 && (
+                <div class="wizard-attachments">
+                  <p class="wizard-attachments__title">{s.target.attachTitle}</p>
+                  {attachments.value.map((a) => (
+                    <label key={a.key} class="wizard-attachments__row">
+                      <input
+                        type="checkbox"
+                        checked={a.included || attachmentPicked.value[a.key]}
+                        disabled={a.included}
+                        onChange={(e) => {
+                          attachmentPicked.value = {
+                            ...attachmentPicked.value,
+                            [a.key]: (e.target as HTMLInputElement).checked,
+                          };
+                        }}
+                      />
+                      <span class="wizard-attachments__name">{a.title}</span>
+                      <span class="wizard-attachments__meta">
+                        {a.included
+                          ? s.target.attachBundled
+                          : a.size
+                            ? `${(a.size / 1048576).toFixed(1)} MB`
+                            : ""}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </section>
           </section>
+        ) : step.value.startsWith("content:") ? (
+          (() => {
+            const contentStep = flow[flowIndex(step.value)].step;
+            return (
+              <section class="wizard-pane">
+                <h1>{contentStep?.title}</h1>
+                <HkScrollContainer class="license-box" axis="vertical">
+                  <div
+                    class="license-doc"
+                    innerHTML={renderRichText(contentStep?.body ?? "")}
+                  />
+                </HkScrollContainer>
+              </section>
+            );
+          })()
         ) : step.value === "license" ? (
           <section class="wizard-pane">
             <h1>{s.license.title}</h1>
@@ -942,7 +1021,7 @@ export default defineComponent({
             </div>
           </section>
         ) : installFailed.value ? (
-          <section class="wizard-pane wizard-pane--center wizard-done">
+          <section class="wizard-pane wizard-done">
             <XCircle
               size={56}
               color="rgb(var(--color-error))"
@@ -971,7 +1050,7 @@ export default defineComponent({
             </div>
           </section>
         ) : (
-          <section class="wizard-pane wizard-pane--center wizard-done">
+          <section class="wizard-pane wizard-done">
             <CheckCircle2
               size={56}
               color="rgb(var(--color-success))"
@@ -1056,7 +1135,7 @@ export default defineComponent({
 
             <footer class="installer__footer">
               <div class="installer__nav">
-                {running.value ? null : step.value === "language" && (
+                {running.value ? null : (step.value === "language") && (
                   <HkButton variant="primary" size="lg" onClick={() => go("mode")}>
                     {s.nav.next}
                   </HkButton>
@@ -1070,7 +1149,24 @@ export default defineComponent({
                       variant="primary"
                       size="lg"
                       disabled={dirWritable.value === false}
-                      onClick={() => go("license")}
+                      onClick={() => go(flow[flowIndex("mode") + 1].key)}
+                    >
+                      {s.nav.next}
+                    </HkButton>
+                  </>
+                )}
+                {step.value.startsWith("content:") && (
+                  <>
+                    <HkButton
+                      variant="ghost"
+                      onClick={() => go(flow[flowIndex(step.value) - 1].key)}
+                    >
+                      {s.nav.back}
+                    </HkButton>
+                    <HkButton
+                      variant="primary"
+                      size="lg"
+                      onClick={() => go(flow[flowIndex(step.value) + 1].key)}
                     >
                       {s.nav.next}
                     </HkButton>
@@ -1078,7 +1174,10 @@ export default defineComponent({
                 )}
                 {step.value === "license" && (
                   <>
-                    <HkButton variant="ghost" onClick={() => go("mode")}>
+                    <HkButton
+                      variant="ghost"
+                      onClick={() => go(flow[flowIndex("license") - 1].key)}
+                    >
                       {s.nav.back}
                     </HkButton>
                     <HkButton

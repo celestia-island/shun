@@ -49,9 +49,13 @@ path = "NOTICE.md"
 #     { image = "assets/fallback.png" },
 #   ]
 [package.metadata.shun.shell.theme]
-mode = "dark"
-background = { from = "#0B1220", to = "#16223A", angle = 120 }
-rail-background = "#0E1728"
+# `system` follows the machine's app theme (AppsUseLightTheme),
+# undetectable resolving light — the same rule the products ship.
+mode = "system"
+# No `background` / `rail-background` here: a pinned dark gradient
+# would fight the system theme this manifest now follows. Products
+# that pin their look (evernight's own palette) declare their layers;
+# the demo shows the unpinned system path.
 
 # A named build variant (shun build --variant lite): payload override +
 # shell-build env, the flavor-marker channel.
@@ -63,6 +67,10 @@ env = { SHUN_FLAVOR = "lite" }
 local = true
 portable = true
 # The desktop-shortcut policy defaults to `ask` (the wizard checkbox).
+# The menu shortcut defaults to `always` (the historical convention) —
+# pinned to `ask` here so the demo exercises the same three-checkbox
+# done page the real products ship.
+start-menu-shortcut = "ask"
 # The install scope asks too — as a standalone step (see the steps
 # pipeline below).
 scope = "ask"
@@ -83,11 +91,55 @@ kind = "mode"
 [[package.metadata.shun.steps]]
 kind = "scope"
 
+# A custom content step: renders at its declaration position (here,
+# between the scope and the license) on BOTH GUI faces — the web pane
+# rich-text, the egui pane its minimal markdown renderer.
+[[package.metadata.shun.steps]]
+kind = "content"
+title = "发行说明"
+markdown = "release-notes.md"
+
 [[package.metadata.shun.steps]]
 kind = "license"
 
 [[package.metadata.shun.steps]]
 kind = "install"
+
+# The prepare-phase script hook (docs/en/design/scripting.md): a 5s
+# hold at the flow's opening so the running page can be screenshotted
+# mid-install. Demo-only — real products ship no hold.
+# An optional attachment (docs: full builds pack it under the dest
+# prefix, lite builds leave the declaration and fetch online). The demo
+# payload carries models/, so this one resolves as bundled — the UI
+# shows the optional-components block without a network dependency.
+[[package.metadata.shun.attachments]]
+key = "sample-models"
+title = "示例模型包 / Sample models"
+dest = "models"
+size = 1_048_576
+
+[package.metadata.shun.attachments.online]
+url = "https://example.com/shun-demo/models.shun"
+
+[package.metadata.shun.script]
+runner = "duckscript"
+
+[[package.metadata.shun.script.hooks]]
+phase = "prepare"
+script = "installer/prepare.dk"
+
+# The post-install hold: registration is done, the running page still
+# up — the second demo window for mid-install screenshots.
+[[package.metadata.shun.script.hooks]]
+phase = "post-install"
+script = "installer/post-install.dk"
+
+# The pre-uninstall hold: the uninstaller's running state, before any
+# removal work begins (the script itself is exempt from the manifest's
+# file sweep — hooks live in the installer/ pocket).
+[[package.metadata.shun.script.hooks]]
+phase = "pre-uninstall"
+script = "installer/pre-uninstall.dk"
 
 [package.metadata.shun.msix]
 identity-name = "ShunDemo"
