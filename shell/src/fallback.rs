@@ -598,10 +598,14 @@ fn install_system_fonts(ctx: &Context) -> bool {
     let mut fonts = FontDefinitions::default();
 
     // (path, face index, registry name) — order matters: the family
-    // list is a glyph-fallback chain, so Latin must precede CJK.
-    const FACES: [(&str, u32, &str); 3] = [
+    // list is a glyph-fallback chain, so Latin must precede CJK, and
+    // Malgun Gothic completes the locale list's script set (Hangul —
+    // 한국어 is in neither Segoe UI nor YaHei, and without it the
+    // picker rendered tofu).
+    const FACES: [(&str, u32, &str); 4] = [
         (r"C:\Windows\Fonts\segoeui.ttf", 0, "segoe-ui"),
         (r"C:\Windows\Fonts\msyh.ttc", 0, "ms-yahei"),
+        (r"C:\Windows\Fonts\malgun.ttf", 0, "malgun-gothic"),
         (r"C:\Windows\Fonts\consola.ttf", 0, "consolas"),
     ];
     let mut loaded = std::collections::BTreeSet::new();
@@ -635,9 +639,13 @@ fn install_system_fonts(ctx: &Context) -> bool {
     chain(
         &mut fonts,
         FontFamily::Proportional,
-        &["segoe-ui", "ms-yahei"],
+        &["segoe-ui", "ms-yahei", "malgun-gothic"],
     );
-    chain(&mut fonts, FontFamily::Monospace, &["consolas", "ms-yahei"]);
+    chain(
+        &mut fonts,
+        FontFamily::Monospace,
+        &["consolas", "ms-yahei", "malgun-gothic"],
+    );
     let system_cjk = loaded.contains("ms-yahei");
 
     if system_cjk {
@@ -1180,6 +1188,9 @@ impl FallbackApp {
     fn debug_force_stage(&mut self) {
         if let Ok(step) = std::env::var("SHUN_DEBUG_STEP") {
             self.step = step.parse().unwrap_or(self.step);
+        }
+        if std::env::var("SHUN_DEBUG_LANG_POPUP").map_or(false, |v| v == "1") {
+            self.lang_combo_open = true;
         }
         let Ok(stage) = std::env::var("SHUN_DEBUG_STAGE") else {
             return;
