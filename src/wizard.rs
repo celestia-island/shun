@@ -379,7 +379,12 @@ impl WizardCore {
     /// The install context for a wizard run (registration semantics per
     /// the config; the flow itself creates no shortcuts — the done page
     /// owns that answer).
-    fn install_context(&self, dir: &str, portable: bool, machine: bool) -> Result<InstallContext, String> {
+    fn install_context(
+        &self,
+        dir: &str,
+        portable: bool,
+        machine: bool,
+    ) -> Result<InstallContext, String> {
         let install = self.install_target()?;
         let mut ctx = InstallContext::new(
             self.config.product.name.clone(),
