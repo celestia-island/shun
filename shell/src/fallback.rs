@@ -200,6 +200,7 @@ fn text_button(
     radius: u8,
     glow_color: Option<Color32>,
     glow: &GlowCache,
+    primary: Color32,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
     let response = FallbackApp::hand(response);
@@ -211,6 +212,14 @@ fn text_button(
     if let Some(glow_color) = glow_color {
         glow.draw(ui, rect, radius, glow_color, hover_t);
     }
+    // The ghost variant's hover is hikari's `--c-primary-light` wash
+    // with the label shifting to the primary — not a glow.
+    let text_color = mix(text_color, primary, hover_t);
+    let fill = mix(
+        fill,
+        mix(primary, theme_background(ui.ctx()), 0.82),
+        hover_t,
+    );
     let painter = ui.painter_at(rect);
     if let Some(stroke_color) = stroke_color {
         hairline_box(&painter, rect, radius, stroke_color, fill);
@@ -273,6 +282,14 @@ fn erfc(x: f32) -> f32 {
                             + t * (-1.135204
                                 + t * (1.4885159 + t * (-0.8221522 + t * 0.1708728)))))))))
         .exp()
+}
+
+/// The page background as egui currently paints it (the visuals'
+/// panel fill) — the ghost hover wash mixes the primary toward this so
+/// the resting-to-hover ramp lands on hikari's `--c-primary-light`
+/// look: a flat, pale primary tint with no glow.
+fn theme_background(ctx: &egui::Context) -> Color32 {
+    ctx.style().visuals.panel_fill
 }
 
 /// The blurred shadow's alpha ratio at `d` points past the shape
@@ -387,10 +404,13 @@ fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
         let blended = f32::from(b) * (1.0 - factor) + f32::from(o) * factor;
         blended.round().clamp(0.0, 255.0) as u8
     };
-    Color32::from_rgb(
+    // Alpha lerps too: a TRANSPARENT base fading toward a wash must
+    // stay transparent at factor 0 (the ghost buttons rest on it).
+    Color32::from_rgba_unmultiplied(
         channel(base.r(), over.r()),
         channel(base.g(), over.g()),
         channel(base.b(), over.b()),
+        channel(base.a(), over.a()),
     )
 }
 
@@ -1088,6 +1108,12 @@ struct FallbackApp {
     /// degraded-face line), a failed fetch paints nothing.
     wallpaper: Option<TextureHandle>,
     wallpaper_rx: std::sync::mpsc::Receiver<Option<Vec<u8>>>,
+    /// The path field is in text-editing mode (the TextEdit replaced
+    /// the painter-drawn display).
+    path_editing: bool,
+    /// Set on the click that enters editing; the TextEdit requests
+    /// keyboard focus on its first frame.
+    path_focus_request: bool,
     /// The baked glow textures (per button size + color).
     glow: std::rc::Rc<GlowCache>,
     /// The lucide caption glyphs (loaded once; tinted per state).
@@ -1258,6 +1284,8 @@ impl FallbackApp {
             logo,
             wallpaper: None,
             wallpaper_rx,
+            path_editing: false,
+            path_focus_request: false,
             glow: std::rc::Rc::new(GlowCache::default()),
             caption_icons,
             stage: Stage::Configure,
@@ -2312,63 +2340,10 @@ impl FallbackApp {
         pos2(row_center.x, baseline - ascent * 0.42)
     }
 
-    /// A hikari ghost button: borderless lucide icon + label with a
-    /// soft hover wash (the quick-candidate/browse seat). The icon
-    /// centers on the label's optical middle — the galley box includes
-    /// descender space, so a raw box-center would sit the glyph high.
-    /// Generic: any (icon, label) pair, any pane.
-    fn ghost_icon_button(
-        ui: &mut egui::Ui,
-        theme: Theme,
-        _icons: &CaptionIcons,
-        icon: &TextureHandle,
-        label: &str,
-        min_w: f32,
-        h: f32,
-    ) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(vec2(min_w, h), egui::Sense::click());
-        let response = Self::hand(response);
-        let painter = ui.painter_at(rect);
-        let hover_t =
-            ui.ctx()
-                .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
-        if hover_t > 0.0 {
-            painter.rect_filled(
-                rect,
-                CornerRadius::same(10),
-                mix(theme.background, theme.text, 0.05 * hover_t),
-            );
-        }
-        let font = egui::FontId::proportional(13.0);
-        let galley = painter.layout_no_wrap(label.to_string(), font.clone(), theme.text);
-        let content_w = 14.0 + 6.0 + galley.size().x;
-        let left = rect.left() + ((rect.width() - content_w) / 2.0).max(0.0);
-        let icon_center =
-            Self::icon_center_for(&painter, label, font, pos2(left + 7.0, rect.center().y));
-        painter.image(
-            icon.id(),
-            egui::Rect::from_center_size(icon_center, egui::vec2(14.0, 14.0)),
-            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            theme.text,
-        );
-        // Baseline-true: draw the galley so the glyphs' mass center
-        // (baseline minus a third of the ascent) sits on the row's
-        // center — centering the LINE BOX reads high, DPI-dependently.
-        let baseline_offset = galley
-            .rows
-            .first()
-            .and_then(|row| row.glyphs.first())
-            .map(|g| g.pos.y)
-            .unwrap_or(galley.size().y * 0.8);
-        let ascent = galley.size().y * 0.55;
-        let baseline_y = rect.center().y + ascent * 0.35;
-        painter.galley(
-            pos2(left + 20.0, baseline_y - baseline_offset),
-            galley,
-            theme.text,
-        );
-        response
-    }
+    // A hikari ghost button: borderless lucide icon + label with a
+    // soft hover wash (the quick-candidate/browse seat). The icon
+    // centers on the label's optical middle — the galley box includes
+    // descender space, so a raw box-center would sit the glyph high.
 
     /// The hikari checkbox, drawn round like the web face's: a filled
     /// accent disc with a white check when on, a hairline ring that
@@ -2816,9 +2791,6 @@ impl FallbackApp {
                     pos2(edit_left, field_rect.top() + 6.0),
                     pos2(edit_right, field_rect.bottom() - 6.0),
                 );
-                let margin_top =
-                    (field_rect.center().y + ascent * 0.15 - baseline_offset - input_rect.top())
-                        .round() as i8;
                 let rest = self
                     .dir
                     .strip_prefix(mount.as_str())
@@ -2826,21 +2798,76 @@ impl FallbackApp {
                     .trim_start_matches(['\\', '/'])
                     .to_string();
                 let mut rest_edit = rest.clone();
-                ui.scope_builder(egui::UiBuilder::new().max_rect(input_rect), |ui| {
-                    TextEdit::singleline(&mut rest_edit)
-                        .frame(false)
-                        // The computed baseline-true offset (see above).
-                        .margin(egui::Margin {
-                            left: 0,
-                            right: 0,
-                            top: margin_top,
-                            bottom: 0,
+                if self.path_editing {
+                    // Editing: the TextEdit takes over. Its internal row
+                    // centering (interact_size) shifts glyphs a bit, but
+                    // the caret must live where the user will type.
+                    let margin_top = (field_rect.center().y + ascent * 0.15
+                        - baseline_offset
+                        - input_rect.top())
+                    .round() as i8;
+                    let edit_output = ui
+                        .scope_builder(egui::UiBuilder::new().max_rect(input_rect), |ui| {
+                            TextEdit::singleline(&mut rest_edit)
+                                .frame(false)
+                                .margin(egui::Margin {
+                                    left: 0,
+                                    right: 0,
+                                    top: margin_top,
+                                    bottom: 0,
+                                })
+                                .desired_width(input_rect.width())
+                                .text_color(theme.text)
+                                .font(egui::FontId::monospace(13.0))
+                                .show(ui)
                         })
-                        .desired_width(input_rect.width())
-                        .text_color(theme.text)
-                        .font(egui::FontId::monospace(13.0))
-                        .show(ui);
-                });
+                        .inner;
+                    if self.path_focus_request {
+                        edit_output.response.request_focus();
+                        self.path_focus_request = false;
+                    }
+                    if edit_output.response.lost_focus()
+                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    {
+                        self.path_editing = false;
+                    }
+                } else {
+                    // Resting: the text is PAINTER-DRAWN at the exact
+                    // baseline-true position - the TextEdit's internal
+                    // row centering shifted glyphs by DPI-dependent
+                    // points no static margin could track.
+                    let galley = ui.painter().layout_no_wrap(
+                        rest.clone(),
+                        egui::FontId::monospace(13.0),
+                        theme.text,
+                    );
+                    let row_baseline = galley
+                        .rows
+                        .first()
+                        .and_then(|row| row.glyphs.first())
+                        .map(|g| g.pos.y)
+                        .unwrap_or(galley.size().y * 0.8);
+                    let g_ascent = galley.size().y * 0.55;
+                    let baseline_y = field_rect.center().y + g_ascent * 0.75;
+                    ui.painter().galley(
+                        pos2(input_rect.left(), baseline_y - row_baseline),
+                        galley,
+                        theme.text,
+                    );
+                    // Click-to-edit: a raw pointer test on the field's
+                    // text area — no widget, so the row's layout cursor
+                    // stays put and the browse button keeps its seat.
+                    let clicked = ui.input(|i| {
+                        i.pointer.any_click()
+                            && i.pointer
+                                .interact_pos()
+                                .is_some_and(|p| input_rect.contains(p))
+                    });
+                    if clicked {
+                        self.path_editing = true;
+                        self.path_focus_request = true;
+                    }
+                }
                 if rest_edit != rest {
                     self.dir = format!("{mount}{rest_edit}");
                 }
@@ -2848,14 +2875,56 @@ impl FallbackApp {
                 // Browse: the shared ghost button — borderless, icon and label
                 // on one optical line, and the row's spacing keeps it off the
                 // field.
-                let browse_resp = Self::ghost_icon_button(
-                    ui,
-                    theme,
-                    &icons,
-                    &icons.folder,
+                // Placed at an EXPLICIT rect: the row's layout cursor
+                // is at the chip (the chip and the path both draw in
+                // absolute scopes), so a cursor-based allocate would
+                // land the browse button mid-field.
+                let browse_rect = egui::Rect::from_min_size(
+                    pos2(field_rect.right() + 16.0, field_rect.top()),
+                    egui::vec2(browse_w, field_h),
+                );
+                let browse_resp = ui
+                    .interact(browse_rect, ui.id().with("browse"), egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                let hover_t = ui.ctx().animate_bool_with_time(
+                    browse_resp.id.with("hover"),
+                    browse_resp.hovered(),
+                    0.12,
+                );
+                let bp = ui.painter_at(browse_rect);
+                if hover_t > 0.0 {
+                    bp.rect_filled(
+                        browse_rect,
+                        CornerRadius::same(10),
+                        mix(theme.background, theme.primary, 0.08 * hover_t),
+                    );
+                }
+                // Baseline-true icon + label, centered as a pair.
+                let b_font = egui::FontId::proportional(13.0);
+                let b_galley =
+                    bp.layout_no_wrap(texts.browse.to_string(), b_font.clone(), theme.text);
+                let pair_w = 18.0 + 8.0 + b_galley.size().x;
+                let pair_left = browse_rect.center().x - pair_w / 2.0;
+                let b_baseline = browse_rect.center().y + b_galley.size().y * 0.55 * 0.35;
+                let icon_center = Self::icon_center_for(
+                    &bp,
                     texts.browse.as_str(),
-                    browse_w,
-                    field_h,
+                    b_font.clone(),
+                    pos2(pair_left + 9.0, b_baseline - b_galley.size().y * 0.3),
+                );
+                bp.image(
+                    icons.folder.id(),
+                    egui::Rect::from_center_size(icon_center, egui::vec2(16.0, 16.0)),
+                    egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    theme.text,
+                );
+                bp.galley(
+                    pos2(
+                        pair_left + 26.0,
+                        b_baseline - b_galley.rows[0].glyphs[0].pos.y,
+                    ),
+                    b_galley,
+                    theme.text,
                 );
                 if browse_resp.clicked() {
                     if let Some(picked) = rfd::FileDialog::new()
@@ -3701,8 +3770,9 @@ impl FallbackApp {
                 Color32::TRANSPARENT,
                 None,
                 8,
-                Some(theme.primary),
+                None,
                 &glow,
+                theme.primary,
             )
             .clicked()
         };
@@ -3731,6 +3801,7 @@ impl FallbackApp {
                 8,
                 Some(fill),
                 &glow,
+                theme.primary,
             )
             .clicked()
         };
@@ -3957,6 +4028,7 @@ impl FallbackApp {
                         8,
                         if enabled { Some(theme.primary) } else { None },
                         &glow,
+                        theme.primary,
                     );
                     if response.clicked() && enabled {
                         match self.stage {
@@ -4050,8 +4122,9 @@ impl FallbackApp {
                         Color32::TRANSPARENT,
                         None,
                         8,
-                        Some(theme.primary),
+                        None,
                         &glow,
+                        theme.primary,
                     )
                     .clicked()
                 };
