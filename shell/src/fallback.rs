@@ -194,45 +194,122 @@ impl Theme {
 }
 
 /// The web face's button glow (`--shadow-button: 0 4px 14px
-/// primary/35%`), emulated as layered rounded plates — epaint has no
-/// blur, so each layer grows (downward-biased, like the y offset) and
-/// fades; `strength` carries the hover animation's 0..1.
-pub(crate) fn paint_glow(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    radius: u8,
-    color: Color32,
-    strength: f32,
-) {
-    if strength <= 0.01 {
-        return;
-    }
-    let layers = 5;
-    for i in 1..=layers {
-        let t = i as f32 / layers as f32;
-        let spread = t * 16.0;
-        let alpha =
-            ((60.0 * (1.0 - t).powf(0.85) * strength).min(255.0)) as u8;
-        if alpha == 0 {
-            continue;
+/// primary/35%`), BAKED: a rounded-rect SDF run through a gaussian
+/// (σ = blur/2) rasterizes once per button size into a texture; hover
+/// drawing is a single tinted image call. Layered plates cannot blur —
+/// they read as an enlarged border.
+pub(crate) struct GlowCache {
+    textures: std::cell::RefCell<
+        std::collections::HashMap<(u32, u32, [u8; 3]), TextureHandle>,
+    >,
+}
+
+impl Default for GlowCache {
+    fn default() -> Self {
+        Self {
+            textures: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
-        let glow_rect = egui::Rect::from_min_size(
-            pos2(
-                rect.left() - spread * 0.35,
-                rect.top() - spread * 0.2 + 4.0 * t,
-            ),
-            vec2(
-                rect.width() + spread * 0.7,
-                rect.height() + spread * 0.2 + spread,
-            ),
-        );
-        painter.rect_filled(
-            glow_rect,
-            CornerRadius::same((i32::from(radius) + spread as i32).max(0) as u8),
-            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
-        );
     }
 }
+
+/// The shadow's reach past the button edge: blur (≈2σ) plus the 4pt
+/// drop.
+const GLOW_MARGIN: f32 = 18.0;
+
+impl GlowCache {
+    /// Draws the glow for `rect` at `strength` (0..1). The baked shape
+    /// is the button shifted down 4pt (the shadow's y offset).
+    pub fn draw(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        radius: u8,
+        color: Color32,
+        strength: f32,
+    ) {
+        if strength <= 0.01 {
+            return;
+        }
+        let size = rect.size();
+        let key = (size.x.to_bits(), size.y.to_bits(), [color.r(), color.g(), color.b()]);
+        let texture = self
+            .textures
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| {
+                Self::bake(ui.ctx(), size, radius, color)
+            })
+            .clone();
+        let tint = Color32::from_rgba_unmultiplied(
+            color.r(),
+            color.g(),
+            color.b(),
+            (255.0 * 0.35 * strength).round() as u8,
+        );
+        ui.painter().image(
+            texture.id(),
+            egui::Rect::from_min_size(
+                rect.min - egui::vec2(GLOW_MARGIN, GLOW_MARGIN),
+                size + 2.0 * egui::vec2(GLOW_MARGIN, GLOW_MARGIN),
+            ),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        );
+    }
+
+    /// Rasterizes the blurred shadow into a white-alpha bitmap: signed
+    /// distance to the offset rounded rect, gaussian falloff
+    /// (σ = blur/2 = 7), 1.0 inside.
+    fn bake(
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        radius: u8,
+        color: Color32,
+    ) -> TextureHandle {
+        let margin = GLOW_MARGIN;
+        let w = (size.x + 2.0 * margin).round() as usize;
+        let h = (size.y + 2.0 * margin).round() as usize;
+        let sigma = 7.0f32;
+        let two_sigma_sq = 2.0 * sigma * sigma;
+        let half = egui::vec2(size.x / 2.0, size.y / 2.0);
+        let center = egui::vec2(w as f32 / 2.0, h as f32 / 2.0 + 4.0);
+        let r = f32::from(radius).min(half.x.min(half.y));
+        let mut pixels = Vec::with_capacity(w * h * 4);
+        for py in 0..h {
+            for px in 0..w {
+                let p = egui::vec2(px as f32 + 0.5, py as f32 + 0.5) - center;
+                let q = egui::vec2(
+                    p.x.abs() - (half.x - r),
+                    p.y.abs() - (half.y - r),
+                );
+                let outside = egui::vec2(q.x.max(0.0), q.y.max(0.0)).length()
+                    + q.x.max(q.y).min(0.0)
+                    - r;
+                let a = if outside <= 0.0 {
+                    1.0
+                } else {
+                    (-(outside * outside) / two_sigma_sq).exp()
+                };
+                let alpha = (a * 255.0).round() as u8;
+                pixels.push(255);
+                pixels.push(255);
+                pixels.push(255);
+                pixels.push(alpha);
+            }
+        }
+        let _ = color;
+        ctx.load_texture(
+            "button-glow",
+            egui::ColorImage::from_rgba_unmultiplied([w, h], &pixels),
+            egui::TextureOptions {
+                magnification: egui::TextureFilter::Linear,
+                minification: egui::TextureFilter::Linear,
+                ..Default::default()
+            },
+        )
+    }
+}
+
 
 /// Paints a rounded box with a UNIFORM 1px border: the border color
 /// fills the plate, the fill color lays an inner plate shrunk by one
@@ -1015,6 +1092,8 @@ struct FallbackApp {
     /// degraded-face line), a failed fetch paints nothing.
     wallpaper: Option<TextureHandle>,
     wallpaper_rx: std::sync::mpsc::Receiver<Option<Vec<u8>>>,
+    /// The baked glow textures (per button size + color).
+    glow: std::rc::Rc<GlowCache>,
     /// The lucide caption glyphs (loaded once; tinted per state).
     caption_icons: CaptionIcons,
     stage: Stage,
@@ -1178,6 +1257,7 @@ impl FallbackApp {
             logo,
             wallpaper: None,
             wallpaper_rx,
+            glow: std::rc::Rc::new(GlowCache::default()),
             caption_icons,
             stage: Stage::Configure,
             pages: wizard_pages(),
@@ -3625,6 +3705,9 @@ Frame::default()
         // hikari button analogs, content-sized: ghost = hairline box
         // with muted text, solid = filled plate (the confirm row's
         // uninstall rides the error channel).
+        let glow = std::rc::Rc::clone(&self.glow);
+        // The ghost closure paints only (self stays free for the
+        // spawn calls); it returns whether it was clicked.
         let ghost = |ui: &mut egui::Ui, label: &str| {
             // Two-phase so the glow paints UNDER the widget: allocate
             // the content-sized rect, paint the hover glow, then put
@@ -3643,7 +3726,7 @@ Frame::default()
             if let Ok(force) = std::env::var("SHUN_DEBUG_GLOW") {
                 hover_t = hover_t.max(force.parse().unwrap_or(0.0));
             }
-            paint_glow(&ui.painter().clone(), rect, 8, theme.primary, hover_t);
+            glow.draw(ui, rect, 8, theme.primary, hover_t);
             let fill = mix(Color32::TRANSPARENT, theme.primary, 0.06 * hover_t);
             Self::hand(ui.put(
                 rect,
@@ -3869,7 +3952,7 @@ Frame::default()
                     if let Ok(force) = std::env::var("SHUN_DEBUG_GLOW") {
                         hover_t = hover_t.max(force.parse().unwrap_or(0.0));
                     }
-                    paint_glow(&ui.painter().clone(), brect, 8, theme.primary, hover_t);
+                    self.glow.draw(ui, brect, 8, theme.primary, hover_t);
                     let fill = mix(theme.primary, Color32::WHITE, 0.10 * hover_t);
                     let mut primary = Button::new(
                         RichText::new(label)
