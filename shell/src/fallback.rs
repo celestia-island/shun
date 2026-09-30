@@ -2205,8 +2205,19 @@ impl FallbackApp {
             egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             theme.text,
         );
+        // Baseline-true: draw the galley so the glyphs' mass center
+        // (baseline minus a third of the ascent) sits on the row's
+        // center — centering the LINE BOX reads high, DPI-dependently.
+        let baseline_offset = galley
+            .rows
+            .first()
+            .and_then(|row| row.glyphs.first())
+            .map(|g| g.pos.y)
+            .unwrap_or(galley.size().y * 0.8);
+        let ascent = galley.size().y * 0.55;
+        let baseline_y = rect.center().y + ascent * 0.35;
         painter.galley(
-            pos2(left + 20.0, rect.center().y - galley.size().y / 2.0),
+            pos2(left + 20.0, baseline_y - baseline_offset),
             galley,
             theme.text,
         );
@@ -2692,22 +2703,30 @@ Frame::default()
         }
 
         // The mono path remainder inside the field. Baseline-true
-        // centering: egui's TextEdit draws from its rect's TOP edge (+
-        // its own margin), so a full-height edit rect left the text
-        // riding high in the 44pt row - the edit gets a text-line rect
-        // centered on the field's own center instead.
-        let line_h = ui
+        // placement: egui's TextEdit draws its galley from the rect's
+        // top plus the margin, so the margin is COMPUTED from the
+        // layout's measured baseline to put the glyphs' mass center on
+        // the field's center - exact at any DPI, where static margins
+        // drifted with the physical-pixel rounding.
+        let probe = ui
             .painter()
-            .layout_no_wrap("Ag".to_owned(), egui::FontId::monospace(13.0), Color32::WHITE)
-            .size()
-            .y;
-        let edit_h = (line_h + 6.0).min(field_rect.height());
+            .layout_no_wrap("Ag".to_owned(), egui::FontId::monospace(13.0), Color32::WHITE);
+        let baseline_offset = probe
+            .rows
+            .first()
+            .and_then(|row| row.glyphs.first())
+            .map(|g| g.pos.y)
+            .unwrap_or(probe.size().y * 0.8);
+        let ascent = probe.size().y * 0.55;
         let edit_left = chip_rect.right() + 10.0;
         let edit_right = field_rect.right() - 12.0;
-        let input_rect = egui::Rect::from_center_size(
-            pos2((edit_left + edit_right) / 2.0, field_rect.center().y),
-            vec2(edit_right - edit_left, edit_h),
+        let input_rect = egui::Rect::from_min_max(
+            pos2(edit_left, field_rect.top() + 6.0),
+            pos2(edit_right, field_rect.bottom() - 6.0),
         );
+        let margin_top =
+            (field_rect.center().y + ascent * 0.35 - baseline_offset - input_rect.top()).round()
+                as i8;
         let rest = self
             .dir
             .strip_prefix(mount.as_str())
@@ -2720,13 +2739,11 @@ Frame::default()
             |ui| {
                 TextEdit::singleline(&mut rest_edit)
                     .frame(false)
-                    // The line box centers mathematically at margin 3,
-                    // but mono glyphs render optically high in it —
-                    // 5/1 shifts the run down the 2pt the eye expects.
+                    // The computed baseline-true offset (see above).
                     .margin(egui::Margin {
                         left: 0,
                         right: 0,
-                        top: 7,
+                        top: margin_top,
                         bottom: 0,
                     })
                     .desired_width(input_rect.width())
