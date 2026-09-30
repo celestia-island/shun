@@ -2340,63 +2340,10 @@ impl FallbackApp {
         pos2(row_center.x, baseline - ascent * 0.42)
     }
 
-    /// A hikari ghost button: borderless lucide icon + label with a
-    /// soft hover wash (the quick-candidate/browse seat). The icon
-    /// centers on the label's optical middle — the galley box includes
-    /// descender space, so a raw box-center would sit the glyph high.
-    /// Generic: any (icon, label) pair, any pane.
-    fn ghost_icon_button(
-        ui: &mut egui::Ui,
-        theme: Theme,
-        _icons: &CaptionIcons,
-        icon: &TextureHandle,
-        label: &str,
-        min_w: f32,
-        h: f32,
-    ) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(vec2(min_w, h), egui::Sense::click());
-        let response = Self::hand(response);
-        let painter = ui.painter_at(rect);
-        let hover_t =
-            ui.ctx()
-                .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
-        if hover_t > 0.0 {
-            painter.rect_filled(
-                rect,
-                CornerRadius::same(10),
-                mix(theme.background, theme.text, 0.05 * hover_t),
-            );
-        }
-        let font = egui::FontId::proportional(13.0);
-        let galley = painter.layout_no_wrap(label.to_string(), font.clone(), theme.text);
-        let content_w = 14.0 + 6.0 + galley.size().x;
-        let left = rect.left() + ((rect.width() - content_w) / 2.0).max(0.0);
-        let icon_center =
-            Self::icon_center_for(&painter, label, font, pos2(left + 7.0, rect.center().y));
-        painter.image(
-            icon.id(),
-            egui::Rect::from_center_size(icon_center, egui::vec2(14.0, 14.0)),
-            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            theme.text,
-        );
-        // Baseline-true: draw the galley so the glyphs' mass center
-        // (baseline minus a third of the ascent) sits on the row's
-        // center — centering the LINE BOX reads high, DPI-dependently.
-        let baseline_offset = galley
-            .rows
-            .first()
-            .and_then(|row| row.glyphs.first())
-            .map(|g| g.pos.y)
-            .unwrap_or(galley.size().y * 0.8);
-        let ascent = galley.size().y * 0.55;
-        let baseline_y = rect.center().y + ascent * 0.35;
-        painter.galley(
-            pos2(left + 20.0, baseline_y - baseline_offset),
-            galley,
-            theme.text,
-        );
-        response
-    }
+    // A hikari ghost button: borderless lucide icon + label with a
+    // soft hover wash (the quick-candidate/browse seat). The icon
+    // centers on the label's optical middle — the galley box includes
+    // descender space, so a raw box-center would sit the glyph high.
 
     /// The hikari checkbox, drawn round like the web face's: a filled
     /// accent disc with a white check when on, a hairline ring that
