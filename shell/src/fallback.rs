@@ -193,6 +193,27 @@ impl Theme {
     }
 }
 
+/// Paints a rounded box with a UNIFORM 1px border: the border color
+/// fills the plate, the fill color lays an inner plate shrunk by one
+/// pixel (radius stepped down to match). egui's `rect_stroke` feathers
+/// the arc segments, so rounded corners read a pixel thicker than the
+/// straight edges; the sandwich models a CSS border-box and cannot.
+pub(crate) fn hairline_box(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    radius: u8,
+    border: Color32,
+    fill: Color32,
+) {
+    painter.rect_filled(rect, CornerRadius::same(radius), border);
+    let inner = rect.shrink(1.0);
+    painter.rect_filled(
+        inner,
+        CornerRadius::same(radius.saturating_sub(1)),
+        fill,
+    );
+}
+
 /// Alpha-blends `over` onto `base`.
 fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
     let channel = |b: u8, o: u8| {
@@ -216,13 +237,7 @@ fn folder_badge(ui: &mut egui::Ui, theme: &Theme, size: f32) -> egui::Response {
     // Neutral plate: the accent-blue tile clashed with the dark pane —
     // the badge now sits in the surface tone with a hairline border and
     // a muted glyph.
-    painter.rect_filled(rect, CornerRadius::same(7), theme.surface);
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(7),
-        Stroke::new(1.0f32, theme.border),
-        egui::StrokeKind::Inside,
-    );
+    hairline_box(&painter, rect, 7, theme.border, theme.surface);
     let glyph = rect.shrink(6.5);
     let body_top = glyph.top() + glyph.height() * 0.30;
     let stroke = Stroke::new(1.6f32, theme.text_secondary);
@@ -2340,9 +2355,11 @@ impl FallbackApp {
                 .color(theme.text),
         );
         ui.add_space(10.0);
-        Frame::default()
-            .fill(theme.surface)
-            .stroke(Stroke::new(1.0f32, theme.border))
+        // hairline_box borders: the Frame stroke would feather the
+            // corners thick; paint the uniform sandwich instead.
+hairline_box(ui.painter(), ui.max_rect(), 10, theme.border, theme.surface);
+Frame::default()
+            .fill(Color32::TRANSPARENT)
             .inner_margin(Margin::same(12))
             .corner_radius(CornerRadius::same(10))
             .show(ui, |ui| {
@@ -2435,13 +2452,7 @@ impl FallbackApp {
                     .ctx()
                     .animate_bool_with_time(resp.id.with("hover"), resp.hovered() || open, 0.12);
                 let border = mix(border_idle, theme.primary, hover_t);
-                painter.rect_filled(rect, CornerRadius::same(10), theme.surface);
-                painter.rect_stroke(
-                    rect,
-                    CornerRadius::same(10),
-                    Stroke::new(1.0, border),
-                    egui::StrokeKind::Middle,
-                );
+                hairline_box(&painter, rect, 10, border, theme.surface);
                 painter.text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -2601,18 +2612,12 @@ impl FallbackApp {
             let (field_rect, _) =
                 ui.allocate_exact_size(egui::vec2(field_w, field_h), egui::Sense::hover());
         let painter = ui.painter_at(field_rect);
-        painter.rect_filled(field_rect, CornerRadius::same(10), theme.surface);
         let field_border = if self.drive_open {
             theme.primary
         } else {
             border_idle
         };
-        painter.rect_stroke(
-            field_rect,
-            CornerRadius::same(10),
-            Stroke::new(1.0, field_border),
-            egui::StrokeKind::Middle,
-        );
+        hairline_box(&painter, field_rect, 10, field_border, theme.surface);
 
         // Drive chip (PathField's HkAffixPicker): the mount shows once on
         // the chip; picking one rewrites the path in place, keeping the
@@ -3163,9 +3168,11 @@ impl FallbackApp {
             },
         );
         ui.add_space(8.0);
-        Frame::default()
-            .fill(theme.surface)
-            .stroke(Stroke::new(1.0f32, theme.border))
+        // hairline_box borders: the Frame stroke would feather the
+            // corners thick; paint the uniform sandwich instead.
+hairline_box(ui.painter(), ui.max_rect(), 10, theme.border, theme.surface);
+Frame::default()
+            .fill(Color32::TRANSPARENT)
             .inner_margin(Margin::same(12))
             .corner_radius(CornerRadius::same(10))
             .show(ui, |ui| {
