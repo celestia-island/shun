@@ -642,7 +642,6 @@ struct WizardStrings {
 }
 
 impl WizardStrings {
-
     fn texts(&self, locale: &str) -> Texts {
         let fallback = if self.default.is_empty() {
             "zh-Hans".to_string()
@@ -1172,7 +1171,7 @@ impl FallbackApp {
         reason: FallbackReason,
         uninstall_mode: bool,
         language: String,
-            receiver: Receiver<WorkerMsg>,
+        receiver: Receiver<WorkerMsg>,
         logo: Option<TextureHandle>,
 
         license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
@@ -1222,7 +1221,7 @@ impl FallbackApp {
             payload,
             reason,
             language,
-                texts,
+            texts,
             dark_theme: resolved_dark,
             mode_pinned: false,
             dwm_rounded: false,
@@ -2744,7 +2743,8 @@ impl FallbackApp {
                     pos2(field_rect.left() + 6.0, field_rect.top() + 6.0),
                     egui::vec2(chip_w, field_h - 12.0),
                 );
-                let _chip_scope = ui.scope_builder(
+                let _chip_scope = ui
+                    .scope_builder(
                         egui::UiBuilder::new()
                             .max_rect(chip_rect)
                             .layout(Layout::left_to_right(Align::Center)),
@@ -3079,12 +3079,9 @@ impl FallbackApp {
                                         // The drive's config-driven defaults,
                                         // indented beneath the group header.
                                         for (ckind, cwritable, cpath) in self.candidates.clone() {
-                                            if !cpath
-                                                .get(..mount.len())
-                                                .is_some_and(|prefix| {
-                                                    prefix.eq_ignore_ascii_case(&mount)
-                                                })
-                                            {
+                                            if !cpath.get(..mount.len()).is_some_and(|prefix| {
+                                                prefix.eq_ignore_ascii_case(&mount)
+                                            }) {
                                                 continue;
                                             }
                                             let clabel = match ckind.as_str() {
@@ -3172,9 +3169,7 @@ impl FallbackApp {
             let hover_pos = ui.input(|i| i.pointer.hover_pos());
             let outside = ui.input(|i| i.pointer.any_click())
                 && !chip_clicked
-                && !hover_pos.is_some_and(|p| {
-                    popup_rect.contains(p) || chip_rect_out.contains(p)
-                });
+                && !hover_pos.is_some_and(|p| popup_rect.contains(p) || chip_rect_out.contains(p));
             if outside {
                 self.drive_open = false;
             }
