@@ -1,6 +1,0 @@
-tree c157ec59d661a273b3298a394353c055590da1b7
-parent c6107a9332997ec7f96de2af1703d898387a4fa1
-author 伊欧 <langyo.china@gmail.com> 1790782931 +0800
-committer 伊欧 <langyo.china@gmail.com> 1790782931 +0800
-
-🐛 Grant the commit-lint caller the PR-read permission it needs.
