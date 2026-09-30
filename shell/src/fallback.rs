@@ -193,6 +193,64 @@ impl Theme {
     }
 }
 
+/// A hand-drawn text button — the egui Button widget cannot host the
+/// glow underlay: a second widget on the same rect (hover probe under
+/// a click-sensed button) never reports hover, because egui's hit
+/// test hands the pointer to the topmost click-sensed widget. This
+/// allocates ONE click-sensed rect, draws glow -> fill/border ->
+/// baseline-true text on it, and returns the response.
+#[allow(clippy::too_many_arguments)]
+fn text_button(
+    ui: &mut egui::Ui,
+    desired: egui::Vec2,
+    label: &str,
+    font_size: f32,
+    strong: bool,
+    text_color: Color32,
+    fill: Color32,
+    stroke_color: Option<Color32>,
+    radius: u8,
+    glow_color: Option<Color32>,
+    glow: &GlowCache,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
+    let response = FallbackApp::hand(response);
+    let hover_t = ui.ctx().animate_bool_with_time(
+        response.id.with("glow"),
+        response.hovered() || response.is_pointer_button_down_on(),
+        0.15,
+    );
+    if let Some(glow_color) = glow_color {
+        glow.draw(ui, rect, radius, glow_color, hover_t);
+    }
+    let painter = ui.painter_at(rect);
+    if let Some(stroke_color) = stroke_color {
+        hairline_box(&painter, rect, radius, stroke_color, fill);
+    } else {
+        painter.rect_filled(rect, CornerRadius::same(radius), fill);
+    }
+    let font = egui::FontId::proportional(font_size);
+    let galley = painter.layout_no_wrap(
+        label.to_owned(),
+        font.clone(),
+        text_color,
+    );
+    let baseline_offset = galley
+        .rows
+        .first()
+        .and_then(|row| row.glyphs.first())
+        .map(|g| g.pos.y)
+        .unwrap_or(galley.size().y * 0.8);
+    let ascent = galley.size().y * 0.55;
+    let baseline_y = rect.center().y + ascent * 0.35;
+    painter.galley(
+        pos2(rect.left() + 12.0, baseline_y - baseline_offset),
+        galley,
+        text_color,
+    );
+    response
+}
+
 /// The web face's button glow (`--shadow-button: 0 4px 14px
 /// primary/35%`), BAKED: a rounded-rect SDF run through a gaussian
 /// (σ = blur/2) rasterizes once per button size into a texture; hover
@@ -3709,41 +3767,57 @@ Frame::default()
         // The ghost closure paints only (self stays free for the
         // spawn calls); it returns whether it was clicked.
         let ghost = |ui: &mut egui::Ui, label: &str| {
-            // Two-phase so the glow paints UNDER the widget: allocate
-            // the content-sized rect, paint the hover glow, then put
-            // the button on it.
-            let galley = ui
-                .painter()
-                .layout_no_wrap(label.to_owned(), egui::FontId::proportional(13.0), Color32::WHITE);
-            let desired = Vec2::new(galley.size().x + 24.0, 32.0);
-            let (rect, probe) = ui.allocate_exact_size(desired, egui::Sense::hover());
-            let mut hover_t = ui.ctx().animate_bool_with_time(
-                probe.id.with("glow"),
-                probe.hovered() || probe.is_pointer_button_down_on(),
-                0.15,
-            );
-            #[cfg(debug_assertions)]
-            if let Ok(force) = std::env::var("SHUN_DEBUG_GLOW") {
-                hover_t = hover_t.max(force.parse().unwrap_or(0.0));
-            }
-            glow.draw(ui, rect, 8, theme.primary, hover_t);
-            let fill = mix(Color32::TRANSPARENT, theme.primary, 0.06 * hover_t);
-            Self::hand(ui.put(
-                rect,
-                Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
-                    .fill(fill)
-                    .stroke(Stroke::new(1.0f32, theme.border))
-                    .corner_radius(CornerRadius::same(8)),
-            ))
+            text_button(
+                ui,
+                Vec2::new(
+                    ui.painter()
+                        .layout_no_wrap(
+                            label.to_owned(),
+                            egui::FontId::proportional(13.0),
+                            Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                        + 24.0,
+                    32.0,
+                ),
+                label,
+                13.0,
+                false,
+                theme.text_secondary,
+                Color32::TRANSPARENT,
+                Some(theme.border),
+                8,
+                Some(theme.primary),
+                &glow,
+            )
             .clicked()
         };
         let solid = |ui: &mut egui::Ui, label: &str, fill: Color32| {
-            Self::hand(ui.add(
-                Button::new(RichText::new(label).strong().size(13.5).color(theme.on_primary))
-                    .fill(fill)
-                    .corner_radius(CornerRadius::same(8))
-                    .min_size(Vec2::new(0.0, 32.0)),
-            ))
+            text_button(
+                ui,
+                Vec2::new(
+                    ui.painter()
+                        .layout_no_wrap(
+                            label.to_owned(),
+                            egui::FontId::proportional(13.5),
+                            Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                        + 24.0,
+                    32.0,
+                ),
+                label,
+                13.5,
+                true,
+                theme.on_primary,
+                fill,
+                None,
+                8,
+                Some(fill),
+                &glow,
+            )
             .clicked()
         };
 
@@ -3934,41 +4008,44 @@ Frame::default()
                     (Stage::Finished, _) => Some((false, false)),
                 };
                 if let Some((uninstalling, _)) = action {
-                    // Two-phase primary: hover casts the web face's
-                    // glow (--shadow-button) instead of a flat state.
-                    let galley = ui.painter().layout_no_wrap(
-                        label.clone(),
-                        egui::FontId::proportional(13.5),
-                        Color32::WHITE,
+                    let glow = std::rc::Rc::clone(&self.glow);
+                    // Disabled (countdown running, target unwritable):
+                    // dimmed plate and label, no glow.
+                    let plate = if enabled {
+                        theme.primary
+                    } else {
+                        theme.primary.gamma_multiply(0.55)
+                    };
+                    let on = if enabled {
+                        theme.on_primary
+                    } else {
+                        theme.on_primary.gamma_multiply(0.7)
+                    };
+                    let response = text_button(
+                        ui,
+                        Vec2::new(
+                            ui.painter()
+                                .layout_no_wrap(
+                                    label.clone(),
+                                    egui::FontId::proportional(13.5),
+                                    Color32::WHITE,
+                                )
+                                .size()
+                                .x
+                                + 24.0,
+                            30.0,
+                        ),
+                        &label,
+                        13.5,
+                        true,
+                        on,
+                        plate,
+                        None,
+                        8,
+                        if enabled { Some(theme.primary) } else { None },
+                        &glow,
                     );
-                    let desired = Vec2::new(galley.size().x + 24.0, 30.0);
-                    let (brect, probe) = ui.allocate_exact_size(desired, egui::Sense::hover());
-                    let mut hover_t = ui.ctx().animate_bool_with_time(
-                        probe.id.with("glow"),
-                        probe.hovered() && enabled,
-                        0.15,
-                    );
-                    #[cfg(debug_assertions)]
-                    if let Ok(force) = std::env::var("SHUN_DEBUG_GLOW") {
-                        hover_t = hover_t.max(force.parse().unwrap_or(0.0));
-                    }
-                    self.glow.draw(ui, brect, 8, theme.primary, hover_t);
-                    let fill = mix(theme.primary, Color32::WHITE, 0.10 * hover_t);
-                    let mut primary = Button::new(
-                        RichText::new(label)
-                            .strong()
-                            .size(13.5)
-                            .color(theme.on_primary),
-                    )
-                    .fill(fill)
-                    .corner_radius(CornerRadius::same(8))
-                    .min_size(Vec2::new(0.0, 30.0));
-                    if !enabled {
-                        primary = primary.sense(egui::Sense::hover());
-                    }
-                    if Self::hand(ui.put(brect, primary)).clicked()
-                        && enabled
-                    {
+                    if response.clicked() && enabled {
                         match self.stage {
                             Stage::Finished => match self.outcome.as_ref() {
                                 Some(Outcome::Failed(_)) => {
@@ -4037,14 +4114,32 @@ Frame::default()
                 // after a successful install; open-folder on success.
                 // hikari's secondary actions are bare text — no border
                 // box — with the muted color carrying the hierarchy.
+                let glow = std::rc::Rc::clone(&self.glow);
                 let ghost = |ui: &mut egui::Ui, label: &str| {
-                    Self::hand(ui.add(
-                        Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
-                            .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::new(1.0f32, theme.border))
-                            .corner_radius(CornerRadius::same(8))
-                            .min_size(Vec2::new(0.0, 30.0)),
-                    ))
+                    text_button(
+                        ui,
+                        Vec2::new(
+                            ui.painter()
+                                .layout_no_wrap(
+                                    label.to_owned(),
+                                    egui::FontId::proportional(13.0),
+                                    Color32::WHITE,
+                                )
+                                .size()
+                                .x
+                                + 24.0,
+                            30.0,
+                        ),
+                        label,
+                        13.0,
+                        false,
+                        theme.text_secondary,
+                        Color32::TRANSPARENT,
+                        Some(theme.border),
+                        8,
+                        Some(theme.primary),
+                        &glow,
+                    )
                     .clicked()
                 };
                 if configuring {
