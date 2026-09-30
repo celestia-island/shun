@@ -2715,9 +2715,15 @@ impl FallbackApp {
             |ui| {
                 TextEdit::singleline(&mut rest_edit)
                     .frame(false)
-                    // Vertical margin 3 inside the text-line rect puts
-                    // the glyphs' center exactly on the field's center.
-                    .margin(egui::Margin::symmetric(0, 3))
+                    // The line box centers mathematically at margin 3,
+                    // but mono glyphs render optically high in it —
+                    // 5/1 shifts the run down the 2pt the eye expects.
+                    .margin(egui::Margin {
+                        left: 0,
+                        right: 0,
+                        top: 7,
+                        bottom: 0,
+                    })
                     .desired_width(input_rect.width())
                     .text_color(theme.text)
                     .font(egui::FontId::monospace(13.0))
