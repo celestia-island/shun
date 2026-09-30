@@ -193,6 +193,47 @@ impl Theme {
     }
 }
 
+/// The web face's button glow (`--shadow-button: 0 4px 14px
+/// primary/35%`), emulated as layered rounded plates — epaint has no
+/// blur, so each layer grows (downward-biased, like the y offset) and
+/// fades; `strength` carries the hover animation's 0..1.
+pub(crate) fn paint_glow(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    radius: u8,
+    color: Color32,
+    strength: f32,
+) {
+    if strength <= 0.01 {
+        return;
+    }
+    let layers = 5;
+    for i in 1..=layers {
+        let t = i as f32 / layers as f32;
+        let spread = t * 16.0;
+        let alpha =
+            ((60.0 * (1.0 - t).powf(0.85) * strength).min(255.0)) as u8;
+        if alpha == 0 {
+            continue;
+        }
+        let glow_rect = egui::Rect::from_min_size(
+            pos2(
+                rect.left() - spread * 0.35,
+                rect.top() - spread * 0.2 + 4.0 * t,
+            ),
+            vec2(
+                rect.width() + spread * 0.7,
+                rect.height() + spread * 0.2 + spread,
+            ),
+        );
+        painter.rect_filled(
+            glow_rect,
+            CornerRadius::same((i32::from(radius) + spread as i32).max(0) as u8),
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
+        );
+    }
+}
+
 /// Paints a rounded box with a UNIFORM 1px border: the border color
 /// fills the plate, the fill color lays an inner plate shrunk by one
 /// pixel (radius stepped down to match). egui's `rect_stroke` feathers
@@ -3585,12 +3626,31 @@ Frame::default()
         // with muted text, solid = filled plate (the confirm row's
         // uninstall rides the error channel).
         let ghost = |ui: &mut egui::Ui, label: &str| {
-            Self::hand(ui.add(
+            // Two-phase so the glow paints UNDER the widget: allocate
+            // the content-sized rect, paint the hover glow, then put
+            // the button on it.
+            let galley = ui
+                .painter()
+                .layout_no_wrap(label.to_owned(), egui::FontId::proportional(13.0), Color32::WHITE);
+            let desired = Vec2::new(galley.size().x + 24.0, 32.0);
+            let (rect, probe) = ui.allocate_exact_size(desired, egui::Sense::hover());
+            let mut hover_t = ui.ctx().animate_bool_with_time(
+                probe.id.with("glow"),
+                probe.hovered() || probe.is_pointer_button_down_on(),
+                0.15,
+            );
+            #[cfg(debug_assertions)]
+            if let Ok(force) = std::env::var("SHUN_DEBUG_GLOW") {
+                hover_t = hover_t.max(force.parse().unwrap_or(0.0));
+            }
+            paint_glow(&ui.painter().clone(), rect, 8, theme.primary, hover_t);
+            let fill = mix(Color32::TRANSPARENT, theme.primary, 0.06 * hover_t);
+            Self::hand(ui.put(
+                rect,
                 Button::new(RichText::new(label).size(13.0).color(theme.text_secondary))
-                    .fill(Color32::TRANSPARENT)
+                    .fill(fill)
                     .stroke(Stroke::new(1.0f32, theme.border))
-                    .corner_radius(CornerRadius::same(8))
-                    .min_size(Vec2::new(0.0, 32.0)),
+                    .corner_radius(CornerRadius::same(8)),
             ))
             .clicked()
         };
@@ -3791,20 +3851,40 @@ Frame::default()
                     (Stage::Finished, _) => Some((false, false)),
                 };
                 if let Some((uninstalling, _)) = action {
-                    if Self::hand(ui
-                        .add_enabled(
-                            enabled,
-                            Button::new(
-                                RichText::new(label)
-                                    .strong()
-                                    .size(13.5)
-                                    .color(theme.on_primary),
-                            )
-                            .fill(theme.primary)
-                            .corner_radius(CornerRadius::same(8))
-                            .min_size(Vec2::new(0.0, 30.0)),
-                        ))
-                        .clicked()
+                    // Two-phase primary: hover casts the web face's
+                    // glow (--shadow-button) instead of a flat state.
+                    let galley = ui.painter().layout_no_wrap(
+                        label.clone(),
+                        egui::FontId::proportional(13.5),
+                        Color32::WHITE,
+                    );
+                    let desired = Vec2::new(galley.size().x + 24.0, 30.0);
+                    let (brect, probe) = ui.allocate_exact_size(desired, egui::Sense::hover());
+                    let mut hover_t = ui.ctx().animate_bool_with_time(
+                        probe.id.with("glow"),
+                        probe.hovered() && enabled,
+                        0.15,
+                    );
+                    #[cfg(debug_assertions)]
+                    if let Ok(force) = std::env::var("SHUN_DEBUG_GLOW") {
+                        hover_t = hover_t.max(force.parse().unwrap_or(0.0));
+                    }
+                    paint_glow(&ui.painter().clone(), brect, 8, theme.primary, hover_t);
+                    let fill = mix(theme.primary, Color32::WHITE, 0.10 * hover_t);
+                    let mut primary = Button::new(
+                        RichText::new(label)
+                            .strong()
+                            .size(13.5)
+                            .color(theme.on_primary),
+                    )
+                    .fill(fill)
+                    .corner_radius(CornerRadius::same(8))
+                    .min_size(Vec2::new(0.0, 30.0));
+                    if !enabled {
+                        primary = primary.sense(egui::Sense::hover());
+                    }
+                    if Self::hand(ui.put(brect, primary)).clicked()
+                        && enabled
                     {
                         match self.stage {
                             Stage::Finished => match self.outcome.as_ref() {
