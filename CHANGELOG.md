@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.5.2 (2026-10-01)
+
+The ghost-hover and path-row polish release.
+
+- **Two hover modes, cleanly split**: solid buttons (primary, danger)
+  keep their fill, brighten ~10% and cast the baked gaussian glow;
+  transparent ghosts get hikari's flat `--c-primary-light` wash with
+  the label shifting to the primary — no glow. `mix()` is alpha-aware
+  so the ghost's resting plate stays transparent (the wash previously
+  lerped RGB through dark mid-tones, reading as a gray flash before
+  the pale color landed).
+- **The path field splits display/editing**: at rest the text is
+  painter-drawn at the measured baseline (egui's TextEdit row
+  centering shifted glyphs by DPI-dependent points no static margin
+  tracked); clicking swaps in the TextEdit with requested focus;
+  Enter or blur returns to the painter draw.
+- The browse button sits at an explicit rect — the row's layout
+  cursor parks at the drive chip, so a cursor-based allocate landed
+  it mid-field over the path text.
+- Footer buttons share one size on both faces (md metrics: 40px tall,
+  16px lateral); the web face's lg override drops the lopsided 24px
+  lateral padding.
+- The install progress bar is the web face's thin track (6pt, no
+  in-bar text); the percent rides the live-step line.
+- License documents dedent at ingest — the BSL's hard-wrapped
+  indentation rendered as markdown code blocks on both faces.
+- Done titles drop the leading check glyph at the i18n source (the
+  pane draws its own hero; the text duplicate read as a second check).
+
+## 0.5.1 (2026-09-30)
+
 ## 0.5.1 (2026-09-30)
 
 The known-gaps release — every item from 0.5.0's list now ships.
