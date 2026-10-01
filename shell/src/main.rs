@@ -477,7 +477,11 @@ fn get_logo() -> Option<LogoView> {
         "webp" | "png" | "jpg" | "jpeg" => {
             use base64::Engine as _;
             Some(LogoView {
-                kind: if kind == "jpg" { "jpeg".into() } else { kind.into() },
+                kind: if kind == "jpg" {
+                    "jpeg".into()
+                } else {
+                    kind.into()
+                },
                 data: base64::engine::general_purpose::STANDARD.encode(LOGO_BYTES),
             })
         }
@@ -777,14 +781,9 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     // The elevation gate for machine scope happens before any flow work;
     // it needs an InstallContext, so build the shared one.
     if !cli.uninstall && machine {
-        let ctx = shun::wizard::elevation_context(
-            config,
-            &dir,
-            portable,
-            true,
-            cli.language.as_deref(),
-        )
-        .map_err(|e| e.to_string())?;
+        let ctx =
+            shun::wizard::elevation_context(config, &dir, portable, true, cli.language.as_deref())
+                .map_err(|e| e.to_string())?;
         ensure_elevated_for(&ctx, &cli.mode, &dir, !cli.no_desktop, false)?;
     }
 
@@ -844,7 +843,7 @@ fn run_uninstall_events(
     core: &WizardCore,
     print_event: &mut dyn FnMut(&FlowEvent),
 ) -> Result<(), String> {
-    shun::wizard::run_uninstall_with_events(core, &mut |event| print_event(&event))
+    shun::wizard::run_uninstall_with_events(core, print_event)
 }
 
 /// Renders one structured log record for a headless console (English —

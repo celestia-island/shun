@@ -65,7 +65,11 @@ fn local_hms() -> (u8, u8, u8) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() % 86_400)
         .unwrap_or(0);
-    ((secs / 3600) as u8, ((secs / 60) % 60) as u8, (secs % 60) as u8)
+    (
+        (secs / 3600) as u8,
+        ((secs / 60) % 60) as u8,
+        (secs % 60) as u8,
+    )
 }
 
 /// Terminal state + renderer. The pane folds behind its header bar;
@@ -166,8 +170,7 @@ impl Terminal {
     /// scrollbar and clips at the cap.
     pub fn render(&mut self, ui: &mut Ui, theme: &Theme, title: &str) -> Response {
         let width = ui.available_width();
-        let bar_resp =
-            ui.allocate_exact_size(Vec2::new(width, HEADER_H), Sense::click());
+        let bar_resp = ui.allocate_exact_size(Vec2::new(width, HEADER_H), Sense::click());
         let bar = bar_resp.1.on_hover_cursor(egui::CursorIcon::PointingHand);
         let bar_rect = bar_resp.0;
         let painter = ui.painter();
@@ -199,9 +202,11 @@ impl Terminal {
                 egui::FontId::monospace(11.0),
                 theme.text_tertiary,
             );
-            painter
-                .with_clip_rect(preview_rect)
-                .galley(preview_rect.left_top(), galley, theme.text_tertiary);
+            painter.with_clip_rect(preview_rect).galley(
+                preview_rect.left_top(),
+                galley,
+                theme.text_tertiary,
+            );
         }
         // The fold chevron (the lucide chevron-down/up analog), primary
         // on hover like the web toggle.
@@ -219,7 +224,7 @@ impl Terminal {
         };
         let cx = chev_zone.center().x;
         let cy = bar_rect.center().y + 1.0;
-        let stroke = Stroke::new(1.6, chev_color);
+        let stroke = Stroke::new(1.6_f32, chev_color);
         let (a, b, c) = if self.open {
             (
                 egui::pos2(cx - 4.0, cy - 2.0),
@@ -248,80 +253,83 @@ impl Terminal {
                 .id_salt("install-terminal")
                 .auto_shrink([false, false])
                 .max_height(BODY_MAX)
-                .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .scroll_bar_visibility(
+                    egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                )
                 .show(ui, |ui| {
-                ui.set_width(width);
-                // Dense flush rows — the web pane's 4px gaps.
-                ui.spacing_mut().item_spacing.y = 4.0;
-                if self.lines.is_empty() {
-                    ui.label(
-                        egui::RichText::new("…")
-                            .size(11.0)
-                            .color(theme.text_tertiary),
-                    );
-                    return;
-                }
-                let fresh = self.seen != self.lines.len();
-                self.seen = self.lines.len();
-                // Newest-first renders the list reversed and pins the
-                // fresh end at the TOP; oldest-first stays chronological
-                // and pins the tail — the web pane's two orders.
-                let rows: Vec<&Line> = if self.oldest_first {
-                    self.lines.iter().collect()
-                } else {
-                    self.lines.iter().rev().collect()
-                };
-                let total = rows.len().max(1) as f32;
-                for (index, line) in rows.iter().enumerate() {
-                    // Distance from the fresh end drives the fade ramp.
-                    let depth = index as f32 / total;
-                    let alpha = Self::fade(depth);
-                    let tint = |color: Color32| -> Color32 {
-                        Color32::from_rgba_unmultiplied(
-                            color.r(),
-                            color.g(),
-                            color.b(),
-                            (f32::from(color.a()) * alpha).min(255.0) as u8,
-                        )
-                    };
-                    // The web line: a muted stamp + the kind-colored
-                    // text (step/primary, ok/success, error, echo muted).
-                    let text_color = match line.kind {
-                        LineKind::Echo => theme.text_secondary,
-                        LineKind::Step => theme.primary,
-                        LineKind::Ok => theme.success,
-                        LineKind::Error => theme.error,
-                    };
-                    let stamp = format!("{:02}:{:02}:{:02}", line.hms.0, line.hms.1, line.hms.2);
-                    let row = ui
-                        .horizontal(|ui| {
-                            ui.monospace(
-                                egui::RichText::new(stamp)
-                                    .size(11.0)
-                                    .color(tint(theme.text_tertiary)),
-                            );
-                            ui.add_space(8.0);
-                            ui.monospace(
-                                egui::RichText::new(line.text.as_str())
-                                    .size(11.0)
-                                    .color(tint(text_color)),
-                            );
-                        })
-                        .response;
-                    last = Some(row);
-                }
-                if fresh {
-                    // Pin the FRESH end: the first row when newest-first,
-                    // the last when chronological.
-                    if let Some(row) = last.clone() {
-                        row.scroll_to_me(Some(if self.oldest_first {
-                            Align::BOTTOM
-                        } else {
-                            Align::TOP
-                        }));
+                    ui.set_width(width);
+                    // Dense flush rows — the web pane's 4px gaps.
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    if self.lines.is_empty() {
+                        ui.label(
+                            egui::RichText::new("…")
+                                .size(11.0)
+                                .color(theme.text_tertiary),
+                        );
+                        return;
                     }
-                }
-            });
+                    let fresh = self.seen != self.lines.len();
+                    self.seen = self.lines.len();
+                    // Newest-first renders the list reversed and pins the
+                    // fresh end at the TOP; oldest-first stays chronological
+                    // and pins the tail — the web pane's two orders.
+                    let rows: Vec<&Line> = if self.oldest_first {
+                        self.lines.iter().collect()
+                    } else {
+                        self.lines.iter().rev().collect()
+                    };
+                    let total = rows.len().max(1) as f32;
+                    for (index, line) in rows.iter().enumerate() {
+                        // Distance from the fresh end drives the fade ramp.
+                        let depth = index as f32 / total;
+                        let alpha = Self::fade(depth);
+                        let tint = |color: Color32| -> Color32 {
+                            Color32::from_rgba_unmultiplied(
+                                color.r(),
+                                color.g(),
+                                color.b(),
+                                (f32::from(color.a()) * alpha).min(255.0) as u8,
+                            )
+                        };
+                        // The web line: a muted stamp + the kind-colored
+                        // text (step/primary, ok/success, error, echo muted).
+                        let text_color = match line.kind {
+                            LineKind::Echo => theme.text_secondary,
+                            LineKind::Step => theme.primary,
+                            LineKind::Ok => theme.success,
+                            LineKind::Error => theme.error,
+                        };
+                        let stamp =
+                            format!("{:02}:{:02}:{:02}", line.hms.0, line.hms.1, line.hms.2);
+                        let row = ui
+                            .horizontal(|ui| {
+                                ui.monospace(
+                                    egui::RichText::new(stamp)
+                                        .size(11.0)
+                                        .color(tint(theme.text_tertiary)),
+                                );
+                                ui.add_space(8.0);
+                                ui.monospace(
+                                    egui::RichText::new(line.text.as_str())
+                                        .size(11.0)
+                                        .color(tint(text_color)),
+                                );
+                            })
+                            .response;
+                        last = Some(row);
+                    }
+                    if fresh {
+                        // Pin the FRESH end: the first row when newest-first,
+                        // the last when chronological.
+                        if let Some(row) = last.clone() {
+                            row.scroll_to_me(Some(if self.oldest_first {
+                                Align::BOTTOM
+                            } else {
+                                Align::TOP
+                            }));
+                        }
+                    }
+                });
         }
         last.unwrap_or(bar)
     }

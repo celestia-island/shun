@@ -176,7 +176,10 @@ fn main() {
         tauri_build::WindowsAttributes::new().app_manifest(include_str!("app.manifest"));
     if kind != "none" {
         let ico = out_dir.join("shun-logo.ico");
-        write_logo_ico(&std::fs::read(out_dir.join("shun-logo.bin")).expect("logo bytes"), &ico);
+        write_logo_ico(
+            &std::fs::read(out_dir.join("shun-logo.bin")).expect("logo bytes"),
+            &ico,
+        );
         windows_attributes = windows_attributes.window_icon_path(&ico);
     }
 
@@ -193,20 +196,14 @@ fn write_logo_ico(bytes: &[u8], to: &Path) {
     use image::codecs::ico::{IcoEncoder, IcoFrame};
     use image::imageops::FilterType;
 
-    let logo = image::load_from_memory(bytes).unwrap_or_else(|e| {
-        panic!("the product logo does not decode as an image: {e}")
-    });
+    let logo = image::load_from_memory(bytes)
+        .unwrap_or_else(|e| panic!("the product logo does not decode as an image: {e}"));
     let mut frames = Vec::new();
     for size in [16u32, 24, 32, 48, 64, 128, 256] {
         let square = square_rgba(&logo, size, FilterType::Lanczos3);
         frames.push(
-            IcoFrame::as_png(
-                square.as_raw(),
-                size,
-                size,
-                ExtendedColorType::Rgba8,
-            )
-            .expect("logo frame encodes as PNG"),
+            IcoFrame::as_png(square.as_raw(), size, size, ExtendedColorType::Rgba8)
+                .expect("logo frame encodes as PNG"),
         );
     }
     let file = std::fs::File::create(to).expect("create the logo ICO");

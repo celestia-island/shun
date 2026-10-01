@@ -494,9 +494,8 @@ pub fn run_phase_hooks(
     for hook in hooks.hooks.iter().filter(|h| h.phase == phase) {
         let path = Path::new(&hook.script);
         let bytes = read(path).ok_or_else(|| ShunError::MissingEntry(path.to_path_buf()))?;
-        let script = std::str::from_utf8(&bytes).map_err(|e| {
-            ShunError::Config(format!("script {} is not utf-8: {e}", hook.script))
-        })?;
+        let script = std::str::from_utf8(&bytes)
+            .map_err(|e| ShunError::Config(format!("script {} is not utf-8: {e}", hook.script)))?;
         on_event(FlowEvent::Log {
             record: FlowLog::ScriptBegin {
                 name: hook.script.clone(),

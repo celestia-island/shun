@@ -1,0 +1,25 @@
+                let margin_top =
+                    (field_rect.center().y + ascent * 0.15 - baseline_offset - input_rect.top())
+                        .round() as i8;
+                let rest = self
+                    .dir
+                    .strip_prefix(mount.as_str())
+                    .unwrap_or(&self.dir)
+                    .trim_start_matches(['\\', '/'])
+                    .to_string();
+                let mut rest_edit = rest.clone();
+                ui.scope_builder(egui::UiBuilder::new().max_rect(input_rect), |ui| {
+                    TextEdit::singleline(&mut rest_edit)
+                        .frame(false)
+                        // The computed baseline-true offset (see above).
+                        .margin(egui::Margin {
+                            left: 0,
+                            right: 0,
+                            top: margin_top,
+                            bottom: 0,
+                        })
+                        .desired_width(input_rect.width())
+                        .text_color(theme.text)
+                        .font(egui::FontId::monospace(13.0))
+                        .show(ui);
+                });
