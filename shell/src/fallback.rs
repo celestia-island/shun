@@ -212,14 +212,23 @@ fn text_button(
     if let Some(glow_color) = glow_color {
         glow.draw(ui, rect, radius, glow_color, hover_t);
     }
-    // The ghost variant's hover is hikari's `--c-primary-light` wash
-    // with the label shifting to the primary — not a glow.
-    let text_color = mix(text_color, primary, hover_t);
-    let fill = mix(
-        fill,
-        mix(primary, theme_background(ui.ctx()), 0.82),
-        hover_t,
-    );
+    // Two hover modes (user direction): SOLID buttons (glow_color set)
+    // keep their fill and cast the baked glow, brightening ~10% (the
+    // web face's brightness(1.1)); TRANSPARENT buttons (ghosts) get
+    // hikari's flat `--c-primary-light` wash with the label shifting to
+    // the primary — no glow either way.
+    let (text_color, fill) = if glow_color.is_some() {
+        (text_color, mix(fill, Color32::WHITE, 0.10 * hover_t))
+    } else {
+        (
+            mix(text_color, primary, hover_t),
+            mix(
+                fill,
+                mix(primary, theme_background(ui.ctx()), 0.82),
+                hover_t,
+            ),
+        )
+    };
     let painter = ui.painter_at(rect);
     if let Some(stroke_color) = stroke_color {
         hairline_box(&painter, rect, radius, stroke_color, fill);
