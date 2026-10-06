@@ -290,6 +290,67 @@ impl ShunConfig {
                                 ));
                             }
                         }
+                        // Pairing steps carry their own contract, and the
+                        // pane must run before the delivery it feeds.
+                        let install_at = steps
+                            .iter()
+                            .position(|s| s.kind == StepKind::Install)
+                            .expect("guarded above");
+                        for (at, step) in steps.iter().enumerate() {
+                            let pairing = match (&step.kind, &step.pairing) {
+                                (StepKind::Pairing, None) => {
+                                    return Err(config_error(
+                                        "pairing steps need a `pairing` section",
+                                    ));
+                                }
+                                (StepKind::Pairing, Some(pairing)) => pairing,
+                                (_, Some(_)) => {
+                                    return Err(config_error(
+                                        "`pairing` is only valid on `pairing` steps",
+                                    ));
+                                }
+                                _ => continue,
+                            };
+                            if at > install_at {
+                                return Err(config_error(
+                                    "the pairing step must precede the install step",
+                                ));
+                            }
+                            if let PairingSource::Gateway { .. } = pairing.source {
+                                let identity = pairing.identity.as_ref();
+                                if !identity.is_some_and(|i| i.node_id) {
+                                    return Err(config_error(
+                                        "the gateway pairing lane requires \
+                                         `pairing.identity.node-id = true`",
+                                    ));
+                                }
+                            }
+                            if let PairingSource::Scripts {
+                                request,
+                                r#await: await_script,
+                                record,
+                            } = &pairing.source
+                            {
+                                for (path, what) in [
+                                    (request, "request"),
+                                    (await_script, "await"),
+                                    (record, "record"),
+                                ] {
+                                    if !base.join(path).is_file() {
+                                        return Err(config_error(&format!(
+                                            "pairing {what} script `{path}` not found"
+                                        )));
+                                    }
+                                }
+                            }
+                            if let Some(env_file) = &pairing.env_file {
+                                if env_file.trim().is_empty() {
+                                    return Err(config_error(
+                                        "pairing `env-file` must not be empty",
+                                    ));
+                                }
+                            }
+                        }
                         steps.clone()
                     }
                     0 => {
@@ -437,6 +498,7 @@ fn bare_step(kind: StepKind) -> StepConfig {
         title: None,
         markdown: None,
         columns: None,
+        pairing: None,
     }
 }
 
@@ -447,6 +509,7 @@ fn custom_to_step(custom: &CustomStepConfig) -> StepConfig {
         title: Some(custom.title.clone()),
         markdown: Some(custom.markdown.clone()),
         columns: None,
+        pairing: None,
     }
 }
 
@@ -1103,6 +1166,88 @@ pub struct StepConfig {
     /// instead of leaving empty slots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<u8>,
+
+    /// The pairing step's contract (`pairing` steps). Required for the
+    /// kind; rejected for every other kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing: Option<PairingStepConfig>,
+}
+
+/// The declarative pairing step: where the displayed code comes from and
+/// what the pane needs to render it.
+///
+/// Two lanes, one template. The built-in gateway protocol needs no
+/// scripting runtime on the target machine; the script lane runs
+/// `python3 <script>` per phase and speaks JSON, so products with their
+/// own activation backends (license servers, hardware dongles, bespoke
+/// gateways) reuse the same prefabricated pane — big code, countdown,
+/// copy, auto-refresh, success card.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct PairingStepConfig {
+    /// Which lane mints and awaits the code.
+    pub source: PairingSource,
+
+    /// Device identity the pane collects before minting. The gateway
+    /// lane requires `node_id` (its protocol keys on it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<PairingIdentity>,
+
+    /// Where the claimed credential is written inside the install dir
+    /// (gateway lane): a `.env`-style file the installed product reads
+    /// at startup. Non-empty when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<String>,
+}
+
+/// The code source: the built-in evernight-gateway protocol, or product
+/// scripts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum PairingSource {
+    /// The built-in gateway client (JSON-RPC over HTTPS: `pairing.request`
+    /// mints, `pairing.await` long-polls, `pairing.accept` delivers the
+    /// credential). No scripting runtime needed on the target machine.
+    Gateway {
+        /// The official gateway base URL, preselected in the pane.
+        official: String,
+        /// Whether the pane also offers a custom gateway input
+        /// (default `true`).
+        #[serde(default = "default_true")]
+        allow_custom: bool,
+    },
+    /// Product scripts (`python3 <script>`, JSON on stdout, argv = the
+    /// pane's answers as one JSON object). `request` prints
+    /// `{code, expires_in}`; `await` long-polls and prints
+    /// `{status: claimed|pending|unknown, expires_in?, ...claim}`;
+    /// `record` receives the claim and persists it. A non-zero exit is
+    /// an error whose stderr becomes the pane's error line.
+    Scripts {
+        /// Config-relative path of the mint script.
+        request: String,
+        /// Config-relative path of the long-poll script.
+        #[serde(rename = "await")]
+        r#await: String,
+        /// Config-relative path of the persistence script.
+        record: String,
+    },
+}
+
+/// Device identity fields the pairing pane collects before minting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct PairingIdentity {
+    /// Whether the pane shows (and regenerates) the device id. The
+    /// gateway protocol keys on it, so its lane requires `true`.
+    #[serde(default)]
+    pub node_id: bool,
+    /// Whether the pane offers an optional device name, prefilled from
+    /// the machine's hostname.
+    #[serde(default)]
+    pub name: bool,
+    /// The tier provisioned on claim, when the product pins one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<u8>,
 }
 
 /// Content alignment of a wizard pane.
@@ -1182,6 +1327,9 @@ pub enum StepKind {
     License,
     /// Markdown content.
     Content,
+    /// Pairing-code claim (the inverted lane: this machine shows a code,
+    /// an operator types it into a control panel).
+    Pairing,
     /// The delivery run.
     Install,
 }
@@ -1521,6 +1669,187 @@ mod tests {
             signing: None,
             msix: None,
         }
+    }
+
+    /// A minimal config whose `steps` pipeline we rewrite per test.
+    fn steps_config(steps: Vec<StepConfig>) -> ShunConfig {
+        let mut config = sample();
+        config.custom_steps = Vec::new();
+        config.steps = Some(steps);
+        config
+    }
+
+    fn pairing_step(pairing: Option<PairingStepConfig>) -> StepConfig {
+        StepConfig {
+            kind: StepKind::Pairing,
+            align: None,
+            title: None,
+            markdown: None,
+            columns: None,
+            pairing,
+        }
+    }
+
+    fn gateway_pairing() -> PairingStepConfig {
+        PairingStepConfig {
+            source: PairingSource::Gateway {
+                official: "https://gateway.example/server".into(),
+                allow_custom: true,
+            },
+            identity: Some(PairingIdentity {
+                node_id: true,
+                name: true,
+                tier: Some(2),
+            }),
+            env_file: Some("product.env".into()),
+        }
+    }
+
+    #[test]
+    fn pairing_step_parses_from_toml_with_both_lanes() {
+        let gateway = r#"
+            [[steps]]
+            kind = "pairing"
+
+            [steps.pairing.source]
+            kind = "gateway"
+            official = "https://gateway.example/server"
+            allow_custom = false
+
+            [steps.pairing.identity]
+            node-id = true
+            name = true
+            tier = 2
+
+            [steps.pairing]
+            env-file = "product.env"
+
+            [[steps]]
+            kind = "install"
+        "#;
+        #[derive(serde::Deserialize)]
+        struct StepsDoc {
+            steps: Vec<StepConfig>,
+        }
+        let parsed: StepsDoc = toml::from_str(gateway).expect("gateway lane parses");
+        let parsed = parsed.steps;
+        let PairingSource::Gateway {
+            official,
+            allow_custom,
+        } = &parsed[0].pairing.as_ref().unwrap().source
+        else {
+            panic!("gateway lane");
+        };
+        assert_eq!(official, "https://gateway.example/server");
+        assert!(!*allow_custom, "allow_custom round-trips");
+        assert_eq!(
+            parsed[0].pairing.as_ref().unwrap().env_file.as_deref(),
+            Some("product.env")
+        );
+
+        let scripts = r#"
+            [[steps]]
+            kind = "pairing"
+
+            [steps.pairing.source]
+            kind = "scripts"
+            request = "scripts/request.py"
+            await = "scripts/await.py"
+            record = "scripts/record.py"
+
+            [[steps]]
+            kind = "install"
+        "#;
+        let parsed: StepsDoc = toml::from_str(scripts).expect("scripts lane parses");
+        let parsed = parsed.steps;
+        let PairingSource::Scripts {
+            request,
+            r#await: await_script,
+            record,
+        } = &parsed[0].pairing.as_ref().unwrap().source
+        else {
+            panic!("scripts lane");
+        };
+        assert_eq!(request, "scripts/request.py");
+        assert_eq!(await_script, "scripts/await.py");
+        assert_eq!(record, "scripts/record.py");
+    }
+
+    #[test]
+    fn pairing_gateway_lane_resolves_before_install() {
+        let config = steps_config(vec![
+            pairing_step(Some(gateway_pairing())),
+            bare_step(StepKind::Install),
+        ]);
+        let steps = config
+            .resolve_steps(Path::new("."), None)
+            .expect("resolves");
+        assert!(steps.iter().any(|s| s.kind == StepKind::Pairing));
+    }
+
+    #[test]
+    fn pairing_after_install_is_rejected() {
+        let config = steps_config(vec![
+            bare_step(StepKind::Install),
+            pairing_step(Some(gateway_pairing())),
+        ]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(
+            err.to_string().contains("precede the install step"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn pairing_gateway_lane_requires_a_node_id() {
+        let mut pairing = gateway_pairing();
+        pairing.identity = None;
+        let config = steps_config(vec![
+            pairing_step(Some(pairing)),
+            bare_step(StepKind::Install),
+        ]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(err.to_string().contains("node-id"), "{err}");
+    }
+
+    #[test]
+    fn pairing_scripts_must_exist_next_to_the_config() {
+        let base = std::env::temp_dir().join("shun-pairing-scripts-test");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("scripts")).unwrap();
+        std::fs::write(base.join("scripts/request.py"), "# ok").unwrap();
+        // await/record intentionally absent.
+        let config = steps_config(vec![
+            pairing_step(Some(PairingStepConfig {
+                source: PairingSource::Scripts {
+                    request: "scripts/request.py".into(),
+                    r#await: "scripts/await.py".into(),
+                    record: "scripts/record.py".into(),
+                },
+                identity: None,
+                env_file: None,
+            })),
+            bare_step(StepKind::Install),
+        ]);
+        let err = config.resolve_steps(&base, None).unwrap_err();
+        assert!(err.to_string().contains("await script"), "{err}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pairing_section_only_belongs_to_pairing_steps() {
+        let mut stray = bare_step(StepKind::Mode);
+        stray.pairing = Some(gateway_pairing());
+        let config = steps_config(vec![stray, bare_step(StepKind::Install)]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(err.to_string().contains("only valid on"), "{err}");
+    }
+
+    #[test]
+    fn pairing_step_without_a_section_is_rejected() {
+        let config = steps_config(vec![pairing_step(None), bare_step(StepKind::Install)]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(err.to_string().contains("need a"), "{err}");
     }
 
     #[test]
@@ -2123,6 +2452,7 @@ kind = "install"
             title: None,
             markdown: None,
             columns: None,
+            pairing: None,
         };
 
         // No install step.
@@ -2146,6 +2476,7 @@ kind = "install"
                 title: None,
                 markdown: None,
                 columns: None,
+                pairing: None,
             },
             bare(StepKind::Install),
         ]);
