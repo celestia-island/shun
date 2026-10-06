@@ -129,6 +129,29 @@ export interface ProgressStrings {
   runningScript(name: string): string;
 }
 
+
+/** The prefabricated pairing pane's strings. */
+export interface PairingStrings {
+  title: string;
+  sub: string;
+  nodeIdLabel: string;
+  nameLabel: string;
+  namePlaceholder: string;
+  gatewayLabel: string;
+  gatewayOfficial: string;
+  gatewayCustom: string;
+  gatewayPlaceholder: string;
+  requesting: string;
+  waiting: string;
+  refreshed: string;
+  copy: string;
+  copied: string;
+  successTitle: string;
+  successSub: string;
+  successNode: string;
+  successOwner: string;
+}
+
 export interface InstallerStrings {
   /** Title-bar text for the installer window. */
   title: string;
@@ -212,9 +235,30 @@ export interface InstallerStrings {
     failedRepair: string;
   };
   pathField: PathFieldStrings;
+  pairing: PairingStrings;
 }
 
 const zhHans: InstallerStrings = {
+  pairing: {
+    title: "设备配对",
+    sub: "本机向配对服务领取一个一次性代码；在控制面板中输入它，即可认领本机。",
+    nodeIdLabel: "设备 ID",
+    nameLabel: "设备名称（可选）",
+    namePlaceholder: "如：走廊烘干机",
+    gatewayLabel: "配对网关",
+    gatewayOfficial: "官方网关",
+    gatewayCustom: "自定义网关",
+    gatewayPlaceholder: "https://…",
+    requesting: "正在获取配对码…",
+    waiting: "在控制面板中输入此码完成认领",
+    refreshed: "配对码已过期，已自动更换",
+    copy: "复制配对码",
+    copied: "已复制",
+    successTitle: "配对成功",
+    successSub: "本机已绑定到以下账户。",
+    successNode: "设备 ID",
+    successOwner: "归属账户",
+  },
   title: "%PRODUCT% 安装器",
   uninstallTitle: "%PRODUCT% 卸载",
   themeToggle: "切换明暗模式",
@@ -335,6 +379,26 @@ const zhHans: InstallerStrings = {
 };
 
 const zhHant: InstallerStrings = {
+  pairing: {
+    title: "裝置配對",
+    sub: "本機向配對服務領取一次性代碼；在控制面板中輸入它即可認領本機。",
+    nodeIdLabel: "裝置 ID",
+    nameLabel: "裝置名稱（選填）",
+    namePlaceholder: "如：走廊烘乾機",
+    gatewayLabel: "配對閘道",
+    gatewayOfficial: "官方閘道",
+    gatewayCustom: "自訂閘道",
+    gatewayPlaceholder: "https://…",
+    requesting: "正在取得配對碼…",
+    waiting: "在控制面板中輸入此碼完成認領",
+    refreshed: "配對碼已過期，已自動更換",
+    copy: "複製配對碼",
+    copied: "已複製",
+    successTitle: "配對成功",
+    successSub: "本機已綁定到以下帳戶。",
+    successNode: "裝置 ID",
+    successOwner: "歸屬帳戶",
+  },
   title: "%PRODUCT% 安裝器",
   themeToggle: "切換明暗模式",
   uninstallTitle: "%PRODUCT% 解除安裝",
@@ -455,6 +519,26 @@ const zhHant: InstallerStrings = {
 };
 
 const en: InstallerStrings = {
+  pairing: {
+    title: "Pair this device",
+    sub: "This machine claims a one-time code from the pairing service; type it into the control panel to claim the machine.",
+    nodeIdLabel: "Device ID",
+    nameLabel: "Device name (optional)",
+    namePlaceholder: "e.g. Corridor dryer",
+    gatewayLabel: "Pairing gateway",
+    gatewayOfficial: "Official gateway",
+    gatewayCustom: "Custom gateway",
+    gatewayPlaceholder: "https://…",
+    requesting: "Fetching a pairing code…",
+    waiting: "Type this code into the control panel to claim this machine",
+    refreshed: "The code expired and was refreshed automatically",
+    copy: "Copy code",
+    copied: "Copied",
+    successTitle: "Paired",
+    successSub: "This machine is now bound to the account below.",
+    successNode: "Device ID",
+    successOwner: "Owner account",
+  },
   title: "%PRODUCT% Installer",
   themeToggle: "Toggle light/dark",
   uninstallTitle: "Uninstall %PRODUCT%",
@@ -577,6 +661,26 @@ const en: InstallerStrings = {
 };
 
 const ru: InstallerStrings = {
+  pairing: {
+    title: "Привязка устройства",
+    sub: "Этот компьютер получает одноразовый код от службы привязки; введите его в панели управления, чтобы забрать машину.",
+    nodeIdLabel: "ID устройства",
+    nameLabel: "Имя устройства (необязательно)",
+    namePlaceholder: "напр. Сушилка в коридоре",
+    gatewayLabel: "Шлюз привязки",
+    gatewayOfficial: "Официальный шлюз",
+    gatewayCustom: "Свой шлюз",
+    gatewayPlaceholder: "https://…",
+    requesting: "Получение кода…",
+    waiting: "Введите этот код в панели управления",
+    refreshed: "Код истёк и был обновлён автоматически",
+    copy: "Скопировать код",
+    copied: "Скопировано",
+    successTitle: "Привязано",
+    successSub: "Этот компьютер теперь привязан к аккаунту ниже.",
+    successNode: "ID устройства",
+    successOwner: "Аккаунт-владелец",
+  },
   title: "Установщик %PRODUCT%",
   themeToggle: "Светлая/тёмная тема",
   uninstallTitle: "Удаление %PRODUCT%",
@@ -696,6 +800,26 @@ const ru: InstallerStrings = {
 };
 
 const ja: InstallerStrings = {
+  pairing: {
+    title: "デバイスの連携",
+    sub: "このマシンはペアリングサービスからワンタイムコードを取得します。コントロールパネルに入力してマシンを引き取ってください。",
+    nodeIdLabel: "デバイス ID",
+    nameLabel: "デバイス名（任意）",
+    namePlaceholder: "例：廊下の乾燥機",
+    gatewayLabel: "ペアリングゲートウェイ",
+    gatewayOfficial: "公式ゲートウェイ",
+    gatewayCustom: "カスタムゲートウェイ",
+    gatewayPlaceholder: "https://…",
+    requesting: "連携コードを取得中…",
+    waiting: "このコードをコントロールパネルに入力してください",
+    refreshed: "コードの有効期限が切れたため自動更新しました",
+    copy: "コードをコピー",
+    copied: "コピーしました",
+    successTitle: "連携しました",
+    successSub: "このマシンは以下のアカウントに紐づきました。",
+    successNode: "デバイス ID",
+    successOwner: "所有アカウント",
+  },
   title: "%PRODUCT% インストーラー",
   themeToggle: "ライト/ダーク切替",
   uninstallTitle: "%PRODUCT% のアンインストール",
@@ -833,6 +957,26 @@ const ja: InstallerStrings = {
 };
 
 const ko: InstallerStrings = {
+  pairing: {
+    title: "기기 페어링",
+    sub: "이 머신이 페어링 서비스에서 일회용 코드를 받습니다. 제어판에 입력해 머신을 인수하세요.",
+    nodeIdLabel: "기기 ID",
+    nameLabel: "기기 이름 (선택)",
+    namePlaceholder: "예: 복도 건조기",
+    gatewayLabel: "페어링 게이트웨이",
+    gatewayOfficial: "공식 게이트웨이",
+    gatewayCustom: "사용자 지정 게이트웨이",
+    gatewayPlaceholder: "https://…",
+    requesting: "페어링 코드 가져오는 중…",
+    waiting: "이 코드를 제어판에 입력하세요",
+    refreshed: "코드가 만료되어 자동 갱신했습니다",
+    copy: "코드 복사",
+    copied: "복사됨",
+    successTitle: "페어링 완료",
+    successSub: "이 머신은 아래 계정에 연결되었습니다.",
+    successNode: "기기 ID",
+    successOwner: "소유 계정",
+  },
   title: "%PRODUCT% 설치 관리자",
   themeToggle: "라이트/다크 전환",
   uninstallTitle: "%PRODUCT% 제거",
@@ -965,6 +1109,26 @@ const ko: InstallerStrings = {
 };
 
 const fr: InstallerStrings = {
+  pairing: {
+    title: "Jumelage de l'appareil",
+    sub: "Cette machine réclame un code à usage unique auprès du service de jumelage ; saisissez-le dans le panneau de commande pour la revendiquer.",
+    nodeIdLabel: "ID de l'appareil",
+    nameLabel: "Nom de l'appareil (facultatif)",
+    namePlaceholder: "ex. Séchoir du couloir",
+    gatewayLabel: "Passerelle de jumelage",
+    gatewayOfficial: "Passerelle officielle",
+    gatewayCustom: "Passerelle personnalisée",
+    gatewayPlaceholder: "https://…",
+    requesting: "Récupération du code…",
+    waiting: "Saisissez ce code dans le panneau de commande",
+    refreshed: "Le code a expiré et a été renouvelé automatiquement",
+    copy: "Copier le code",
+    copied: "Copié",
+    successTitle: "Jumelé",
+    successSub: "Cette machine est désormais liée au compte ci-dessous.",
+    successNode: "ID de l'appareil",
+    successOwner: "Compte propriétaire",
+  },
   title: "Programme d'installation %PRODUCT%",
   themeToggle: "Clair/sombre",
   uninstallTitle: "Désinstaller %PRODUCT%",
@@ -1098,6 +1262,26 @@ const fr: InstallerStrings = {
 };
 
 const es: InstallerStrings = {
+  pairing: {
+    title: "Vinculación del dispositivo",
+    sub: "Esta máquina reclama un código de un solo uso al servicio de vinculación; escríbalo en el panel de control para reclamarla.",
+    nodeIdLabel: "ID del dispositivo",
+    nameLabel: "Nombre del dispositivo (opcional)",
+    namePlaceholder: "p. ej. Secadora del pasillo",
+    gatewayLabel: "Pasarela de vinculación",
+    gatewayOfficial: "Pasarela oficial",
+    gatewayCustom: "Pasarela personalizada",
+    gatewayPlaceholder: "https://…",
+    requesting: "Obteniendo el código…",
+    waiting: "Escriba este código en el panel de control",
+    refreshed: "El código caducó y se renovó automáticamente",
+    copy: "Copiar código",
+    copied: "Copiado",
+    successTitle: "Vinculado",
+    successSub: "Esta máquina quedó vinculada a la cuenta siguiente.",
+    successNode: "ID del dispositivo",
+    successOwner: "Cuenta propietaria",
+  },
   title: "Instalador de %PRODUCT%",
   themeToggle: "Cambiar claro/oscuro",
   uninstallTitle: "Desinstalar %PRODUCT%",
@@ -1231,6 +1415,26 @@ const es: InstallerStrings = {
 };
 
 const de: InstallerStrings = {
+  pairing: {
+    title: "Gerät koppeln",
+    sub: "Dieser Rechner holt einen Einmalcode vom Kopplungsdienst; tragen Sie ihn im Steuerpanel ein, um den Rechner zu beanspruchen.",
+    nodeIdLabel: "Geräte-ID",
+    nameLabel: "Gerätename (optional)",
+    namePlaceholder: "z. B. Trockner im Flur",
+    gatewayLabel: "Kopplungs-Gateway",
+    gatewayOfficial: "Offizielles Gateway",
+    gatewayCustom: "Eigenes Gateway",
+    gatewayPlaceholder: "https://…",
+    requesting: "Kopplungscode wird geholt…",
+    waiting: "Geben Sie diesen Code im Steuerpanel ein",
+    refreshed: "Der Code ist abgelaufen und wurde automatisch erneuert",
+    copy: "Code kopieren",
+    copied: "Kopiert",
+    successTitle: "Gekoppelt",
+    successSub: "Dieser Rechner ist nun an das folgende Konto gebunden.",
+    successNode: "Geräte-ID",
+    successOwner: "Konto des Eigentümers",
+  },
   title: "%PRODUCT%-Installer",
   themeToggle: "Toggle light/dark",
   uninstallTitle: "%PRODUCT% deinstallieren",
@@ -1363,6 +1567,26 @@ const de: InstallerStrings = {
 };
 
 const pt: InstallerStrings = {
+  pairing: {
+    title: "Parear o dispositivo",
+    sub: "Esta máquina obtém um código de uso único do serviço de pareamento; digite-o no painel de controle para assumi-la.",
+    nodeIdLabel: "ID do dispositivo",
+    nameLabel: "Nome do dispositivo (opcional)",
+    namePlaceholder: "ex.: Secadora do corredor",
+    gatewayLabel: "Gateway de pareamento",
+    gatewayOfficial: "Gateway oficial",
+    gatewayCustom: "Gateway personalizado",
+    gatewayPlaceholder: "https://…",
+    requesting: "Obtendo o código…",
+    waiting: "Digite este código no painel de controle",
+    refreshed: "O código expirou e foi renovado automaticamente",
+    copy: "Copiar código",
+    copied: "Copiado",
+    successTitle: "Pareado",
+    successSub: "Esta máquina agora está vinculada à conta abaixo.",
+    successNode: "ID do dispositivo",
+    successOwner: "Conta proprietária",
+  },
   title: "Instalador do %PRODUCT%",
   themeToggle: "Cambiar claro/oscuro",
   uninstallTitle: "Desinstalar o %PRODUCT%",
