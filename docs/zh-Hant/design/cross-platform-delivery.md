@@ -295,7 +295,7 @@ clang 包裝為連結器、TLS 走 ohos-openssl）；Tauri-on-OHOS 打包
 ### 精靈管線 —— `[[package.metadata.shun.steps]]`
 
 精靈從固定的 模式 → 安裝 序列變為**宣告式、有序、自由組合**的
-管線。五種步驟：
+管線。六種步驟：
 
 ```toml
 [[package.metadata.shun.steps]]
@@ -310,8 +310,24 @@ kind = "content"                 # 自訂 markdown 面板
 title = "發佈說明"
 markdown = "notes.md"         # 相對清單檔案
 [[package.metadata.shun.steps]]
+kind = "pairing"                 # 首跑裝置配對（至多一個，須在 install 之前）
+[steps.pairing.source]
+kind = "gateway"                 # built-in gateway client (JSON-RPC
+                                 # over http(s); see docs/en for the
+                                 # scripts lane and the validation)
+official = "https://gateway.example/server"
+allow-custom = true
+[steps.pairing.identity]
+node-id = true                   # required on the gateway lane
+[steps.pairing]
+env-file = "product.env"         # credential landing (gateway lane)
+[[package.metadata.shun.steps]]
 kind = "install"                 # 交付執行（必須恰好一個）
 ```
+
+配對面板（大號配對碼、本地走秒倒計時、複製、自動換碼、成功卡）是
+外殼的預製模板，隨面板工作一併落地；在那之前 `pairing` 步驟只有
+schema——未配對的安裝照常進行。
 
 不宣告 `steps` = 預設管線（模式 → 有授權則授權 → 安裝），舊的
 `custom-steps` 按各自 `after` 機碼注入；兩者同時宣告是配置錯誤，

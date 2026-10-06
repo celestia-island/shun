@@ -27,12 +27,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # NOTE: keep the axes inside the include entries. A product axis
+        # (`rust: [stable]`) beside include entries that lack it lets the
+        # later include overwrite the earlier one's `os` — the matrix
+        # collapses to a single windows-latest job and the ubuntu lane never
+        # runs at all (verified on runs back to 2026-09-08; that is how a
+        # Linux-only lib regression shipped unnoticed until PR #67).
         include:
           - os: ubuntu-latest
+            rust: stable
             full: "false"
           - os: windows-latest
+            rust: stable
             full: "true"
-        rust: [stable]
 
     steps:
       - uses: actions/checkout@v7
