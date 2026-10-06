@@ -380,7 +380,7 @@ kind = "pairing"                 # 初回実行時のデバイス ペアリン�
                                  # （最大 1 つ、install より前）
 [steps.pairing.source]
 kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the
+                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
                                  # scripts lane and the validation)
 official = "https://gateway.example/server"
 allow-custom = true

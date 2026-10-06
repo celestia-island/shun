@@ -386,8 +386,10 @@ env-file = "product.env"         # where the claimed credential lands
 # pane's answers arrive as one JSON object on the script's STDIN
 # (never argv — process listings are world-readable); stdout must be
 # exactly one JSON value; a non-zero exit surfaces the script's stderr
-# in the pane; every phase runs under a deadline. Paths are relative
-# to the manifest and cannot escape it.
+# in the pane; every phase runs under a deadline. Paths are
+# PAYLOAD-relative (like every other script hook): the scripts ride
+# the payload into the install, so they exist on disk at pairing
+# time, and they cannot escape the payload root.
 [[package.metadata.shun.steps]]
 kind = "install"                 # the delivery run (exactly one required)
 ```

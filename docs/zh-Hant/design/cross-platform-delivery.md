@@ -313,7 +313,7 @@ markdown = "notes.md"         # 相對清單檔案
 kind = "pairing"                 # 首跑裝置配對（至多一個，須在 install 之前）
 [steps.pairing.source]
 kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the
+                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
                                  # scripts lane and the validation)
 official = "https://gateway.example/server"
 allow-custom = true

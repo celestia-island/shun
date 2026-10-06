@@ -100,6 +100,24 @@ title = "发行说明"
 markdown = "release-notes.md"
 
 [[package.metadata.shun.steps]]
+kind = "pairing"
+
+# NOTE: sub-tables of an array-of-tables element repeat the full dotted
+# path (TOML binds them to the most recent element).
+[package.metadata.shun.steps.pairing.source]
+kind = "scripts"
+# Payload-relative: resolved against the payload root (declared above
+# as ../examples/demo_payload), riding it into the install so the
+# scripts exist on disk at pairing time.
+request = "installer/pairing/request.py"
+await = "installer/pairing/await.py"
+record = "installer/pairing/record.py"
+
+[package.metadata.shun.steps.pairing.identity]
+node-id = true
+name = true
+
+[[package.metadata.shun.steps]]
 kind = "license"
 
 [[package.metadata.shun.steps]]
