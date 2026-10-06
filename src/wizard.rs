@@ -162,6 +162,23 @@ pub struct WizardCore {
     pub license_docs: BTreeMap<String, Vec<LicenseDoc>>,
     /// The renderable state.
     pub state: WizardState,
+    /// A pairing claim cashed by the pane, delivered as the manifest's
+    /// `env-file` inside the install dir at delivery time. `None` until
+    /// an operator accepts a displayed code.
+    pub pairing_outcome: Option<PairingOutcome>,
+}
+
+/// The claimed credential the pane hands to the delivery lane.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PairingOutcome {
+    /// The gateway the code was minted through.
+    pub gateway: String,
+    /// The device id the credential belongs to.
+    pub node_id: String,
+    /// The device secret — written once, never logged.
+    pub device_secret: String,
+    /// The accepting account.
+    pub owner: String,
 }
 
 impl WizardCore {
@@ -175,6 +192,7 @@ impl WizardCore {
             .and_then(|s| s.language.clone())
             .unwrap_or_else(|| "en".into());
         let mut core = Self {
+            pairing_outcome: None,
             state: WizardState {
                 step: Step::Language,
                 locale,
