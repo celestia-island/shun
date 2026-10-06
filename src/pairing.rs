@@ -29,6 +29,9 @@ pub struct PairingCode {
 }
 
 /// The credential delivered when an operator accepts the code.
+///
+/// Careful: the derived `Debug` prints `device_secret` verbatim — never
+/// format a claim into a log line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PairingClaim {
     /// The device id the credential belongs to.
@@ -136,29 +139,33 @@ impl PairingClient {
         // ureq never reads proxy configuration unless one is set
         // explicitly, so pairing cannot detour through a misconfigured
         // system proxy — exactly the guarantee evernight's client built
-        // with reqwest's `.no_proxy()`.
+        // with reqwest's `.no_proxy()`. Fragility note: enabling ureq's
+        // non-default `proxy-from-env` feature anywhere in the graph
+        // would silently void this — do not.
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(10))
-            .timeout_read(Duration::from_secs(30))
+            .timeout_read(Duration::from_secs(45))
             .build();
         let response = agent
             .post(&self.endpoint())
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(45))
             .send_json(serde_json::json!({
                 "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
             }))
-            .map_err(|e| format!("pairing {method}: {e}"))?;
+            .map_err(|e| format!("{method}: {e}"))?;
         let body = response
             .into_string()
-            .map_err(|e| format!("pairing {method} body: {e}"))?;
+            .map_err(|e| format!("{method} body: {e}"))?;
         let value: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| format!("pairing {method} json: {e}"))?;
-        if let Some(error) = value.get("error") {
+            serde_json::from_str(&body).map_err(|e| format!("{method} json: {e}"))?;
+        // Some JSON-RPC servers emit `"error": null` next to `result` on
+        // success — only a present, non-null error is a rejection.
+        if let Some(error) = value.get("error").filter(|e| !e.is_null()) {
             let message = error
                 .get("message")
                 .and_then(|m| m.as_str())
                 .unwrap_or("pairing rejected");
-            return Err(format!("pairing {method}: {message}"));
+            return Err(format!("{method}: {message}"));
         }
         Ok(value.get("result").cloned().unwrap_or(value))
     }
@@ -284,6 +291,89 @@ mod tests {
             .request("node-1", None, None)
             .unwrap_err();
         assert!(err.contains("rate limited"), "{err}");
+    }
+
+    #[test]
+    fn await_answers_round_trip_through_serde() {
+        // The pane's IPC carries these as JSON — pin the tag and the
+        // flattened claim so the wire shape cannot drift silently.
+        let claimed: PairingAwait = serde_json::from_str(
+            r#"{"status":"claimed","node_id":"n1","device_secret":"s",
+                "owner":"ops","pairing_code":"C0DE"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            claimed,
+            PairingAwait::Claimed {
+                claim: PairingClaim {
+                    node_id: "n1".into(),
+                    device_secret: "s".into(),
+                    owner: "ops".into(),
+                    pairing_code: "C0DE".into(),
+                },
+            }
+        );
+        let pending: PairingAwait =
+            serde_json::from_str(r#"{"status":"pending","expires_in":9}"#).unwrap();
+        assert_eq!(pending, PairingAwait::Pending { expires_in: 9 });
+        let unknown: PairingAwait = serde_json::from_str(r#"{"status":"unknown"}"#).unwrap();
+        assert_eq!(unknown, PairingAwait::Unknown);
+    }
+
+    #[test]
+    fn a_null_error_still_succeeds() {
+        // Some JSON-RPC servers emit "error": null next to "result" on
+        // success; only a present, non-null error is a rejection.
+        let (base, _) = mock(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"code":"7QK2M4XP","expires_in":300},"error":null}"#,
+        );
+        let code = PairingClient::new(&base)
+            .request("node-1", None, None)
+            .expect("a null error must not reject a success");
+        assert_eq!(code.code, "7QK2M4XP");
+    }
+
+    #[test]
+    fn a_bare_object_answer_is_accepted() {
+        // Servers that skip the JSON-RPC envelope and answer with the
+        // result object directly.
+        let (base, _) = mock(r#"{"code":"BARE1","expires_in":60}"#);
+        let code = PairingClient::new(&base)
+            .request("node-1", None, None)
+            .unwrap();
+        assert_eq!(code.code, "BARE1");
+        assert_eq!(code.expires_in, 60);
+    }
+
+    #[test]
+    fn missing_expires_in_defaults_to_five_minutes() {
+        let (base, _) = mock(r#"{"result":{"code":"NODEF"}}"#);
+        let code = PairingClient::new(&base)
+            .request("node-1", None, None)
+            .unwrap();
+        assert_eq!(code.expires_in, 300, "the documented mint default");
+    }
+
+    #[test]
+    fn new_trims_whitespace_and_trailing_slashes() {
+        let client = PairingClient::new("  https://gateway.example/server/  ");
+        assert_eq!(client.endpoint(), "https://gateway.example/server/api/ws");
+    }
+
+    #[test]
+    fn claimed_answers_without_a_pairing_code_echo_keep_the_displayed_one() {
+        let (base, _) =
+            mock(r#"{"result":{"status":"claimed","node_id":"n1","device_secret":"s"}}"#);
+        match PairingClient::new(&base)
+            .await_code("n1", "SHOWN1")
+            .unwrap()
+        {
+            PairingAwait::Claimed { claim } => {
+                assert_eq!(claim.pairing_code, "SHOWN1");
+                assert_eq!(claim.owner, "");
+            }
+            other => panic!("expected a claim, got {other:?}"),
+        }
     }
 
     #[test]

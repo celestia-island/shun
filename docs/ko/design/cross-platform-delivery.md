@@ -339,7 +339,7 @@ SDK clang 래퍼, TLS는 ohos-openssl); Tauri-on-OHOS 패키징 **중간–어�
 ### 마법사 파이프라인 — `[[package.metadata.shun.steps]]`
 
 마법사는 이제 고정된 모드 → 설치 순서 대신, 선언적이고 순서가 있으며
-자유롭게 구성되는 파이프라인입니다. 다섯 가지 단계 종류:
+자유롭게 구성되는 파이프라인입니다. 여섯 가지 단계 종류:
 
 ```toml
 [[package.metadata.shun.steps]]
@@ -354,8 +354,24 @@ kind = "content"                 # 사용자 지정 markdown 패널
 title = "Release notes"
 markdown = "notes.md"         # 매니페스트 기준 상대 경로
 [[package.metadata.shun.steps]]
+kind = "pairing"                 # 첫 실행 기기 페어링(최대 하나, install 이전)
+[steps.pairing.source]
+kind = "gateway"                 # built-in gateway client (JSON-RPC
+                                 # over http(s); see docs/en for the
+                                 # scripts lane and the validation)
+official = "https://gateway.example/server"
+allow-custom = true
+[steps.pairing.identity]
+node-id = true                   # required on the gateway lane
+[steps.pairing]
+env-file = "product.env"         # credential landing (gateway lane)
+[[package.metadata.shun.steps]]
 kind = "install"                 # 배포 실행(정확히 하나 필요)
 ```
+
+페어링 화면(큰 코드, 로컬 티커 카운트다운, 복사, 자동 갱신, 성공 카드)은
+셸의预制 템플릿이며 화면 작업과 함께 제공됩니다. 그전까지 `pairing`
+단계는 스키마일 뿐이며, 페어링 없는 설치는 그대로 진행됩니다.
 
 `steps`가 없으면 기본 파이프라인(모드 → 선언된 경우 라이선스 →
 설치)이고, 레거시 `custom-steps`는 각자의 `after` 키 뒤에 주입됩니다;

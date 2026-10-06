@@ -114,7 +114,7 @@ pub struct ShunConfig {
     pub custom_steps: Vec<CustomStepConfig>,
 
     /// The ordered wizard pipeline, freely composed from the step kinds
-    /// (mode/scope/license/content/install). Absent = the default
+    /// (mode/scope/license/content/pairing/install). Absent = the default
     /// pipeline: mode → license (when a license is declared) → install,
     /// with `custom-steps` injected per their `after` keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -365,18 +365,13 @@ impl ShunConfig {
                                     // `..` walks out of it — either would
                                     // let the manifest run scripts from
                                     // anywhere on disk.
-                                    let script = std::path::Path::new(path);
-                                    if script.is_absolute()
-                                        || script
-                                            .components()
-                                            .any(|c| matches!(c, std::path::Component::ParentDir))
-                                    {
+                                    if !contained_relative(path) {
                                         return Err(config_error(&format!(
                                             "pairing {what} script `{path}` must be \
                                              a relative path inside the config base"
                                         )));
                                     }
-                                    if !base.join(script).is_file() {
+                                    if !base.join(path).is_file() {
                                         return Err(config_error(&format!(
                                             "pairing {what} script `{path}` not found"
                                         )));
@@ -390,14 +385,11 @@ impl ShunConfig {
                                     ));
                                 }
                                 // The credential lands INSIDE the install
-                                // dir; a traversal or absolute path would
-                                // write it elsewhere under elevation.
-                                let path = std::path::Path::new(env_file);
-                                if path.is_absolute()
-                                    || path
-                                        .components()
-                                        .any(|c| matches!(c, std::path::Component::ParentDir))
-                                {
+                                // dir; a traversal, absolute path, or
+                                // Windows-only escape (`C:` prefix,
+                                // backslashes) would write it elsewhere
+                                // under elevation.
+                                if !contained_relative(env_file) {
                                     return Err(config_error(
                                         "pairing `env-file` must be a relative \
                                          path inside the install directory",
@@ -544,6 +536,25 @@ fn joined_license_body(docs: &[ResolvedLicenseDoc]) -> Option<String> {
                 .join(LICENSE_BODY_DIVIDER),
         ),
     }
+}
+
+/// Whether `path` is a relative path that cannot escape the base it is
+/// joined to: no absolute form, no `..`, and no Windows-only escape
+/// (`C:` drive-relative prefixes replace the whole path on join;
+/// backslashes are separators on Windows but ordinary characters on Unix,
+/// where validation runs today).
+fn contained_relative(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let path = std::path::Path::new(trimmed);
+    !path.is_absolute()
+        && !trimmed.contains('\\')
+        && !trimmed.contains(':')
+        && path
+            .components()
+            .all(|c| !matches!(c, std::path::Component::ParentDir))
 }
 
 fn bare_step(kind: StepKind) -> StepConfig {
@@ -1249,8 +1260,10 @@ pub struct PairingStepConfig {
     pub identity: Option<PairingIdentity>,
 
     /// Where the claimed credential is written inside the install dir
-    /// (gateway lane): a `.env`-style file the installed product reads
-    /// at startup. Non-empty when present.
+    /// (required on the gateway lane; a scripts lane persists via its
+    /// `record` script instead, and an `env-file` there is carried but
+    /// unconsumed): a `.env`-style file the installed product reads at
+    /// startup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
 }
@@ -1260,7 +1273,7 @@ pub struct PairingStepConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PairingSource {
-    /// The built-in gateway client (JSON-RPC over HTTPS: `pairing.request`
+    /// The built-in gateway client (JSON-RPC over http(s): `pairing.request`
     /// mints, `pairing.await` long-polls, `pairing.accept` delivers the
     /// credential). No scripting runtime needed on the target machine.
     #[serde(rename_all = "kebab-case")]
@@ -1894,6 +1907,41 @@ mod tests {
     }
 
     #[test]
+    fn pairing_scripts_must_stay_inside_the_config_base() {
+        let base = std::env::temp_dir().join("shun-pairing-scripts-escape");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // An existing file OUTSIDE the base — reachable by both an
+        // absolute path (base.join discards the base) and `..`.
+        let outside = base.parent().unwrap().join("shun-pairing-outside.py");
+        std::fs::write(&outside, "# ok").unwrap();
+        for escape in [
+            outside.to_str().unwrap().to_string(),
+            "../shun-pairing-outside.py".into(),
+        ] {
+            let config = steps_config(vec![
+                pairing_step(Some(PairingStepConfig {
+                    source: PairingSource::Scripts {
+                        request: escape.clone(),
+                        r#await: escape.clone(),
+                        record: escape.clone(),
+                    },
+                    identity: None,
+                    env_file: None,
+                })),
+                bare_step(StepKind::Install),
+            ]);
+            let err = config.resolve_steps(&base, None).unwrap_err();
+            assert!(
+                err.to_string().contains("inside the config base"),
+                "{escape}: {err}"
+            );
+        }
+        let _ = std::fs::remove_file(&outside);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn pairing_scripts_must_exist_next_to_the_config() {
         let base = std::env::temp_dir().join("shun-pairing-scripts-test");
         let _ = std::fs::remove_dir_all(&base);
@@ -2002,6 +2050,88 @@ mod tests {
                 }
             ),
             "an omitted allow-custom must keep the custom gateway input ON"
+        );
+    }
+
+    #[test]
+    fn env_file_must_not_be_blank() {
+        let mut pairing = gateway_pairing();
+        pairing.env_file = Some("   ".into());
+        let config = steps_config(vec![
+            pairing_step(Some(pairing)),
+            bare_step(StepKind::Install),
+        ]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(err.to_string().contains("must not be empty"), "{err}");
+    }
+
+    #[test]
+    fn windows_only_path_escapes_are_rejected_on_every_host() {
+        // `C:creds.env` replaces the whole path on join; backslashes are
+        // separators on Windows but pass as ordinary characters when
+        // validation runs on Unix — reject both unconditionally.
+        for escape in ["C:creds.env", "creds\\..\\creds.env", "sub\\creds.env"] {
+            let mut pairing = gateway_pairing();
+            pairing.env_file = Some(escape.into());
+            let config = steps_config(vec![
+                pairing_step(Some(pairing)),
+                bare_step(StepKind::Install),
+            ]);
+            let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+            assert!(err.to_string().contains("relative"), "{escape}: {err}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_node_id_false_is_rejected_like_a_missing_identity() {
+        let mut pairing = gateway_pairing();
+        pairing.identity = Some(PairingIdentity {
+            node_id: false,
+            name: true,
+            tier: None,
+        });
+        let config = steps_config(vec![
+            pairing_step(Some(pairing)),
+            bare_step(StepKind::Install),
+        ]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(err.to_string().contains("node-id"), "{err}");
+    }
+
+    #[test]
+    fn pairing_toml_accepts_the_kebab_spelling_of_allow_custom() {
+        #[derive(serde::Deserialize)]
+        struct StepsDoc {
+            steps: Vec<StepConfig>,
+        }
+        let doc = r#"
+            [[steps]]
+            kind = "pairing"
+
+            [steps.pairing.source]
+            kind = "gateway"
+            official = "https://gateway.example/server"
+            allow-custom = false
+
+            [steps.pairing.identity]
+            node-id = true
+
+            [steps.pairing]
+            env-file = "product.env"
+
+            [[steps]]
+            kind = "install"
+        "#;
+        let parsed: StepsDoc = toml::from_str(doc).expect("kebab spelling parses in TOML");
+        assert!(
+            !matches!(
+                parsed.steps[0].pairing.as_ref().unwrap().source,
+                PairingSource::Gateway {
+                    allow_custom: true,
+                    ..
+                }
+            ),
+            "the kebab spelling must not be silently ignored"
         );
     }
 

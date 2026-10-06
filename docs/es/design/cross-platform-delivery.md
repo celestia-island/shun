@@ -388,7 +388,7 @@ administrador lo ejercita).
 ### El pipeline del asistente — `[[package.metadata.shun.steps]]`
 
 El asistente es ahora un pipeline declarativo, ordenado y de composición
-libre, en lugar de una secuencia fija de modo → instalación. Cinco tipos
+libre, en lugar de una secuencia fija de modo → instalación. Seis tipos
 de paso:
 
 ```toml
@@ -404,8 +404,26 @@ kind = "content"                 # panel markdown personalizado
 title = "Release notes"
 markdown = "notes.md"         # relativo al manifiesto
 [[package.metadata.shun.steps]]
+kind = "pairing"                 # emparejamiento del dispositivo en la primera ejecución
+                                 # (como máximo uno, antes de install)
+[steps.pairing.source]
+kind = "gateway"                 # built-in gateway client (JSON-RPC
+                                 # over http(s); see docs/en for the
+                                 # scripts lane and the validation)
+official = "https://gateway.example/server"
+allow-custom = true
+[steps.pairing.identity]
+node-id = true                   # required on the gateway lane
+[steps.pairing]
+env-file = "product.env"         # credential landing (gateway lane)
+[[package.metadata.shun.steps]]
 kind = "install"                 # la ejecución de entrega (exactamente uno obligatorio)
 ```
+
+El panel de emparejamiento (código grande, cuenta atrás local, copia,
+renovación automática, tarjeta de éxito) es la plantilla prefabricada del
+shell y llega con el trabajo del panel; hasta entonces el paso `pairing`
+es solo esquema — la instalación continúa sin emparejar.
 
 Sin `steps` = el pipeline por defecto (modo → licencia-si-se-declaró →
 instalación) con los `custom-steps` legados inyectados tras sus claves

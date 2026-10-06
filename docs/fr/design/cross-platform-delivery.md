@@ -397,7 +397,7 @@ l'exerce).
 ### Le pipeline de l'assistant — `[[package.metadata.shun.steps]]`
 
 L'assistant est désormais un pipeline déclaratif, ordonné et librement
-composé, au lieu d'une séquence fixe mode → installation. Cinq types
+composé, au lieu d'une séquence fixe mode → installation. Six types
 d'étapes :
 
 ```toml
@@ -414,8 +414,26 @@ kind = "content"                 # volet markdown personnalisé
 title = "Release notes"
 markdown = "notes.md"         # relatif au manifeste
 [[package.metadata.shun.steps]]
+kind = "pairing"                 # appairage de l'appareil au premier lancement
+                                 # (au plus un, avant install)
+[steps.pairing.source]
+kind = "gateway"                 # built-in gateway client (JSON-RPC
+                                 # over http(s); see docs/en for the
+                                 # scripts lane and the validation)
+official = "https://gateway.example/server"
+allow-custom = true
+[steps.pairing.identity]
+node-id = true                   # required on the gateway lane
+[steps.pairing]
+env-file = "product.env"         # credential landing (gateway lane)
+[[package.metadata.shun.steps]]
 kind = "install"                 # l'exécution de livraison (exactement une requise)
 ```
+
+Le volet d'appairage (code en grand, compte à rebours local, copie,
+rafraîchissement automatique, carte de succès) est le gabarit préfabriqué
+du shell et arrive avec le travail du volet ; jusque-là l'étape `pairing`
+n'est que du schéma — l'installation continue sans appairage.
 
 Sans `steps` = le pipeline par défaut (mode → licence-si-déclarée →
 install) avec les `custom-steps` historiques injectés après leurs clés

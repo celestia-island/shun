@@ -362,7 +362,7 @@ Windows; бэкенды Linux/macOS явно её отвергают. Интег
 ### Конвейер мастера — `[[package.metadata.shun.steps]]`
 
 Мастер — теперь декларативный, упорядоченный, свободно компонуемый
-конвейер вместо фиксированной последовательности режим → установка. Пять
+конвейер вместо фиксированной последовательности режим → установка. Шесть
 видов шагов:
 
 ```toml
@@ -378,8 +378,26 @@ kind = "content"                 # произвольная markdown-панел�
 title = "Release notes"
 markdown = "notes.md"         # относительно манифеста
 [[package.metadata.shun.steps]]
+kind = "pairing"                 # сопряжение устройства при первом запуске
+                                 # (не более одного, до install)
+[steps.pairing.source]
+kind = "gateway"                 # built-in gateway client (JSON-RPC
+                                 # over http(s); see docs/en for the
+                                 # scripts lane and the validation)
+official = "https://gateway.example/server"
+allow-custom = true
+[steps.pairing.identity]
+node-id = true                   # required on the gateway lane
+[steps.pairing]
+env-file = "product.env"         # credential landing (gateway lane)
+[[package.metadata.shun.steps]]
 kind = "install"                 # запуск доставки (ровно один обязателен)
 ```
+
+Панель сопряжения (крупный код, локальный обратный отсчёт, копирование,
+автообновление, карточка успеха) — готовый шаблон оболочки, он прибудет
+вместе с работой по панелям; до этого шаг `pairing` существует лишь в
+схеме — установка продолжается без сопряжения.
 
 Отсутствие `steps` = конвейер по умолчанию (режим →
 лицензия-если-объявлена → установка) с легаси-`custom-steps`, внедрёнными
