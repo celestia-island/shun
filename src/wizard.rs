@@ -617,18 +617,19 @@ pub fn apply_finish(
                 "# The device credential below was issued once by the pairing"
             );
             let _ = writeln!(body, "# service; treat it like a password.");
-            let _ = writeln!(body, "SERVER_URL={}", outcome.gateway.trim_end_matches('/'));
-            let _ = writeln!(body, "DEVICE_SECRET={}", outcome.device_secret);
-            let _ = writeln!(body, "BOOTSTRAP_NODE_ID={}", outcome.node_id);
-            let _ = writeln!(
-                body,
-                "BOOTSTRAP_GATEWAY={}",
-                outcome
-                    .gateway
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
+            // Every VALUE is control/whitespace-stripped: hostile input
+            // can never break the line or smuggle another one.
+            let safe = |v: &str| -> String {
+                v.chars()
+                    .filter(|c| !c.is_control() && !c.is_whitespace())
                     .collect::<String>()
-            );
+                    .trim_end_matches('/')
+                    .to_string()
+            };
+            let _ = writeln!(body, "SERVER_URL={}", safe(&outcome.gateway));
+            let _ = writeln!(body, "DEVICE_SECRET={}", safe(&outcome.device_secret));
+            let _ = writeln!(body, "BOOTSTRAP_NODE_ID={}", safe(&outcome.node_id));
+            let _ = writeln!(body, "BOOTSTRAP_GATEWAY={}", safe(&outcome.gateway));
             let tmp = path.with_extension("env.tmp");
             std::fs::write(&tmp, body).map_err(|e| format!("write pairing credential: {e}"))?;
             #[cfg(unix)]

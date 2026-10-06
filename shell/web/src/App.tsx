@@ -362,6 +362,11 @@ export default defineComponent({
     // backend (the probe creates + deletes a temp file per call). The
     // answer only lands while it is still about the current path.
     let writableTimer: ReturnType<typeof setTimeout> | null = null;
+    // Re-entering the pairing pane re-arms its Next gate: a later FAILED
+    // re-pair must not ride a stale unlocked button.
+    watch(step, (value) => {
+      if (value === "pairing") pairingClaimed.value = false;
+    });
     watch(dir, (value) => {
       const target = value.trim();
       if (writableTimer !== null) clearTimeout(writableTimer);
@@ -990,7 +995,7 @@ export default defineComponent({
               </section>
             );
           })()
-        ) : step.value === "pairing" && flow[flowIndex(step.value)].pairing ? (
+        ) : step.value === "pairing" && flow[flowIndex(step.value)]?.pairing ? (
           <PairingPane
             strings={withProduct(strings(locale.value)).pairing}
             config={flow[flowIndex(step.value)].pairing!}

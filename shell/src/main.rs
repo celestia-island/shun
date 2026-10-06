@@ -1397,10 +1397,11 @@ fn write_pairing_env(state: State<'_, AppState>, dir: String) -> Result<bool, St
         .pairing
         .clone()
         .ok_or("this build declares no pairing step")?;
-    let env_file = pairing
-        .env_file
-        .as_deref()
-        .ok_or("the gateway lane requires an env-file")?;
+    // A scripts lane persists through its `record` script; an env-file
+    // there is optional and its absence must not abort the finish flow.
+    let Some(env_file) = pairing.env_file.as_deref() else {
+        return Ok(false);
+    };
     let path = std::path::Path::new(dir.trim()).join(env_file);
     let mut body = String::new();
     use std::fmt::Write as _;
@@ -1410,20 +1411,13 @@ fn write_pairing_env(state: State<'_, AppState>, dir: String) -> Result<bool, St
         "# The device credential below was issued once by the pairing"
     );
     let _ = writeln!(body, "# service; treat it like a password.");
-    let _ = writeln!(body, "SERVER_URL={}", outcome.gateway.trim_end_matches('/'));
-    let _ = writeln!(body, "DEVICE_SECRET={}", outcome.device_secret);
-    let _ = writeln!(body, "BOOTSTRAP_NODE_ID={}", outcome.node_id);
-    // The raw gateway echoes back stripped of whitespace so the value
-    // can never smuggle extra KEY=VALUE lines into the env file.
-    let _ = writeln!(
-        body,
-        "BOOTSTRAP_GATEWAY={}",
-        outcome
-            .gateway
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-    );
+    // Every VALUE passes env_safe: no control characters, no newlines —
+    // a hostile or MITM'd gateway must not smuggle extra KEY=VALUE
+    // lines into the file the installed product parses at startup.
+    let _ = writeln!(body, "SERVER_URL={}", env_safe(&outcome.gateway));
+    let _ = writeln!(body, "DEVICE_SECRET={}", env_safe(&outcome.device_secret));
+    let _ = writeln!(body, "BOOTSTRAP_NODE_ID={}", env_safe(&outcome.node_id));
+    let _ = writeln!(body, "BOOTSTRAP_GATEWAY={}", env_safe(&outcome.gateway));
     let tmp = path.with_extension("env.tmp");
     std::fs::write(&tmp, body).map_err(|e| format!("write pairing credential: {e}"))?;
     #[cfg(unix)]
@@ -1433,6 +1427,17 @@ fn write_pairing_env(state: State<'_, AppState>, dir: String) -> Result<bool, St
     }
     std::fs::rename(&tmp, &path).map_err(|e| format!("install pairing credential: {e}"))?;
     Ok(true)
+}
+
+/// One env-file VALUE: control characters and whitespace stripped —
+/// hostile input can never break the line or smuggle another one.
+fn env_safe(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !c.is_control() && !c.is_whitespace())
+        .collect::<String>()
+        .trim_end_matches('/')
+        .to_string()
 }
 
 /// The official gateway URL preselected in the pane (gateway lane).
