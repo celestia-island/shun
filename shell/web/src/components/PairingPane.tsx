@@ -127,7 +127,6 @@ export default defineComponent({
             nodeId: answer.node_id ?? nodeId.value,
             owner: answer.owner ?? "",
           };
-          phase.value = "claimed";
           deadline.value = 0;
           // Persistence failures must NOT hide behind the success card:
           // the scripts lane's `record` is its sole persistence step, and
@@ -155,6 +154,9 @@ export default defineComponent({
             error.value = String(e);
             return;
           }
+          // The success card only renders once BOTH persist steps have
+          // landed — a failed record must never hide behind it.
+          phase.value = "claimed";
           const emit = (props as { onClaimed?: (v: void) => void }).onClaimed;
           emit?.();
           return;

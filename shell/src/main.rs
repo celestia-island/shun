@@ -722,14 +722,6 @@ async fn start_install(
 ) -> Result<(), String> {
     let config = state.config();
     let payload = state.payload.clone();
-    // The pairing pane may have cashed a claim long before delivery
-    // started; carry it so apply_finish writes the env-file handoff.
-    let pairing_outcome = state
-        .core
-        .lock()
-        .expect("wizard core")
-        .pairing_outcome
-        .clone();
     let request = InstallRequest {
         mode,
         dir,
@@ -738,8 +730,7 @@ async fn start_install(
         machine: false,
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let mut core = WizardCore::new(config, BTreeMap::new());
-        core.pairing_outcome = pairing_outcome;
+        let core = WizardCore::new(config, BTreeMap::new());
         shun::wizard::run_install(&core, &payload, &request, &mut |event| {
             emit_progress(&app, event)
         })

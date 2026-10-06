@@ -655,6 +655,9 @@ export default defineComponent({
       if (finishing.value) return;
       finishing.value = true;
       try {
+        // The pairing claim rides the finish into the install dir as the
+        // manifest's env-file (no-op when the run never paired).
+        await invoke("write_pairing_env", { dir: dir.value.trim() });
         await invoke("set_shortcuts", {
           desktop: desktopShortcut.value,
           menu: startMenuShortcut.value,
