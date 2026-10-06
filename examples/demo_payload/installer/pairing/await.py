@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Demo pairing `await` script: parks ~20s (the gateway window), then
-answers pending with the live remaining time. An operator "accepts" by
-creating an accept marker next to this script — the demo of the
-control-panel side without a network.
+"""Demo pairing `await` script: answers pending with the live remaining
+time on the shared demo window (the real gateway parks ~20s per call;
+this demo answers at once — the pane's own 1s pacing provides the tick).
+An operator "accepts" by creating an accept marker next to this script:
+the demo of the control-panel side without a network.
 """
 import json
 import os

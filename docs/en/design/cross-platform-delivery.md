@@ -396,9 +396,9 @@ kind = "install"                 # the delivery run (exactly one required)
 
 The pairing pane itself (big code, locally ticking countdown, copy,
 auto-refresh, success card) is the shell's prefabricated template and
-ships with the pane work; until then a pairing step is schema-only —
-the webview shell skips it and the egui fallback renders nothing for it,
-so an unpaired install proceeds normally.
+ships in the webview face — the egui/tui fallbacks still skip the step
+silently, so a fallback-face install proceeds unpaired (a registered
+boundary: the fallback pairing pane is future work).
 
 Absent `steps` = the default pipeline (mode → license-when-declared →
 install) with the legacy `custom-steps` injected after their `after`

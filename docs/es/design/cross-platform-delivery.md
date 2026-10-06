@@ -409,7 +409,6 @@ kind = "pairing"                 # emparejamiento del dispositivo en la primera 
 [steps.pairing.source]
 kind = "gateway"                 # built-in gateway client (JSON-RPC
                                  # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
-                                 # scripts lane and the validation)
 official = "https://gateway.example/server"
 allow-custom = true
 [steps.pairing.identity]

@@ -271,6 +271,9 @@ struct AppState {
     /// lane contract (gateway protocol vs product scripts) and its
     /// credential landing. Resolved once from the embedded pipeline.
     pairing: Option<shun::config::PairingStepConfig>,
+    /// The staged payload subtree the scripts lane resolves against
+    /// (lazily extracted; see [`pairing_scripts_stage`]).
+    pairing_stage: std::sync::Mutex<Option<std::path::PathBuf>>,
 }
 
 impl AppState {
@@ -1176,6 +1179,31 @@ fn run_tauri(cli: Cli, config: ShunConfig, payload: ArchivePayload, uninstall_mo
 // JSON-RPC client; the scripts lane shells out to the product's python3
 // helpers with the pane's answers on stdin. Answers never travel argv.
 
+/// Stages the payload's pairing scripts into a private temp dir the
+/// first time the lane runs, and returns the dir on every later call.
+///
+/// Pairing runs BEFORE the install extracts anything, so the declared
+/// (payload-relative) script paths have nothing to resolve against at
+/// runtime — this materializes just that subtree from the EMBEDDED
+/// archive (the same single-copy bootstrap the WebView2 runtime uses),
+/// so the lane works in `just demo`, in a built installer, and from any
+/// CWD. The OS temp reaper owns the dir; the payload is immutable for
+/// the process lifetime so a leftover from this pid is fine.
+fn pairing_scripts_stage(state: &State<'_, AppState>) -> Result<std::path::PathBuf, String> {
+    let mut guard = state.pairing_stage.lock().expect("pairing stage lock");
+    if let Some(dir) = guard.as_ref() {
+        return Ok(dir.clone());
+    }
+    let dir = std::env::temp_dir().join(format!("shun-pairing-scripts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("stage pairing scripts: {e}"))?;
+    state
+        .payload
+        .extract_prefix(&dir, std::path::Path::new("installer"), &mut |_event| {})
+        .map_err(|e| format!("stage pairing scripts: {e}"))?;
+    *guard = Some(dir.clone());
+    Ok(dir)
+}
+
 /// The pane's request payload: everything the lane may need, unused
 /// fields simply ignored per lane.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -1228,24 +1256,29 @@ async fn pairing_request(
             .await
             .map_err(|e| format!("join: {e}"))?
         }
-        Some(request) => tauri::async_runtime::spawn_blocking(move || {
-            let answers =
-                serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
-            let answer = shun::pairing_scripts::run_pairing_script(
-                std::path::Path::new(&request),
-                &answers,
-                std::time::Duration::from_secs(45),
-            )?;
-            Ok(PairingCodeView {
-                code: answer["code"]
-                    .as_str()
-                    .ok_or("the request script minted no code")?
-                    .to_string(),
-                expires_in: answer["expires_in"].as_i64().unwrap_or(300),
+        Some(request) => {
+            let stage = pairing_scripts_stage(&state)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                // Payload-relative declared path → staged absolute path.
+                let script = stage.join(&request);
+                let answers =
+                    serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
+                let answer = shun::pairing_scripts::run_pairing_script(
+                    &script,
+                    &answers,
+                    std::time::Duration::from_secs(45),
+                )?;
+                Ok(PairingCodeView {
+                    code: answer["code"]
+                        .as_str()
+                        .ok_or("the request script minted no code")?
+                        .to_string(),
+                    expires_in: answer["expires_in"].as_i64().unwrap_or(300),
+                })
             })
-        })
-        .await
-        .map_err(|e| format!("join: {e}"))?,
+            .await
+            .map_err(|e| format!("join: {e}"))?
+        }
     }
 }
 
@@ -1293,19 +1326,24 @@ async fn pairing_await(
             .await
             .map_err(|e| format!("join: {e}"))?
         }
-        Some(await_script) => tauri::async_runtime::spawn_blocking(move || {
-            let answers =
-                serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
-            // The await phase legitimately parks: the gateway window is
-            // ~20s, scripts get the same budget plus headroom.
-            shun::pairing_scripts::run_pairing_script(
-                std::path::Path::new(&await_script),
-                &answers,
-                std::time::Duration::from_secs(45),
-            )
-        })
-        .await
-        .map_err(|e| format!("join: {e}"))?,
+        Some(await_script) => {
+            let stage = pairing_scripts_stage(&state)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                // Payload-relative declared path → staged absolute path.
+                let script = stage.join(&await_script);
+                let answers =
+                    serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
+                // The await phase legitimately parks: the gateway window is
+                // ~20s, scripts get the same budget plus headroom.
+                shun::pairing_scripts::run_pairing_script(
+                    &script,
+                    &answers,
+                    std::time::Duration::from_secs(45),
+                )
+            })
+            .await
+            .map_err(|e| format!("join: {e}"))?
+        }
     }
 }
 
@@ -1341,18 +1379,23 @@ async fn pairing_record(
     };
     match script {
         None => Ok(true),
-        Some(record) => tauri::async_runtime::spawn_blocking(move || {
-            let answers =
-                serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
-            shun::pairing_scripts::run_pairing_script(
-                std::path::Path::new(&record),
-                &answers,
-                std::time::Duration::from_secs(45),
-            )?;
-            Ok(true)
-        })
-        .await
-        .map_err(|e| format!("join: {e}"))?,
+        Some(record) => {
+            let stage = pairing_scripts_stage(&state)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                // Payload-relative declared path → staged absolute path.
+                let script = stage.join(&record);
+                let answers =
+                    serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
+                shun::pairing_scripts::run_pairing_script(
+                    &script,
+                    &answers,
+                    std::time::Duration::from_secs(45),
+                )?;
+                Ok(true)
+            })
+            .await
+            .map_err(|e| format!("join: {e}"))?
+        }
     }
 }
 
@@ -1468,6 +1511,7 @@ fn run_shell(
                 payload,
                 uninstall_mode,
                 pairing: steps.into_iter().find_map(|s| s.pairing),
+                pairing_stage: std::sync::Mutex::new(None),
             }
         })
         .invoke_handler(tauri::generate_handler![

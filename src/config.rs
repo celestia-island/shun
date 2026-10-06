@@ -1319,12 +1319,12 @@ pub enum PairingSource {
     /// an error whose stderr becomes the pane's error line; every phase
     /// runs under a deadline (a hung script is killed, not waited out).
     Scripts {
-        /// Config-relative path of the mint script.
+        /// Payload-relative path of the mint script.
         request: String,
-        /// Config-relative path of the long-poll script.
+        /// Payload-relative path of the long-poll script.
         #[serde(rename = "await")]
         r#await: String,
-        /// Config-relative path of the persistence script.
+        /// Payload-relative path of the persistence script.
         record: String,
     },
 }

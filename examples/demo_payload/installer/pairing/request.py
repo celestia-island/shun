@@ -15,8 +15,8 @@ import sys
 
 def main() -> int:
     answers = json.load(sys.stdin)
-    # Deterministic demo helper: the code derives from the node id so a
-    # re-run of the same identity shows a familiar code.
+    # The node identity rides back as `echo` so the operator can see the
+    # pane's stdin answers arrived (the code itself is random).
     seed = answers.get("node_id", "demo") + answers.get("name", "")
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     code = "".join(secrets.choice(alphabet) for _ in range(8))
