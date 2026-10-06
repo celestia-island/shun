@@ -387,9 +387,11 @@ env-file = "product.env"         # where the claimed credential lands
 # (never argv — process listings are world-readable); stdout must be
 # exactly one JSON value; a non-zero exit surfaces the script's stderr
 # in the pane; every phase runs under a deadline. Paths are
-# PAYLOAD-relative (like every other script hook): the scripts ride
-# the payload into the install, so they exist on disk at pairing
-# time, and they cannot escape the payload root.
+# PAYLOAD-relative (like every other script hook): the shell STAGES
+# the payload's installer/ subtree from the embedded archive the
+# first time the lane runs, so the scripts execute from any CWD —
+# in `just demo` and in a built installer alike. Containment is
+# lexical (no absolute paths, `..`, drive prefixes, backslashes).
 [[package.metadata.shun.steps]]
 kind = "install"                 # the delivery run (exactly one required)
 ```

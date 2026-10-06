@@ -421,8 +421,9 @@ kind = "install"                 # la ejecución de entrega (exactamente uno obl
 
 El panel de emparejamiento (código grande, cuenta atrás local, copia,
 renovación automática, tarjeta de éxito) es la plantilla prefabricada del
-shell y llega con el trabajo del panel; hasta entonces el paso `pairing`
-es solo esquema — la instalación continúa sin emparejar.
+shell y ya se sirve en la cara webview — las caras egui/tui aún omiten el
+paso en silencio, así que una instalación con cara de respaldo continúa
+sin emparejar (frontera registrada: el panel de respaldo es trabajo futuro).
 
 Sin `steps` = el pipeline por defecto (modo → licencia-si-se-declaró →
 instalación) con los `custom-steps` legados inyectados tras sus claves

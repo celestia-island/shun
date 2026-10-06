@@ -2,10 +2,10 @@
 """Demo pairing `request` script: mints a display code from local
 entropy (no network) and answers the pane's stdin JSON.
 
-This file rides the PAYLOAD (payload = ../examples/demo_payload), so it
-exists on disk inside the install dir at pairing time — the scripts-lane
-path resolution story this demo establishes: config-relative paths are
-resolved against the payload's installer/ prefix at build time.
+This file rides the PAYLOAD (payload = ../examples/demo_payload): the
+shell stages the payload's installer/ subtree from the embedded archive
+the first time the lane runs, so payload-root-relative paths like this
+one execute from any CWD.
 """
 import json
 import os

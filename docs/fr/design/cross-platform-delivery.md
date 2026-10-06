@@ -431,8 +431,10 @@ kind = "install"                 # l'exécution de livraison (exactement une req
 
 Le volet d'appairage (code en grand, compte à rebours local, copie,
 rafraîchissement automatique, carte de succès) est le gabarit préfabriqué
-du shell et arrive avec le travail du volet ; jusque-là l'étape `pairing`
-n'est que du schéma — l'installation continue sans appairage.
+du shell et est déjà servi par la face webview — les faces egui/tui
+l'omettent encore silencieusement, donc une installation sur une face de
+secours reste non appairée (frontière enregistrée : le volet de secours
+reste à venir).
 
 Sans `steps` = le pipeline par défaut (mode → licence-si-déclarée →
 install) avec les `custom-steps` historiques injectés après leurs clés
