@@ -296,6 +296,13 @@ impl ShunConfig {
                             .iter()
                             .position(|s| s.kind == StepKind::Install)
                             .expect("guarded above");
+                        let pairings = steps.iter().filter(|s| s.kind == StepKind::Pairing).count();
+                        if pairings > 1 {
+                            return Err(config_error(&format!(
+                                "the pipeline contains {pairings} `pairing` steps; \
+                                 at most one is allowed"
+                            )));
+                        }
                         for (at, step) in steps.iter().enumerate() {
                             let pairing = match (&step.kind, &step.pairing) {
                                 (StepKind::Pairing, None) => {
@@ -316,12 +323,28 @@ impl ShunConfig {
                                     "the pairing step must precede the install step",
                                 ));
                             }
-                            if let PairingSource::Gateway { .. } = pairing.source {
+                            if let PairingSource::Gateway { official, .. } = &pairing.source {
                                 let identity = pairing.identity.as_ref();
                                 if !identity.is_some_and(|i| i.node_id) {
                                     return Err(config_error(
                                         "the gateway pairing lane requires \
                                          `pairing.identity.node-id = true`",
+                                    ));
+                                }
+                                if !official.starts_with("http://")
+                                    && !official.starts_with("https://")
+                                {
+                                    return Err(config_error(
+                                        "the gateway `official` URL must start \
+                                         with http:// or https://",
+                                    ));
+                                }
+                                if pairing.env_file.is_none() {
+                                    return Err(config_error(
+                                        "the gateway pairing lane requires \
+                                         `pairing.env-file` — the claimed \
+                                         credential needs a declared landing \
+                                         inside the install",
                                     ));
                                 }
                             }
@@ -347,6 +370,20 @@ impl ShunConfig {
                                 if env_file.trim().is_empty() {
                                     return Err(config_error(
                                         "pairing `env-file` must not be empty",
+                                    ));
+                                }
+                                // The credential lands INSIDE the install
+                                // dir; a traversal or absolute path would
+                                // write it elsewhere under elevation.
+                                let path = std::path::Path::new(env_file);
+                                if path.is_absolute()
+                                    || path
+                                        .components()
+                                        .any(|c| matches!(c, std::path::Component::ParentDir))
+                                {
+                                    return Err(config_error(
+                                        "pairing `env-file` must be a relative \
+                                         path inside the install directory",
                                     ));
                                 }
                             }
@@ -458,6 +495,7 @@ impl ShunConfig {
                 Ok(ResolvedStep {
                     align: step.align.unwrap_or_else(|| step.kind.default_align()),
                     kind: step.kind,
+                    pairing: step.pairing.clone(),
                     title: step.title.unwrap_or_default(),
                     body: markdown,
                     licenses,
@@ -1200,7 +1238,7 @@ pub struct PairingStepConfig {
     pub env_file: Option<String>,
 }
 
-/// The code source: the built-in evernight-gateway protocol, or product
+/// The code source: the built-in gateway protocol, or product
 /// scripts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -1208,12 +1246,17 @@ pub enum PairingSource {
     /// The built-in gateway client (JSON-RPC over HTTPS: `pairing.request`
     /// mints, `pairing.await` long-polls, `pairing.accept` delivers the
     /// credential). No scripting runtime needed on the target machine.
+    #[serde(rename_all = "kebab-case")]
     Gateway {
         /// The official gateway base URL, preselected in the pane.
         official: String,
         /// Whether the pane also offers a custom gateway input
         /// (default `true`).
-        #[serde(default = "default_true")]
+        #[serde(
+            default = "default_true",
+            alias = "allow_custom",
+            rename = "allow-custom"
+        )]
         allow_custom: bool,
     },
     /// Product scripts (`python3 <script>`, JSON on stdout, argv = the
@@ -1292,6 +1335,12 @@ pub struct ResolvedLicenseDoc {
 pub struct ResolvedStep {
     /// Which pane renders this step.
     pub kind: StepKind,
+    /// The pairing contract (`kind == Pairing` only) — the pane's lane,
+    /// identity fields, and credential handoff. Other kinds carry `None`
+    /// and serialize exactly as they did before the field existed
+    /// (back-compat: old consumers of `shun-steps.json` keep parsing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing: Option<PairingStepConfig>,
     /// Content alignment (explicit override or the kind's default).
     pub align: StepAlign,
     /// Timeline label.
@@ -1784,7 +1833,22 @@ mod tests {
         let steps = config
             .resolve_steps(Path::new("."), None)
             .expect("resolves");
-        assert!(steps.iter().any(|s| s.kind == StepKind::Pairing));
+        // The payload must SURVIVE resolution — the pane renders from
+        // ResolvedStep, not StepConfig (a drop here leaves the pane blind).
+        let resolved = steps
+            .iter()
+            .find(|s| s.kind == StepKind::Pairing)
+            .expect("the pairing step resolves");
+        assert_eq!(resolved.pairing.as_ref(), Some(&gateway_pairing()));
+        // Non-pairing steps carry nothing.
+        assert!(
+            steps
+                .iter()
+                .find(|s| s.kind == StepKind::Install)
+                .unwrap()
+                .pairing
+                .is_none()
+        );
     }
 
     #[test]
@@ -1843,6 +1907,97 @@ mod tests {
         let config = steps_config(vec![stray, bare_step(StepKind::Install)]);
         let err = config.resolve_steps(Path::new("."), None).unwrap_err();
         assert!(err.to_string().contains("only valid on"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_pairing_steps_are_rejected() {
+        let config = steps_config(vec![
+            pairing_step(Some(gateway_pairing())),
+            pairing_step(Some(gateway_pairing())),
+            bare_step(StepKind::Install),
+        ]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(err.to_string().contains("at most one"), "{err}");
+    }
+
+    #[test]
+    fn gateway_official_url_must_carry_a_scheme() {
+        let mut pairing = gateway_pairing();
+        pairing.source = PairingSource::Gateway {
+            official: "gateway.example/server".into(),
+            allow_custom: true,
+        };
+        let config = steps_config(vec![
+            pairing_step(Some(pairing)),
+            bare_step(StepKind::Install),
+        ]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(err.to_string().contains("http"), "{err}");
+    }
+
+    #[test]
+    fn gateway_lane_requires_an_env_file() {
+        let mut pairing = gateway_pairing();
+        pairing.env_file = None;
+        let config = steps_config(vec![
+            pairing_step(Some(pairing)),
+            bare_step(StepKind::Install),
+        ]);
+        let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+        assert!(err.to_string().contains("env-file"), "{err}");
+    }
+
+    #[test]
+    fn env_file_must_stay_inside_the_install_dir() {
+        for traversal in ["../creds.env", "/abs/creds.env", "a/../../creds.env"] {
+            let mut pairing = gateway_pairing();
+            pairing.env_file = Some(traversal.into());
+            let config = steps_config(vec![
+                pairing_step(Some(pairing)),
+                bare_step(StepKind::Install),
+            ]);
+            let err = config.resolve_steps(Path::new("."), None).unwrap_err();
+            assert!(err.to_string().contains("relative"), "{traversal}: {err}");
+        }
+        // A plain relative name (and a nested one) are fine.
+        for fine in ["product.env", "config/product.env"] {
+            let mut pairing = gateway_pairing();
+            pairing.env_file = Some(fine.into());
+            let config = steps_config(vec![
+                pairing_step(Some(pairing)),
+                bare_step(StepKind::Install),
+            ]);
+            assert!(config.resolve_steps(Path::new("."), None).is_ok(), "{fine}");
+        }
+    }
+
+    #[test]
+    fn gateway_source_serializes_with_kebab_tags_and_accepts_both_spellings() {
+        let source = PairingSource::Gateway {
+            official: "https://gateway.example/server".into(),
+            allow_custom: false,
+        };
+        let json = serde_json::to_value(&source).unwrap();
+        assert_eq!(json["kind"], "gateway", "the lane tag round-trips");
+        assert!(
+            json.get("allow-custom").is_some() && json.get("allow_custom").is_none(),
+            "the field serializes kebab-case like every other pairing key"
+        );
+
+        let parse = |body: &str| {
+            let value: serde_json::Value = serde_json::from_str(body).unwrap();
+            serde_json::from_value::<PairingSource>(value).unwrap()
+        };
+        let kebab = parse(r#"{"kind":"gateway","official":"https://g","allow-custom":false}"#);
+        let snake = parse(r#"{"kind":"gateway","official":"https://g","allow_custom":false}"#);
+        assert_eq!(kebab, snake, "both spellings parse to the same config");
+        assert!(!matches!(
+            kebab,
+            PairingSource::Gateway {
+                allow_custom: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2328,6 +2483,7 @@ zh-Hans = "NOTICE.zh-Hans.md"
     fn resolved_license_step_serializes_back_compat() {
         let bare = ResolvedStep {
             kind: StepKind::License,
+            pairing: None,
             align: StepAlign::Start,
             title: String::new(),
             body: None,
