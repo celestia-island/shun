@@ -22,12 +22,14 @@ export default defineComponent({
     strings: { type: Object, required: true },
     /** The declared pairing step contract, from the resolved pipeline. */
     config: { type: Object, required: true },
+    /** Fired when the success card renders — unlocks the wizard's Next. */
+    onClaimed: { type: Function, required: false, default: null },
   },
   setup(props) {
     const ps = () => props.strings as PairingStrings;
     const cfg = () => props.config as {
       source: { kind: string; official?: string; allow_custom?: boolean };
-      identity?: { node_id?: boolean; name?: boolean; tier?: number };
+      identity?: { "node-id"?: boolean; name?: boolean; tier?: number };
       env_file?: string;
     };
 
@@ -127,27 +129,39 @@ export default defineComponent({
           };
           phase.value = "claimed";
           deadline.value = 0;
-          void invoke("pairing_claim", {
-            outcome: {
-              gateway: gateway.value || cfg().source.official || "",
-              node_id: answer.node_id ?? nodeId.value,
-              device_secret: answer.device_secret,
-              owner: answer.owner ?? "",
-            },
-          }).catch(() => {});
-          void invoke("pairing_record", {
-            args: {
-              gateway: gateway.value || undefined,
-              node_id: answer.node_id ?? nodeId.value,
-              device_secret: answer.device_secret,
-              owner: answer.owner ?? "",
-              pairing_code: code.value,
-            },
-          }).catch(() => {});
+          // Persistence failures must NOT hide behind the success card:
+          // the scripts lane's `record` is its sole persistence step, and
+          // a lost claim on either lane means an unpaired install.
+          try {
+            await invoke("pairing_claim", {
+              outcome: {
+                gateway: gateway.value || cfg().source.official || "",
+                node_id: answer.node_id ?? nodeId.value,
+                device_secret: answer.device_secret,
+                owner: answer.owner ?? "",
+              },
+            });
+            await invoke("pairing_record", {
+              args: {
+                gateway: gateway.value || undefined,
+                node_id: answer.node_id ?? nodeId.value,
+                device_secret: answer.device_secret,
+                owner: answer.owner ?? "",
+                pairing_code: code.value,
+              },
+            });
+          } catch (e) {
+            phase.value = "error";
+            error.value = String(e);
+            return;
+          }
+          const emit = (props as { onClaimed?: (v: void) => void }).onClaimed;
+          emit?.();
           return;
         }
         if (answer.status === "unknown") {
           refreshed.value = true;
+          setTimeout(() => (refreshed.value = false), 8000);
           try {
             const again = await invoke<{ code: string; expires_in: number }>(
               "pairing_request",
@@ -174,11 +188,6 @@ export default defineComponent({
         }
         await new Promise((r) => setTimeout(r, 1000));
       }
-    }
-
-    function regenerate() {
-      if (phase.value === "requesting") return;
-      void start();
     }
 
     async function copyCode() {
@@ -219,7 +228,9 @@ export default defineComponent({
     return () => {
       const s = ps();
       const identity = cfg().identity;
-      const allowCustom = cfg().source.kind === "gateway" && (cfg().source.allow_custom ?? true);
+      const allowCustom =
+        cfg().source.kind === "gateway" &&
+        ((cfg().source as { "allow-custom"?: boolean })["allow-custom"] ?? true);
       return (
         <section class="wizard-pane wizard-pairing">
           {phase.value === "claimed" && claim.value ? (
@@ -243,8 +254,8 @@ export default defineComponent({
             <>
               <h1>{s.title}</h1>
               <p class="wizard-sub">{s.sub}</p>
-              {identity?.node_id !== false && (
-                <div class="wizard-pair__field">
+              {identity?.["node-id"] !== false && (
+                <div class="wizard-pairing__field">
                   <label class="wizard-pairing__label">{s.nodeIdLabel}</label>
                   <div class="wizard-pairing__row">
                     <code class="wizard-pairing__id">{nodeId.value}</code>

@@ -593,6 +593,52 @@ pub fn apply_finish(
     menu: Option<bool>,
     launch: bool,
 ) -> Result<(), String> {
+    // The pairing claim rides the delivery into the install dir as the
+    // manifest's env-file — write-then-rename, 0600, no-op unpaired.
+    if let Some(outcome) = &core.pairing_outcome {
+        let env_file = core
+            .config
+            .steps
+            .as_ref()
+            .and_then(|steps| {
+                steps
+                    .iter()
+                    .find(|s| s.kind == crate::config::StepKind::Pairing)
+                    .and_then(|s| s.pairing.as_ref())
+            })
+            .and_then(|p| p.env_file.clone());
+        if let Some(env_file) = env_file {
+            let path = std::path::Path::new(dir.trim()).join(&env_file);
+            let mut body = String::new();
+            use std::fmt::Write as _;
+            let _ = writeln!(body, "# Written by the installer's first-run pairing step.");
+            let _ = writeln!(
+                body,
+                "# The device credential below was issued once by the pairing"
+            );
+            let _ = writeln!(body, "# service; treat it like a password.");
+            let _ = writeln!(body, "SERVER_URL={}", outcome.gateway.trim_end_matches('/'));
+            let _ = writeln!(body, "DEVICE_SECRET={}", outcome.device_secret);
+            let _ = writeln!(body, "BOOTSTRAP_NODE_ID={}", outcome.node_id);
+            let _ = writeln!(
+                body,
+                "BOOTSTRAP_GATEWAY={}",
+                outcome
+                    .gateway
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>()
+            );
+            let tmp = path.with_extension("env.tmp");
+            std::fs::write(&tmp, body).map_err(|e| format!("write pairing credential: {e}"))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+            }
+            std::fs::rename(&tmp, &path).map_err(|e| format!("install pairing credential: {e}"))?;
+        }
+    }
     crate::targets::shortcuts::apply_shortcut_choices(
         &shortcut_aumid_for(&core.config),
         &core.config.product.name,

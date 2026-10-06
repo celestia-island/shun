@@ -208,6 +208,8 @@ export default defineComponent({
       pairing?: FlowStep["pairing"];
     }[]>([]);
     const flashDeclared = ref(false);
+    // Whether the pairing pane reached its success card (unlocks Next).
+    const pairingClaimed = ref(false);
     const attachments = ref<
       { key: string; title: string; included: boolean; size: number | null }[]
     >([]);
@@ -989,6 +991,7 @@ export default defineComponent({
           <PairingPane
             strings={withProduct(strings(locale.value)).pairing}
             config={flow[flowIndex(step.value)].pairing!}
+            onClaimed={() => (pairingClaimed.value = true)}
           />
         ) : step.value === "license" ? (
           <section class="wizard-pane">
@@ -1206,6 +1209,24 @@ export default defineComponent({
                       variant="primary"
                       size="lg"
                       onClick={() => go(flow[flowIndex(step.value) + 1].key)}
+                    >
+                      {s.nav.next}
+                    </HkButton>
+                  </>
+                )}
+                {step.value === "pairing" && (
+                  <>
+                    <HkButton
+                      variant="ghost"
+                      onClick={() => go(flow[flowIndex("pairing") - 1].key)}
+                    >
+                      {s.nav.back}
+                    </HkButton>
+                    <HkButton
+                      variant="primary"
+                      size="lg"
+                      disabled={!pairingClaimed.value}
+                      onClick={() => go(flow[flowIndex("pairing") + 1].key)}
                     >
                       {s.nav.next}
                     </HkButton>
