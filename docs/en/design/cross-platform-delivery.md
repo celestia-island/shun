@@ -380,9 +380,14 @@ tier = 2                         # pinned tier, when the product has one
 env-file = "product.env"         # where the claimed credential lands
                                  # (required on the gateway lane; must stay
                                  # a relative path inside the install)
-# Scripts lane instead of the built-in protocol — `python3 <script>` per
-# phase, JSON on stdout: `request` mints, `await` long-polls, `record`
-# persists. Paths are relative to the manifest and cannot escape it.
+# Scripts lane instead of the built-in protocol — `python3 <script>`
+# per phase (falling back to `python` where that is all the host
+# ships): `request` mints, `await` long-polls, `record` persists. The
+# pane's answers arrive as one JSON object on the script's STDIN
+# (never argv — process listings are world-readable); stdout must be
+# exactly one JSON value; a non-zero exit surfaces the script's stderr
+# in the pane; every phase runs under a deadline. Paths are relative
+# to the manifest and cannot escape it.
 [[package.metadata.shun.steps]]
 kind = "install"                 # the delivery run (exactly one required)
 ```

@@ -1296,12 +1296,16 @@ pub enum PairingSource {
         )]
         allow_custom: bool,
     },
-    /// Product scripts (`python3 <script>`, JSON on stdout, argv = the
-    /// pane's answers as one JSON object). `request` prints
+    /// Product scripts (`python3 <script>`, falling back to `python`
+    /// where the host only ships the unversioned name). The pane's
+    /// answers arrive as ONE JSON object on the script's **stdin** —
+    /// never argv, which is world-readable in process listings — and
+    /// stdout must be exactly one JSON value: `request` prints
     /// `{code, expires_in}`; `await` long-polls and prints
     /// `{status: claimed|pending|unknown, expires_in?, ...claim}`;
     /// `record` receives the claim and persists it. A non-zero exit is
-    /// an error whose stderr becomes the pane's error line.
+    /// an error whose stderr becomes the pane's error line; every phase
+    /// runs under a deadline (a hung script is killed, not waited out).
     Scripts {
         /// Config-relative path of the mint script.
         request: String,
