@@ -220,11 +220,7 @@ fn run(command: CliCommand) -> Result<(), String> {
 
             // 3. Collect artifacts: single-file installer + payload package.
             std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-            let target_exe = shell_src
-                .join("..")
-                .join("target")
-                .join("release")
-                .join(format!("{shell_bin}.exe"));
+            let target_exe = shell_exe_path(&shell_src, &shell_bin);
             let installer = out.join(format!(
                 "{}-{}-setup.exe",
                 product.name.to_lowercase().replace(' ', "-"),
@@ -604,6 +600,97 @@ mod icons {
         // macOS: `iconutil -c icns shun.iconset` on any mac produces the
         // .icns; Linux CI can use `icnsutil`. Documented in the CLI guide.
         Ok(())
+    }
+}
+
+/// Where the built shell binary lands.
+///
+/// A cross-compiled shell (`CARGO_BUILD_TARGET` in the environment of the
+/// inner `cargo build`) is written to `target/<triple>/release`, a native one
+/// to `target/release`. The triple dir wins when it actually holds the exe.
+///
+/// Downstream must NOT bridge the two with a `target/release` symlink into
+/// the triple dir instead: cargo then takes its host and cross build locks on
+/// the same inode and deadlocks against itself the moment a build needs host
+/// artifacts (observed with evernight's installer payload build, 2026-10-06).
+fn shell_exe_path(shell_src: &std::path::Path, shell_bin: &str) -> std::path::PathBuf {
+    let triple = std::env::var("CARGO_BUILD_TARGET")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    shell_exe_path_with(
+        &shell_src.join("..").join("target"),
+        triple.as_deref(),
+        shell_bin,
+    )
+}
+
+/// Pure core of [`shell_exe_path`]: the triple dir wins when it holds the exe,
+/// otherwise the plain release dir.
+fn shell_exe_path_with(
+    target_root: &std::path::Path,
+    triple: Option<&str>,
+    shell_bin: &str,
+) -> std::path::PathBuf {
+    let exe_name = format!("{shell_bin}.exe");
+    match triple
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| target_root.join(t.trim()).join("release").join(&exe_name))
+    {
+        Some(path) if path.exists() => path,
+        _ => target_root.join("release").join(exe_name),
+    }
+}
+
+#[cfg(test)]
+mod shell_exe_tests {
+    use super::shell_exe_path_with;
+    use std::path::PathBuf;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("shun-shell-exe-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("target/x86_64-pc-windows-gnu/release")).unwrap();
+        std::fs::create_dir_all(dir.join("target/release")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn prefers_the_triple_dir_when_it_has_the_exe() {
+        let dir = scratch("cross");
+        let cross = dir.join("target/x86_64-pc-windows-gnu/release/demo.exe");
+        std::fs::write(&cross, b"exe").unwrap();
+        std::fs::write(dir.join("target/release/demo.exe"), b"exe").unwrap();
+        assert_eq!(
+            shell_exe_path_with(&dir.join("target"), Some("x86_64-pc-windows-gnu"), "demo"),
+            cross
+        );
+    }
+
+    #[test]
+    fn falls_back_to_plain_release_without_a_triple_exe() {
+        let dir = scratch("native");
+        let native = dir.join("target/release/demo.exe");
+        std::fs::write(&native, b"exe").unwrap();
+        assert_eq!(
+            shell_exe_path_with(&dir.join("target"), Some("x86_64-pc-windows-gnu"), "demo"),
+            native,
+        );
+        assert_eq!(
+            shell_exe_path_with(&dir.join("target"), None, "demo"),
+            native
+        );
+    }
+
+    #[test]
+    fn ignores_a_blank_triple() {
+        let dir = scratch("blank");
+        let native = dir.join("target/release/demo.exe");
+        std::fs::write(&native, b"exe").unwrap();
+        assert_eq!(
+            shell_exe_path_with(&dir.join("target"), Some("   "), "demo"),
+            native
+        );
     }
 }
 
