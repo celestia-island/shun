@@ -551,7 +551,12 @@ fn contained_relative(path: &str) -> bool {
         return false;
     }
     let path = std::path::Path::new(trimmed);
+    // `has_root` matters as much as `is_absolute`: on Windows a bare
+    // `/abs/path` (rooted, no drive prefix) is NOT absolute, yet
+    // `PathBuf::join` still lets it escape the base — caught live by the
+    // windows CI lane, invisible to a Unix-only suite.
     !path.is_absolute()
+        && !path.has_root()
         && !trimmed.contains('\\')
         && !trimmed.contains(':')
         && path
@@ -2072,7 +2077,12 @@ mod tests {
         // `C:creds.env` replaces the whole path on join; backslashes are
         // separators on Windows but pass as ordinary characters when
         // validation runs on Unix — reject both unconditionally.
-        for escape in ["C:creds.env", "creds\\..\\creds.env", "sub\\creds.env"] {
+        for escape in [
+            "C:creds.env",
+            "creds\\..\\creds.env",
+            "sub\\creds.env",
+            "/rooted-without-drive.env",
+        ] {
             let mut pairing = gateway_pairing();
             pairing.env_file = Some(escape.into());
             let config = steps_config(vec![
