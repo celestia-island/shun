@@ -382,8 +382,7 @@ kind = "pairing"                 # сопряжение устройства п�
                                  # (не более одного, до install)
 [steps.pairing.source]
 kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the
-                                 # scripts lane and the validation)
+                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
 official = "https://gateway.example/server"
 allow-custom = true
 [steps.pairing.identity]
@@ -395,9 +394,10 @@ kind = "install"                 # запуск доставки (ровно о�
 ```
 
 Панель сопряжения (крупный код, локальный обратный отсчёт, копирование,
-автообновление, карточка успеха) — готовый шаблон оболочки, он прибудет
-вместе с работой по панелям; до этого шаг `pairing` существует лишь в
-схеме — установка продолжается без сопряжения.
+автообновление, карточка успеха) — готовый шаблон оболочки, и в webview-лице
+он уже работает; лица egui/tui всё ещё пропускают шаг молча, поэтому
+установка на резервном лице идёт без сопряжения (зарегистрированная
+граница: резервная панель — будущая работа).
 
 Отсутствие `steps` = конвейер по умолчанию (режим →
 лицензия-если-объявлена → установка) с легаси-`custom-steps`, внедрёнными

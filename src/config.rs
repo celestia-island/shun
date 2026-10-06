@@ -354,26 +354,36 @@ impl ShunConfig {
                                 record,
                             } = &pairing.source
                             {
+                                // Payload-relative, like every other
+                                // script hook: the pairing scripts ride
+                                // the payload so they exist on disk
+                                // inside the install at pairing time.
+                                let payload_root = self
+                                    .payload
+                                    .as_deref()
+                                    .unwrap_or_else(|| std::path::Path::new(""));
                                 for (path, what) in [
                                     (request, "request"),
                                     (await_script, "await"),
                                     (record, "record"),
                                 ] {
-                                    // Containment, not just resolvability:
-                                    // `base.join` silently discards the
-                                    // base for an absolute path, and a
-                                    // `..` walks out of it — either would
-                                    // let the manifest run scripts from
-                                    // anywhere on disk.
-                                    if !contained_relative(path) {
+                                    // Containment, not just
+                                    // resolvability: `Path::join`
+                                    // silently discards the root for an
+                                    // absolute path, a `..` walks out,
+                                    // and a Windows drive-relative
+                                    // prefix or backslash escapes
+                                    // cross-platform.
+                                    if !contained_relative(&path.replace('\\', "/")) {
                                         return Err(config_error(&format!(
-                                            "pairing {what} script `{path}` must be \
-                                             a relative path inside the config base"
+                                            "pairing {what} script `{path}` must be a \
+                                             relative path inside the payload"
                                         )));
                                     }
-                                    if !base.join(path).is_file() {
+                                    if !base.join(payload_root).join(path).is_file() {
                                         return Err(config_error(&format!(
-                                            "pairing {what} script `{path}` not found"
+                                            "pairing {what} script `{path}` not found in \
+                                             the payload"
                                         )));
                                     }
                                 }
@@ -1297,22 +1307,24 @@ pub enum PairingSource {
         allow_custom: bool,
     },
     /// Product scripts (`python3 <script>`, falling back to `python`
-    /// where the host only ships the unversioned name). The pane's
-    /// answers arrive as ONE JSON object on the script's **stdin** —
-    /// never argv, which is world-readable in process listings — and
-    /// stdout must be exactly one JSON value: `request` prints
-    /// `{code, expires_in}`; `await` long-polls and prints
-    /// `{status: claimed|pending|unknown, expires_in?, ...claim}`;
+    /// where the host only ships the unversioned name), declared
+    /// **payload-relative** like every other script hook — they ride
+    /// the payload so they exist on disk inside the install at pairing
+    /// time. The pane's answers arrive as ONE JSON object on the
+    /// script's **stdin** — never argv, which is world-readable in
+    /// process listings — and stdout must be exactly one JSON value:
+    /// `request` prints `{code, expires_in}`; `await` long-polls and
+    /// prints `{status: claimed|pending|unknown, expires_in?, ...claim}`;
     /// `record` receives the claim and persists it. A non-zero exit is
     /// an error whose stderr becomes the pane's error line; every phase
     /// runs under a deadline (a hung script is killed, not waited out).
     Scripts {
-        /// Config-relative path of the mint script.
+        /// Payload-relative path of the mint script.
         request: String,
-        /// Config-relative path of the long-poll script.
+        /// Payload-relative path of the long-poll script.
         #[serde(rename = "await")]
         r#await: String,
-        /// Config-relative path of the persistence script.
+        /// Payload-relative path of the persistence script.
         record: String,
     },
 }
@@ -1918,19 +1930,40 @@ mod tests {
     }
 
     #[test]
-    fn pairing_scripts_must_stay_inside_the_config_base() {
+    fn pairing_scripts_must_stay_inside_the_payload() {
+        // The payload root sits under the config base (the demo's own
+        // shape): scripts resolve against it.
         let base = std::env::temp_dir().join("shun-pairing-scripts-escape");
         let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(&base).unwrap();
-        // An existing file OUTSIDE the base — reachable by both an
-        // absolute path (base.join discards the base) and `..`.
+        std::fs::create_dir_all(base.join("payload/installer/pairing")).unwrap();
+        std::fs::write(base.join("payload/installer/pairing/real.py"), "# ok").unwrap();
+        let mut config = steps_config(vec![
+            pairing_step(Some(PairingStepConfig {
+                source: PairingSource::Scripts {
+                    request: "installer/pairing/real.py".into(),
+                    r#await: "installer/pairing/real.py".into(),
+                    record: "installer/pairing/real.py".into(),
+                },
+                identity: None,
+                env_file: None,
+            })),
+            bare_step(StepKind::Install),
+        ]);
+        config.payload = Some("payload".into());
+        config
+            .resolve_steps(&base, None)
+            .expect("the payload-relative script resolves");
+
+        // Escapes — an absolute path (join discards the root), `..`, and
+        // a Windows-only form — are rejected before the file lookup.
         let outside = base.parent().unwrap().join("shun-pairing-outside.py");
         std::fs::write(&outside, "# ok").unwrap();
         for escape in [
             outside.to_str().unwrap().to_string(),
-            "../shun-pairing-outside.py".into(),
+            "../../shun-pairing-outside.py".into(),
+            "C:\\creds.py".into(),
         ] {
-            let config = steps_config(vec![
+            let mut config = steps_config(vec![
                 pairing_step(Some(PairingStepConfig {
                     source: PairingSource::Scripts {
                         request: escape.clone(),
@@ -1942,9 +1975,10 @@ mod tests {
                 })),
                 bare_step(StepKind::Install),
             ]);
+            config.payload = Some("payload".into());
             let err = config.resolve_steps(&base, None).unwrap_err();
             assert!(
-                err.to_string().contains("inside the config base"),
+                err.to_string().contains("inside the payload"),
                 "{escape}: {err}"
             );
         }
@@ -1953,13 +1987,13 @@ mod tests {
     }
 
     #[test]
-    fn pairing_scripts_must_exist_next_to_the_config() {
+    fn pairing_scripts_must_exist_in_the_payload() {
         let base = std::env::temp_dir().join("shun-pairing-scripts-test");
         let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(base.join("scripts")).unwrap();
-        std::fs::write(base.join("scripts/request.py"), "# ok").unwrap();
+        std::fs::create_dir_all(base.join("payload/scripts")).unwrap();
+        std::fs::write(base.join("payload/scripts/request.py"), "# ok").unwrap();
         // await/record intentionally absent.
-        let config = steps_config(vec![
+        let mut config = steps_config(vec![
             pairing_step(Some(PairingStepConfig {
                 source: PairingSource::Scripts {
                     request: "scripts/request.py".into(),
@@ -1971,8 +2005,12 @@ mod tests {
             })),
             bare_step(StepKind::Install),
         ]);
+        config.payload = Some("payload".into());
         let err = config.resolve_steps(&base, None).unwrap_err();
-        assert!(err.to_string().contains("await script"), "{err}");
+        assert!(
+            err.to_string().contains("await script") && err.to_string().contains("in the payload"),
+            "{err}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

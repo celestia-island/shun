@@ -380,8 +380,7 @@ kind = "pairing"                 # 初回実行時のデバイス ペアリン�
                                  # （最大 1 つ、install より前）
 [steps.pairing.source]
 kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the
-                                 # scripts lane and the validation)
+                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
 official = "https://gateway.example/server"
 allow-custom = true
 [steps.pairing.identity]
@@ -393,9 +392,10 @@ kind = "install"                 # 配布実行（ちょうど 1 つ必須）
 ```
 
 ペアリング画面（大きなコード・ローカル刻みのカウントダウン・コピー・
-自動更新・成功カード）はシェルのプリセットされたテンプレートで、画面実装とともに
-提供されます。それまでは `pairing` ステップはスキーマのみで、ペアリング
-なしのインストールがそのまま進みます。
+自動更新・成功カード）はシェルのプリセットされたテンプレートで、webview 面
+では既に提供されます。egui/tui のフォールバック面はまだこのステップを
+黙ってスキップするため、フォールバック面でのインストールはペアリングなしで
+進みます（登録済みの境界：フォールバックパネルは今後の作業）。
 
 `steps` を宣言しない場合は既定のパイプライン（モード → 宣言されていれば
 ライセンス → インストール）になり、従来の `custom-steps` は各自の `after`

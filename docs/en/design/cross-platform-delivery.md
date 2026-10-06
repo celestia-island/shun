@@ -386,17 +386,21 @@ env-file = "product.env"         # where the claimed credential lands
 # pane's answers arrive as one JSON object on the script's STDIN
 # (never argv — process listings are world-readable); stdout must be
 # exactly one JSON value; a non-zero exit surfaces the script's stderr
-# in the pane; every phase runs under a deadline. Paths are relative
-# to the manifest and cannot escape it.
+# in the pane; every phase runs under a deadline. Paths are
+# PAYLOAD-relative (like every other script hook): the shell STAGES
+# the payload's installer/ subtree from the embedded archive the
+# first time the lane runs, so the scripts execute from any CWD —
+# in `just demo` and in a built installer alike. Containment is
+# lexical (no absolute paths, `..`, drive prefixes, backslashes).
 [[package.metadata.shun.steps]]
 kind = "install"                 # the delivery run (exactly one required)
 ```
 
 The pairing pane itself (big code, locally ticking countdown, copy,
 auto-refresh, success card) is the shell's prefabricated template and
-ships with the pane work; until then a pairing step is schema-only —
-the webview shell skips it and the egui fallback renders nothing for it,
-so an unpaired install proceeds normally.
+ships in the webview face — the egui/tui fallbacks still skip the step
+silently, so a fallback-face install proceeds unpaired (a registered
+boundary: the fallback pairing pane is future work).
 
 Absent `steps` = the default pipeline (mode → license-when-declared →
 install) with the legacy `custom-steps` injected after their `after`

@@ -27,3 +27,9 @@ shell/gen/
 
 # staged demo application binaries (built by scripts/stage-demo-payload.sh)
 /examples/demo_payload/bin/
+
+# Demo pairing scripts' runtime state (the scripts write next to
+# themselves when driven from a dev checkout).
+examples/demo_payload/installer/pairing/pairing.json
+examples/demo_payload/installer/pairing/.demo_accept
+examples/demo_payload/installer/pairing/.demo_deadline
