@@ -548,3 +548,134 @@ body {
   right: 14px;
   z-index: 40;
 }
+
+
+/* ── Pairing pane (prefabricated inverted-lane template) ─────────────── */
+
+.wizard-pairing {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  &__label {
+    display: block;
+    font-size: var(--text-sm);
+    color: rgb(var(--color-text-secondary));
+    margin-bottom: 6px;
+  }
+
+  &__field {
+    margin-bottom: 4px;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__id {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-sm);
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgb(var(--color-surface-2));
+  }
+
+  &__input {
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid rgb(var(--color-border));
+    background: rgb(var(--color-surface));
+    color: rgb(var(--color-text));
+    font-size: var(--text-sm);
+
+    &:focus-visible {
+      outline: 2px solid rgb(var(--color-primary) / 60%);
+      outline-offset: 1px;
+    }
+  }
+
+  &__display {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  &__code-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__copied {
+    font-size: var(--text-sm);
+    color: rgb(var(--color-success, 22 163 74));
+  }
+
+  &__cells {
+    display: flex;
+    gap: 8px;
+  }
+
+  &__cell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 56px;
+    border-radius: 10px;
+    border: 1px solid rgb(var(--color-border));
+    background: rgb(var(--color-surface-2));
+    font-family: var(--font-mono, monospace);
+    font-size: 28px;
+    font-weight: 600;
+    color: rgb(var(--color-text));
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: rgb(var(--color-text-secondary));
+  }
+
+  &__waiting {
+    color: rgb(var(--color-text-secondary));
+  }
+
+  &__error {
+    color: rgb(var(--color-danger, 220 38 38));
+    font-size: var(--text-sm);
+    margin: 0;
+  }
+
+  &__card {
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid rgb(var(--color-border));
+    background: rgb(var(--color-surface-2));
+  }
+
+  &__facts {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0;
+
+    dt {
+      font-size: var(--text-xs);
+      color: rgb(var(--color-text-secondary));
+      margin-bottom: 2px;
+    }
+
+    dd {
+      margin: 0;
+      font-family: var(--font-mono, monospace);
+      font-size: var(--text-sm);
+      word-break: break-all;
+    }
+  }
+}

@@ -162,6 +162,23 @@ pub struct WizardCore {
     pub license_docs: BTreeMap<String, Vec<LicenseDoc>>,
     /// The renderable state.
     pub state: WizardState,
+    /// A pairing claim cashed by the pane, delivered as the manifest's
+    /// `env-file` inside the install dir at delivery time. `None` until
+    /// an operator accepts a displayed code.
+    pub pairing_outcome: Option<PairingOutcome>,
+}
+
+/// The claimed credential the pane hands to the delivery lane.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PairingOutcome {
+    /// The gateway the code was minted through.
+    pub gateway: String,
+    /// The device id the credential belongs to.
+    pub node_id: String,
+    /// The device secret — written once, never logged.
+    pub device_secret: String,
+    /// The accepting account.
+    pub owner: String,
 }
 
 impl WizardCore {
@@ -175,6 +192,7 @@ impl WizardCore {
             .and_then(|s| s.language.clone())
             .unwrap_or_else(|| "en".into());
         let mut core = Self {
+            pairing_outcome: None,
             state: WizardState {
                 step: Step::Language,
                 locale,
@@ -575,6 +593,53 @@ pub fn apply_finish(
     menu: Option<bool>,
     launch: bool,
 ) -> Result<(), String> {
+    // The pairing claim rides the delivery into the install dir as the
+    // manifest's env-file — write-then-rename, 0600, no-op unpaired.
+    if let Some(outcome) = &core.pairing_outcome {
+        let env_file = core
+            .config
+            .steps
+            .as_ref()
+            .and_then(|steps| {
+                steps
+                    .iter()
+                    .find(|s| s.kind == crate::config::StepKind::Pairing)
+                    .and_then(|s| s.pairing.as_ref())
+            })
+            .and_then(|p| p.env_file.clone());
+        if let Some(env_file) = env_file {
+            let path = std::path::Path::new(dir.trim()).join(&env_file);
+            let mut body = String::new();
+            use std::fmt::Write as _;
+            let _ = writeln!(body, "# Written by the installer's first-run pairing step.");
+            let _ = writeln!(
+                body,
+                "# The device credential below was issued once by the pairing"
+            );
+            let _ = writeln!(body, "# service; treat it like a password.");
+            // Every VALUE is control/whitespace-stripped: hostile input
+            // can never break the line or smuggle another one.
+            let safe = |v: &str| -> String {
+                v.chars()
+                    .filter(|c| !c.is_control() && !c.is_whitespace())
+                    .collect::<String>()
+                    .trim_end_matches('/')
+                    .to_string()
+            };
+            let _ = writeln!(body, "SERVER_URL={}", safe(&outcome.gateway));
+            let _ = writeln!(body, "DEVICE_SECRET={}", safe(&outcome.device_secret));
+            let _ = writeln!(body, "BOOTSTRAP_NODE_ID={}", safe(&outcome.node_id));
+            let _ = writeln!(body, "BOOTSTRAP_GATEWAY={}", safe(&outcome.gateway));
+            let tmp = path.with_extension("env.tmp");
+            std::fs::write(&tmp, body).map_err(|e| format!("write pairing credential: {e}"))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+            }
+            std::fs::rename(&tmp, &path).map_err(|e| format!("install pairing credential: {e}"))?;
+        }
+    }
     crate::targets::shortcuts::apply_shortcut_choices(
         &shortcut_aumid_for(&core.config),
         &core.config.product.name,

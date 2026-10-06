@@ -26,6 +26,7 @@ import { composeAgreementDocs } from "./agreementDoc";
 import AppTitleBar from "./components/AppTitleBar";
 import PathField, { type DriveInfo } from "./components/PathField";
 import LogPane, { type LogLine } from "./components/LogPane";
+import PairingPane from "./components/PairingPane";
 import {
   isInstallerLocale,
   LOCALE_OPTIONS,
@@ -60,7 +61,7 @@ import { invoke, listen, openDirectory, tauriWindow } from "./tauri";
  */
 
 type Mode = "local";
-type StepKey = "language" | "mode" | "license" | "install" | "done" | `content:${string}`;
+type StepKey = "language" | "mode" | "pairing" | "license" | "install" | "done" | `content:${string}`;
 
 interface DirCandidate {
   kind: string;
@@ -105,7 +106,7 @@ interface FlowEventPayload {
 // Step keys in rail order (language leads, the wizard's first step); the
 // labels resolve from the string table per render so a locale switch
 // relabels the timeline live.
-const BASE_STEP_KEYS = ["language", "mode", "license", "install", "done"] as const;
+const BASE_STEP_KEYS = ["language", "mode", "pairing", "license", "install", "done"] as const;
 
 /** One flow entry: the pane key + its timeline label. */
 interface FlowStep {
@@ -114,6 +115,12 @@ interface FlowStep {
   kind: string;
   /** The resolved pipeline step backing a `content:` pane. */
   step?: { kind: string; title: string; body?: string | null };
+  /** The pairing contract backing a `pairing` pane. */
+  pairing?: {
+    source: { kind: string; official?: string; allow_custom?: boolean };
+    identity?: { node_id?: boolean; name?: boolean; tier?: number };
+    env_file?: string;
+  };
 }
 
 /** The wizard's flow from the resolved pipeline: content steps slot in
@@ -121,8 +128,20 @@ interface FlowStep {
  * in declaration order); mode/scope fold into the location pane and
  * install/done cap the array. */
 function buildFlow(
-  steps: { kind: string; title: string; body?: string | null }[] | null,
-  labels: { language: string; mode: string; license: string; install: string; done: string },
+  steps: {
+    kind: string;
+    title: string;
+    body?: string | null;
+    pairing?: FlowStep["pairing"];
+  }[] | null,
+  labels: {
+    language: string;
+    mode: string;
+    pairing: string;
+    license: string;
+    install: string;
+    done: string;
+  },
 ): FlowStep[] {
   const out: FlowStep[] = [
     { key: "language", label: labels.language, kind: "language" },
@@ -135,6 +154,13 @@ function buildFlow(
     } else if (st.kind === "license") {
       out.push({ key: "license", label: labels.license, kind: "license" });
       license = true;
+    } else if (st.kind === "pairing" && st.pairing) {
+      out.push({
+        key: "pairing",
+        label: labels.pairing,
+        kind: "pairing",
+        pairing: st.pairing,
+      });
     }
   }
   if (!license) out.splice(2, 0, { key: "license", label: labels.license, kind: "license" });
@@ -175,8 +201,15 @@ export default defineComponent({
     // included, the checked ones stream in right after the install.
     // The resolved wizard pipeline (get_config) — content steps render
     // from here at their declaration position.
-    const stepsCfg = ref<{ kind: string; title: string; body?: string | null }[]>([]);
+    const stepsCfg = ref<{
+      kind: string;
+      title: string;
+      body?: string | null;
+      pairing?: FlowStep["pairing"];
+    }[]>([]);
     const flashDeclared = ref(false);
+    // Whether the pairing pane reached its success card (unlocks Next).
+    const pairingClaimed = ref(false);
     const attachments = ref<
       { key: string; title: string; included: boolean; size: number | null }[]
     >([]);
@@ -329,6 +362,11 @@ export default defineComponent({
     // backend (the probe creates + deletes a temp file per call). The
     // answer only lands while it is still about the current path.
     let writableTimer: ReturnType<typeof setTimeout> | null = null;
+    // Re-entering the pairing pane re-arms its Next gate: a later FAILED
+    // re-pair must not ride a stale unlocked button.
+    watch(step, (value) => {
+      if (value === "pairing") pairingClaimed.value = false;
+    });
     watch(dir, (value) => {
       const target = value.trim();
       if (writableTimer !== null) clearTimeout(writableTimer);
@@ -622,6 +660,9 @@ export default defineComponent({
       if (finishing.value) return;
       finishing.value = true;
       try {
+        // The pairing claim rides the finish into the install dir as the
+        // manifest's env-file (no-op when the run never paired).
+        await invoke("write_pairing_env", { dir: dir.value.trim() });
         await invoke("set_shortcuts", {
           desktop: desktopShortcut.value,
           menu: startMenuShortcut.value,
@@ -840,7 +881,10 @@ export default defineComponent({
         );
       }
 
-      const flow = buildFlow(stepsCfg.value, withProduct(strings(locale.value)).steps);
+      const flow = buildFlow(stepsCfg.value, {
+        ...withProduct(strings(locale.value)).steps,
+        pairing: withProduct(strings(locale.value)).pairing.title,
+      });
       const flowIndex = (key: string) => flow.findIndex((f) => f.key === key);
       const timelineSteps = flow.map((f) => ({ key: f.key, label: f.label }));
 
@@ -951,6 +995,12 @@ export default defineComponent({
               </section>
             );
           })()
+        ) : step.value === "pairing" && flow[flowIndex(step.value)]?.pairing ? (
+          <PairingPane
+            strings={withProduct(strings(locale.value)).pairing}
+            config={flow[flowIndex(step.value)].pairing!}
+            onClaimed={() => (pairingClaimed.value = true)}
+          />
         ) : step.value === "license" ? (
           <section class="wizard-pane">
             <h1>{s.license.title}</h1>
@@ -1167,6 +1217,24 @@ export default defineComponent({
                       variant="primary"
                       size="lg"
                       onClick={() => go(flow[flowIndex(step.value) + 1].key)}
+                    >
+                      {s.nav.next}
+                    </HkButton>
+                  </>
+                )}
+                {step.value === "pairing" && (
+                  <>
+                    <HkButton
+                      variant="ghost"
+                      onClick={() => go(flow[flowIndex("pairing") - 1].key)}
+                    >
+                      {s.nav.back}
+                    </HkButton>
+                    <HkButton
+                      variant="primary"
+                      size="lg"
+                      disabled={!pairingClaimed.value}
+                      onClick={() => go(flow[flowIndex("pairing") + 1].key)}
                     >
                       {s.nav.next}
                     </HkButton>
