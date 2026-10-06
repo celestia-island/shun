@@ -443,6 +443,14 @@ fn os_prefers_light() -> bool {
     .unwrap_or(true)
 }
 
+/// Non-Windows twin of [`os_prefers_light`]: there is no personalization
+/// registry to read, so the probe resolves LIGHT — the same floor the
+/// user direction set for an unreadable registry on Windows.
+#[cfg(not(windows))]
+fn os_prefers_light() -> bool {
+    true
+}
+
 fn resolve_theme(config: &ShunConfig) -> Theme {
     let shell = config.shell.clone().unwrap_or_default();
     let accent = shell.theme.as_ref().and_then(|theme| theme.accent);
@@ -4188,6 +4196,10 @@ impl eframe::App for FallbackApp {
             self.dwm_rounded = true;
             #[cfg(windows)]
             apply_dwm_rounding(frame);
+            // Keep `frame` live on the other hosts: the rounding call is
+            // Windows-only, but the trait signature is uniform.
+            #[cfg(not(windows))]
+            let _ = frame;
         }
         let theme = self.theme;
 

@@ -46,6 +46,11 @@ shun = { path = ".." }
 tauri = { version = "^2" }
 tauri-plugin-dialog = { version = "^2" }
 
+# The wallpaper fetch (the manifest's image source; the same client the
+# online payload lane rides). Platform-neutral: the fallback UI runs on
+# every host the shell builds for, and so does its wallpaper.
+ureq = "2"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
@@ -65,9 +70,6 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 # The OS app-theme probe (AppsUseLightTheme) for the `system` mode.
 winreg = "0.56.0"
-# The wallpaper fetch (the manifest's image source; the same client the
-# online payload lane rides).
-ureq = "2"
 
 # The shell carries no `[package.metadata.shun]` of its own: the delivery
 # manifest it embeds comes from the target application (SHUN_MANIFEST, or

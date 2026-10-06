@@ -925,7 +925,6 @@ const WINDOW_TITLES: &[(&str, &str, &str)] = &[
 ];
 
 /// Whether `value` is one of the wizard locale strings.
-#[cfg(windows)]
 fn is_wizard_locale(value: &str) -> bool {
     WINDOW_TITLES.iter().any(|(k, _, _)| *k == value)
 }
@@ -978,12 +977,28 @@ pub(crate) fn title_for_tag(tag: &str, config: &ShunConfig, uninstall: bool) -> 
 
 #[cfg(not(windows))]
 pub(crate) fn os_window_title(config: &ShunConfig, uninstall: bool) -> String {
-    let template = if uninstall {
-        "Uninstall {product}"
-    } else {
-        "{product} Installer"
-    };
-    template.replace("{product}", &config.product.name)
+    // Same resolution order as the Windows twin, minus the registry probe:
+    // the saved wizard language, then the environment's locale, then the
+    // zh-Hans floor — all through the shared title table, so the native
+    // frame (taskbar / alt-tab) localizes on every host.
+    let saved = load_prefs(&local_appdata(), &config.product.name)
+        .language
+        .filter(|l| is_wizard_locale(l));
+    let tag = saved
+        .or_else(env_locale_tag)
+        .unwrap_or_else(|| "zh-Hans".into());
+    title_for_tag(&tag, config, uninstall)
+}
+
+/// The environment's locale (`LC_ALL`, then `LANG`) as a tag, with the
+/// encoding suffix and the C/POSIX non-locales stripped.
+#[cfg(not(windows))]
+fn env_locale_tag() -> Option<String> {
+    std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LANG"))
+        .ok()
+        .map(|value| value.split('.').next().unwrap_or("").trim().to_string())
+        .filter(|tag| !tag.is_empty() && tag != "C" && tag != "POSIX")
 }
 
 // ── WebView2 bootstrap ───────────────────────────────────────────────────

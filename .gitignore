@@ -7,7 +7,9 @@ Cargo.lock
 __pycache__/
 *.pyc
 
-dist/
+# Build outputs at the repo root only — shell/web/dist is a committed
+# build artifact (AGENTS §7) and must NOT be ignored.
+/dist/
 node_modules/
 
 # celestia-devtools: staged-on-demand shared justfile recipes (just fetch)
