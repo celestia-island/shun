@@ -31,6 +31,9 @@ pub mod flow;
 // probing, and conventional install-root candidates.
 pub mod fs_probe;
 pub mod msix;
+#[cfg(feature = "online")]
+pub mod pairing;
+pub mod pairing_scripts;
 pub mod payload;
 // The online payload source rides the optional `ureq` dependency; without
 // the feature the crate still builds for offline consumers (found by the

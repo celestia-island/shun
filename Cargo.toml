@@ -24,7 +24,9 @@ tar.workspace = true
 zstd.workspace = true
 sha2.workspace = true
 walkdir.workspace = true
-ureq = { version = "^2", optional = true }
+# `json` enables `Request::send_json` (the pairing gateway client posts
+# JSON-RPC bodies).
+ureq = { version = "^2", optional = true, features = ["json"] }
 clap = { version = "^4", features = ["derive"], optional = true }
 image = { version = "^0.25", default-features = false, features = ["ico", "png", "webp"], optional = true }
 # Interpreter probe (optional, `python-probe`): links the build host's
