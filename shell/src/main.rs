@@ -21,11 +21,14 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod diag;
 mod fallback;
 #[cfg(windows)]
 mod screenshot;
 mod terminal;
 mod tui;
+#[cfg(windows)]
+mod window_frame;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1018,7 +1021,7 @@ fn bootstrap_fixed_webview2(config: &ShunConfig, payload: &ArchivePayload) {
         _ => return,
     };
     let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) else {
-        eprintln!("shun: no LOCALAPPDATA to cache the fixed-version runtime in");
+        crate::diag!("shun: no LOCALAPPDATA to cache the fixed-version runtime in");
         return;
     };
     let cache = local
@@ -1026,7 +1029,7 @@ fn bootstrap_fixed_webview2(config: &ShunConfig, payload: &ArchivePayload) {
         .join(&config.product.name)
         .join("webview2");
     if let Err(err) = payload.extract_prefix(&cache, &runtime_path, &mut |_| {}) {
-        eprintln!("shun: staging the fixed-version runtime failed ({err}); falling back");
+        crate::diag!("shun: staging the fixed-version runtime failed ({err}); falling back");
         return;
     }
     // SAFETY: single-threaded bootstrap before any UI thread exists.
@@ -1064,7 +1067,7 @@ fn main() {
     match face {
         Face::Silent => {
             if let Err(err) = run_headless(&cli, &config, &payload) {
-                eprintln!("shun: {err}");
+                crate::diag!("shun: {err}");
                 std::process::exit(1);
             }
         }
@@ -1076,7 +1079,7 @@ fn main() {
         }
         Face::Tui => {
             if let Err(err) = tui::run(config, payload, cli.uninstall) {
-                eprintln!("shun: {err}");
+                crate::diag!("shun: {err}");
                 std::process::exit(1);
             }
         }
@@ -1549,6 +1552,12 @@ fn run_shell(
             let _ = (&screenshot, delay);
             if let Some(window) = app.get_webview_window("installer") {
                 let _ = window.set_title(&native_title);
+                // Collapse the hidden non-client frame this window carries
+                // for its drop shadow, so the webview reaches every edge.
+                #[cfg(windows)]
+                if let Ok(hwnd) = window.hwnd() {
+                    window_frame::fill(hwnd.0 as _);
+                }
                 // The window/taskbar icon follows the manifest's product
                 // logo — the same bytes the egui face renders into its
                 // viewport — instead of the generic exe resource.
@@ -1560,7 +1569,7 @@ fn run_shell(
                             width,
                             height,
                         ))
-                        .map_err(|e| eprintln!("shun: window icon: {e}"));
+                        .map_err(|e| crate::diag!("shun: window icon: {e}"));
                 }
                 // Frameless windows lose BOTH the rounded corners and
                 // the shadow until DWMWCP_ROUND lands — the same hint

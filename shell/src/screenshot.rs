@@ -40,11 +40,11 @@ pub fn schedule_by_title(title: String, path: PathBuf, delay_ms: u64) {
 
 fn run_capture(hwnd: isize, path: &std::path::Path) {
     if hwnd == 0 {
-        eprintln!("shun: screenshot failed: target window not found");
+        crate::diag!("shun: screenshot failed: target window not found");
         std::process::exit(1);
     }
     if let Err(err) = capture_hwnd(hwnd, path) {
-        eprintln!("shun: screenshot failed: {err}");
+        crate::diag!("shun: screenshot failed: {err}");
         std::process::exit(1);
     }
     std::process::exit(0);
