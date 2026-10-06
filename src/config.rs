@@ -359,7 +359,24 @@ impl ShunConfig {
                                     (await_script, "await"),
                                     (record, "record"),
                                 ] {
-                                    if !base.join(path).is_file() {
+                                    // Containment, not just resolvability:
+                                    // `base.join` silently discards the
+                                    // base for an absolute path, and a
+                                    // `..` walks out of it — either would
+                                    // let the manifest run scripts from
+                                    // anywhere on disk.
+                                    let script = std::path::Path::new(path);
+                                    if script.is_absolute()
+                                        || script
+                                            .components()
+                                            .any(|c| matches!(c, std::path::Component::ParentDir))
+                                    {
+                                        return Err(config_error(&format!(
+                                            "pairing {what} script `{path}` must be \
+                                             a relative path inside the config base"
+                                        )));
+                                    }
+                                    if !base.join(script).is_file() {
                                         return Err(config_error(&format!(
                                             "pairing {what} script `{path}` not found"
                                         )));
@@ -1969,6 +1986,23 @@ mod tests {
             ]);
             assert!(config.resolve_steps(Path::new("."), None).is_ok(), "{fine}");
         }
+    }
+
+    #[test]
+    fn gateway_allow_custom_defaults_to_true_when_omitted() {
+        let doc: serde_json::Value =
+            serde_json::from_str(r#"{"kind":"gateway","official":"https://g"}"#).unwrap();
+        let source: PairingSource = serde_json::from_value(doc).unwrap();
+        assert!(
+            matches!(
+                source,
+                PairingSource::Gateway {
+                    allow_custom: true,
+                    ..
+                }
+            ),
+            "an omitted allow-custom must keep the custom gateway input ON"
+        );
     }
 
     #[test]
