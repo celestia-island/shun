@@ -542,7 +542,9 @@ fn joined_license_body(docs: &[ResolvedLicenseDoc]) -> Option<String> {
 /// joined to: no absolute form, no `..`, and no Windows-only escape
 /// (`C:` drive-relative prefixes replace the whole path on join;
 /// backslashes are separators on Windows but ordinary characters on Unix,
-/// where validation runs today).
+/// where validation runs today). Lexical containment only — a symlinked
+/// subdirectory under the base still resolves elsewhere, which the
+/// trusted-filesystem threat model accepts.
 fn contained_relative(path: &str) -> bool {
     let trimmed = path.trim();
     if trimmed.is_empty() {
