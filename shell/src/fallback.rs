@@ -1895,7 +1895,7 @@ pub fn run(
     if let Err(err) = result {
         // The GUI failed to start (no graphics context, ...). There is no
         // UI left to report through; the exit code says it.
-        eprintln!("shun: fallback UI failed: {err}");
+        crate::diag!("shun: fallback UI failed: {err}");
         std::process::exit(1);
     }
 }
