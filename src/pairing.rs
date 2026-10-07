@@ -107,12 +107,28 @@ impl PairingClient {
         name: Option<&str>,
         tier: Option<u8>,
     ) -> Result<PairingCode, String> {
+        self.request_sys(node_id, name, tier, &serde_json::Value::Null)
+    }
+
+    /// [`PairingClient::request`] with the installer's self-reported
+    /// system profile attached — the panel's inspect step renders it
+    /// while the operator decides.
+    pub fn request_sys(
+        &self,
+        node_id: &str,
+        name: Option<&str>,
+        tier: Option<u8>,
+        sys: &serde_json::Value,
+    ) -> Result<PairingCode, String> {
         let mut params = serde_json::json!({ "node_id": node_id });
         if let Some(name) = name {
             params["name"] = serde_json::json!(name);
         }
         if let Some(tier) = tier {
             params["tier"] = serde_json::json!(tier);
+        }
+        if sys.is_object() {
+            params["sys"] = sys.clone();
         }
         let answer = self.post("pairing.request", &params)?;
         let code = answer["code"]
