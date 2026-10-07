@@ -30,7 +30,7 @@ jobs:
           pnpm build
 
       - name: Build demo shell
-        run: cargo build --release -p shun_demo_shell
+        run: cargo build --release -p shun_installer
 
       - name: Package artifact
         shell: pwsh
