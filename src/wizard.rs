@@ -1135,13 +1135,17 @@ mod tests {
             "first candidate is the expanded pinned dir: {}",
             candidates[0].path
         );
-        // Platform-agnostic containment: Path::ends_with is separator-
-        // sensitive, and the pin's separators follow the manifest.
+        // The default is the first WRITABLE candidate of the pinned
+        // chain (a pin may point somewhere non-writable — a D:\ path on
+        // Linux — in which case the conventional chain legitimately
+        // wins; the structural contract is what both faces render).
         let default = default_location_for(&pinned);
-        assert!(
-            default.contains("Base") && default.ends_with("Wowsp"),
-            "the default resolves the pinned dir: {default}"
-        );
+        let expected = candidates
+            .iter()
+            .find(|candidate| candidate.writable)
+            .map(|candidate| candidate.path.clone())
+            .or_else(|| candidates.first().map(|candidate| candidate.path.clone()));
+        assert_eq!(Some(default), expected);
         assert_eq!(
             location_defaults_for(&location_config(None)),
             location_defaults("Wowsp"),

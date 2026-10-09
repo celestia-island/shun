@@ -208,11 +208,8 @@ impl ShunConfig {
                     .product
                     .clone()
                     .unwrap_or_else(|| "shun-product".to_string());
-                Ok(draft.into_config(
-                    name,
-                    "0.0.0".to_string(),
-                    path.parent().unwrap_or(Path::new("")),
-                ))
+                let version = draft.version.clone().unwrap_or_else(|| "0.0.0".to_string());
+                Ok(draft.into_config(name, version, path.parent().unwrap_or(Path::new(""))))
             }
             other => Err(crate::error::ShunError::Config(format!(
                 "unsupported config extension: {other}",
@@ -1645,6 +1642,12 @@ struct ShunMetadataDraft {
     /// Product name override; defaults to the package name.
     #[serde(default)]
     product: Option<String>,
+    /// Product version for standalone manifests (the cargo-manifest
+    /// lane takes the package version). Defaults to 0.0.0 — every
+    /// published artifact should pin it (the ARP entry and the
+    /// artifact file name both carry it).
+    #[serde(default)]
+    version: Option<String>,
     #[serde(default)]
     publisher: Option<String>,
     #[serde(default)]
@@ -2789,6 +2792,44 @@ zh-Hans = "NOTICE.zh-Hans.md"
         assert_eq!(license.licenses[1].body, "notice body\n");
     }
 
+    #[test]
+    fn standalone_toml_carries_product_version_and_policies() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("shun.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+product = "Wowsp"
+version = "1.2.3"
+publisher = "langyo"
+payload = "payload"
+
+[install]
+local = true
+portable = true
+default-dir = '%LOCALAPPDATA%\Programs\Wowsp'
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_path(&manifest).unwrap();
+        assert_eq!(config.product.name, "Wowsp");
+        assert_eq!(config.product.version, "1.2.3");
+        assert_eq!(config.product.publisher.as_deref(), Some("langyo"));
+        let install = config
+            .targets
+            .iter()
+            .find_map(|t| match t {
+                TargetConfig::Install(install) => Some(install.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            install.default_dir.as_deref(),
+            Some(r"%LOCALAPPDATA%\Programs\Wowsp"),
+            "the standalone lane parses the install policies"
+        );
+    }
     #[test]
     fn title_locales_localize_the_document_headings() {
         let dir = tempfile::tempdir().unwrap();

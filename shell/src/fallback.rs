@@ -1946,7 +1946,7 @@ pub fn run(
             let (_sender, receiver) = channel::<WorkerMsg>();
             let wallpaper_rx = spawn_wallpaper_fetcher(&config);
             let caption_icons = CaptionIcons::load(&cc.egui_ctx);
-            let mut app = FallbackApp::new(
+            let app = FallbackApp::new(
                 config,
                 payload,
                 reason,
@@ -1959,8 +1959,14 @@ pub fn run(
                 caption_icons,
                 SHUN_FLAVOR.trim().to_string(),
             );
+            // The debug-only stage override rebinds mutably; a release
+            // build never touches it (an unconditional `mut` warns there).
             #[cfg(debug_assertions)]
-            app.debug_force_stage();
+            let app = {
+                let mut app = app;
+                app.debug_force_stage();
+                app
+            };
             Ok(Box::new(app))
         }),
     );
