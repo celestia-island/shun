@@ -64,7 +64,10 @@ enum CliCommand {
         manifest: PathBuf,
     },
     /// Build delivery artifacts: resolve the manifest, pack the payload,
-    /// drive the shell build, then sign the installer.
+    /// drive the shell build, then sign the installer. The shell binary
+    /// statically links the CRT on msvc targets (+crt-static, merged
+    /// into any RUSTFLAGS you set), so the artifact runs on stock
+    /// Windows without the VC++ Redistributable.
     Build {
         /// Delivery manifest: a Cargo.toml with [package.metadata.shun] or
         /// a standalone .toml/.json config.
@@ -110,7 +113,10 @@ enum CliCommand {
     /// Build an application and stage its binary into the payload
     /// directory declared by its delivery manifest. Everything — the
     /// cargo package, the bin name, the payload root, the entry path —
-    /// is derived from the manifest; nothing is hardcoded.
+    /// is derived from the manifest; nothing is hardcoded. The staged
+    /// app binary is YOURS: pin +crt-static yourself (a repo
+    /// .cargo/config.toml is the usual spot) if it must run without
+    /// the VC++ Redistributable — shun only pins its own binaries.
     Stage {
         /// Delivery manifest: the application's Cargo.toml carrying
         /// `[package.metadata.shun]`.
@@ -130,6 +136,155 @@ fn main() {
     if let Err(err) = run(cli.command) {
         eprintln!("error: {err}");
         std::process::exit(1);
+    }
+}
+
+// ── Static CRT enforcement ───────────────────────────────────────────────
+
+/// The rustflags fragment that statically links the CRT. A dynamically
+/// linked Rust/MSVC binary imports VCRUNTIME140.dll; a stock Windows
+/// machine without the VC++ Redistributable then dies on a loader dialog
+/// before ANY code of ours runs — the egui degrade face included. The
+/// published shells must never take that dependency (see the repo-root
+/// `.cargo/config.toml` for the in-repo half of this contract).
+const STATIC_CRT_FLAG: &str = "-C target-feature=+crt-static";
+
+/// The same flag as ONE argv token — cargo passes CARGO_ENCODED_RUSTFLAGS
+/// entries to rustc verbatim with no whitespace splitting, so the encoded
+/// lane must append the glued spelling (a space would make rustc parse
+/// `' target-feature'` as the option name and fail the build).
+const STATIC_CRT_FLAG_ENCODED: &str = "-Ctarget-feature=+crt-static";
+
+/// The 0x1f unit separator cargo uses for CARGO_ENCODED_RUSTFLAGS.
+const ENCODED_SEP: char = '\u{1f}';
+
+/// Whether a rustflags value already decides the CRT (either direction):
+/// a present `crt-static` token means the caller pinned it — including an
+/// explicit `-crt-static` disable, which stays caller-wins (with a warning
+/// from [`warn_dynamic_crt_pin`]) rather than fighting the caller.
+fn pins_crt(mut flags: impl Iterator<Item = String>) -> bool {
+    flags.any(|f| f.contains("crt-static"))
+}
+
+/// [`STATIC_CRT_FLAG`] merged into a whitespace-split RUSTFLAGS value:
+/// `None` when the value already decides the CRT (no change needed),
+/// `Some` otherwise — the existing flags always survive. An empty value
+/// is treated as unset (the empty-var-to-clear idiom is common).
+fn merged_rustflags(existing: Option<&str>) -> Option<String> {
+    let existing = existing?.trim();
+    if existing.is_empty() || pins_crt(existing.split_whitespace().map(str::to_string)) {
+        return None;
+    }
+    Some(format!("{existing} {STATIC_CRT_FLAG}"))
+}
+
+/// The CARGO_ENCODED_RUSTFLAGS spelling of the same merge (entries stay
+/// single tokens; empty entries — a set-but-empty variable — are dropped,
+/// cargo would hand rustc a lone empty-string argument otherwise).
+fn merged_encoded_rustflags(existing: Option<&str>) -> Option<String> {
+    let existing = existing?.trim_matches(ENCODED_SEP);
+    if existing.is_empty() || pins_crt(existing.split(ENCODED_SEP).map(str::to_string)) {
+        return None;
+    }
+    Some(format!("{existing}{ENCODED_SEP}{STATIC_CRT_FLAG_ENCODED}"))
+}
+
+/// Whether a `--target` triple (or the host, for `None`) links against
+/// the dynamic MSVC CRT — the only lane that needs the flag.
+fn is_msvc_target(target: Option<&str>) -> bool {
+    match target {
+        Some(triple) => triple.ends_with("-windows-msvc"),
+        // The published binaries only ever target windows-msvc hosts;
+        // GNU targets keep their static-by-default mingw runtime.
+        None => cfg!(target_os = "windows") && cfg!(target_env = "msvc"),
+    }
+}
+
+/// The observable half of caller-wins: an explicit `-crt-static` pin
+/// ships the dynamic CRT on purpose, so say so instead of failing silent.
+fn warn_dynamic_crt_pin(existing: &str) {
+    if existing.contains("-crt-static") {
+        eprintln!(
+            "shun: RUSTFLAGS pins -crt-static — the built binary will need the \
+             VC++ Redistributable (VCRUNTIME140.dll) at runtime"
+        );
+    }
+}
+
+/// Pins the static CRT onto a child cargo invocation. Cargo's rustflags
+/// precedence is CARGO_ENCODED_RUSTFLAGS > RUSTFLAGS > config files, so
+/// the flag must merge into whichever variable is already in play — the
+/// caller's environment, or a manifest variant env that overrides it (a
+/// plain child `env` write would clobber the variant's value). Setting
+/// the child RUSTFLAGS when neither is in play does shadow rustflags a
+/// consumer config file would contribute to the shell build — unavoidable
+/// (cargo has no append-to-config API) and deliberate: the static-CRT
+/// contract outweighs unknown config rustflags here.
+fn ensure_static_crt(
+    cargo: &mut StdCommand,
+    variant_env: &std::collections::BTreeMap<String, String>,
+) {
+    // A manifest variant env may pin either variable itself; those keys
+    // merge here instead of riding `cargo.env` at the call site (a plain
+    // child-env write would be clobbered by this pin, or would defeat it
+    // through the encoded variable's precedence).
+    let variant_key = |name: &str| variant_env.get(name).map(String::as_str);
+    let mut merge_encoded = |existing: &str| {
+        warn_dynamic_crt_pin(existing);
+        match merged_encoded_rustflags(Some(existing)) {
+            Some(merged) => {
+                cargo.env("CARGO_ENCODED_RUSTFLAGS", merged);
+            }
+            None => {
+                cargo.env("CARGO_ENCODED_RUSTFLAGS", existing);
+            }
+        }
+    };
+    // CARGO_ENCODED_RUSTFLAGS wins over RUSTFLAGS; a variant's value wins
+    // over the caller environment on either lane.
+    if let Some(existing) = variant_key("CARGO_ENCODED_RUSTFLAGS") {
+        merge_encoded(existing);
+        return;
+    }
+    if let Some(existing) = std::env::var_os("CARGO_ENCODED_RUSTFLAGS")
+        .filter(|v| !v.to_string_lossy().trim_matches(ENCODED_SEP).is_empty())
+    {
+        let Some(existing) = existing.to_str() else {
+            eprintln!(
+                "shun: CARGO_ENCODED_RUSTFLAGS is not valid UTF-8; skipping the static-CRT pin"
+            );
+            return;
+        };
+        merge_encoded(existing);
+        return;
+    }
+    let mut merge_plain = |existing: Option<&str>, from_variant: bool| {
+        let Some(existing) = existing.filter(|v| !v.trim().is_empty()) else {
+            // Nothing in play: set the flag — unless a variant set an
+            // EMPTY RUSTFLAGS on purpose (keep the caller's clearing).
+            if !from_variant {
+                cargo.env("RUSTFLAGS", STATIC_CRT_FLAG);
+            }
+            return;
+        };
+        warn_dynamic_crt_pin(existing);
+        match merged_rustflags(Some(existing)) {
+            Some(merged) => {
+                cargo.env("RUSTFLAGS", merged);
+            }
+            None => {
+                cargo.env("RUSTFLAGS", existing);
+            }
+        }
+    };
+    match variant_key("RUSTFLAGS") {
+        Some(existing) => merge_plain(Some(existing), true),
+        None => merge_plain(
+            std::env::var_os("RUSTFLAGS")
+                .and_then(|v| v.into_string().ok())
+                .as_deref(),
+            false,
+        ),
     }
 }
 
@@ -255,11 +410,24 @@ fn run(command: CliCommand) -> Result<(), String> {
             if let Some(variant) = &variant {
                 cargo.env("SHUN_VARIANT", variant);
                 for (key, value) in &variant_env {
-                    cargo.env(key, value);
+                    // RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS ride through
+                    // the static-CRT merge below instead (a plain env
+                    // write here would be clobbered by — or defeat —
+                    // the pin).
+                    if key != "RUSTFLAGS" && key != "CARGO_ENCODED_RUSTFLAGS" {
+                        cargo.env(key, value);
+                    }
                 }
             }
             if let Some(target) = &target {
                 cargo.arg("--target").arg(target);
+            }
+            // The static-CRT pin rides the child env: config discovery
+            // is CWD-based (a consumer-repo invocation never sees this
+            // repo's .cargo/config.toml) and a caller-set RUSTFLAGS
+            // would override config rustflags outright.
+            if is_msvc_target(target.as_deref()) {
+                ensure_static_crt(&mut cargo, &variant_env);
             }
             let status = cargo
                 .status()
@@ -840,5 +1008,65 @@ mod sign {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod static_crt_tests {
+    use super::*;
+
+    /// The merges preserve caller flags, never duplicate the pin, and
+    /// treat set-but-empty values as unset (the empty-var-to-clear
+    /// idiom). The encoded lane appends ONE token — cargo passes those
+    /// entries to rustc verbatim, so a space inside would fail the
+    /// child build with `unknown codegen option: ' target-feature'`.
+    #[test]
+    fn merges_preserve_flags_and_stay_single_token() {
+        assert_eq!(merged_rustflags(None), None);
+        assert_eq!(merged_rustflags(Some("")), None);
+        assert_eq!(merged_rustflags(Some("   ")), None);
+        assert_eq!(
+            merged_rustflags(Some("-C debuginfo=0")).as_deref(),
+            Some("-C debuginfo=0 -C target-feature=+crt-static")
+        );
+        // Already pinned (either direction) — caller wins, no change.
+        assert_eq!(merged_rustflags(Some(STATIC_CRT_FLAG)), None);
+        assert_eq!(
+            merged_rustflags(Some("-C target-feature=-crt-static -Zx")),
+            None
+        );
+
+        assert_eq!(merged_encoded_rustflags(None), None);
+        // Set-but-empty (bare separators included) degrades to unset.
+        assert_eq!(merged_encoded_rustflags(Some("")), None);
+        assert_eq!(merged_encoded_rustflags(Some("")), None);
+        assert_eq!(
+            merged_encoded_rustflags(Some("-Clink-arg=/x")).as_deref(),
+            Some(format!("-Clink-arg=/x{ENCODED_SEP}{STATIC_CRT_FLAG_ENCODED}").as_str()),
+        );
+        // The appended entry carries no space — one argv token.
+        assert!(!STATIC_CRT_FLAG_ENCODED.contains(' '));
+        assert!(
+            !merged_encoded_rustflags(Some("-Clink-arg=/x"))
+                .unwrap()
+                .rsplit(ENCODED_SEP)
+                .next()
+                .unwrap()
+                .contains(' ')
+        );
+        assert_eq!(
+            merged_encoded_rustflags(Some(format!("-Ca{ENCODED_SEP}{STATIC_CRT_FLAG}").as_str())),
+            None,
+        );
+    }
+
+    /// Only the msvc lane takes the pin: GNU targets keep their
+    /// static-by-default mingw runtime, non-Windows has no VC++ CRT.
+    #[test]
+    fn pin_targets_only_msvc() {
+        assert!(is_msvc_target(Some("x86_64-pc-windows-msvc")));
+        assert!(is_msvc_target(Some("aarch64-pc-windows-msvc")));
+        assert!(!is_msvc_target(Some("x86_64-pc-windows-gnu")));
+        assert!(!is_msvc_target(Some("x86_64-unknown-linux-gnu")));
     }
 }

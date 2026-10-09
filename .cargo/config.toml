@@ -1,0 +1,23 @@
+# Statically link the CRT into every msvc-target build of this workspace
+# (the `shun` CLI and the installer shells it produces). A dynamically
+# linked Rust/MSVC binary imports VCRUNTIME140.dll — stock Windows
+# machines without the VC++ Redistributable die on a "VCRUNTIME140.dll
+# missing" loader dialog before ANY code of ours runs, which defeats the
+# entire degrade story (the egui face never gets a chance to render).
+# `+crt-static` swaps the dynamic CRT import for the static libcmt, at a
+# negligible size cost for shipped binaries.
+#
+# NOTE: cargo discovers this file from the CURRENT DIRECTORY upward — a
+# `shun build` invoked from a consumer repository never sees it, and any
+# caller-set RUSTFLAGS overrides config rustflags entirely. The CLI
+# therefore ALSO merges the flag into the child cargo's environment
+# (see `ensure_static_crt` in src/bin/shun.rs); this file covers plain
+# in-repo builds (just demo / cargo build / cargo test).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
