@@ -208,11 +208,8 @@ impl ShunConfig {
                     .product
                     .clone()
                     .unwrap_or_else(|| "shun-product".to_string());
-                Ok(draft.into_config(
-                    name,
-                    "0.0.0".to_string(),
-                    path.parent().unwrap_or(Path::new("")),
-                ))
+                let version = draft.version.clone().unwrap_or_else(|| "0.0.0".to_string());
+                Ok(draft.into_config(name, version, path.parent().unwrap_or(Path::new(""))))
             }
             other => Err(crate::error::ShunError::Config(format!(
                 "unsupported config extension: {other}",
@@ -474,8 +471,12 @@ impl ShunConfig {
                 let path = locale
                     .and_then(|l| doc.locale_paths.get(l))
                     .unwrap_or(&doc.path);
+                let title = locale
+                    .and_then(|l| doc.title_locales.get(l))
+                    .cloned()
+                    .or_else(|| doc.title.clone());
                 docs.push(ResolvedLicenseDoc {
-                    title: doc.title.clone(),
+                    title,
                     body: read_license(&path.display().to_string())?,
                 });
             }
@@ -703,6 +704,11 @@ impl ShunConfig {
 
 /// Delivery target. `install` performs direct Windows registration; `flash`
 /// writes images to block devices.
+// The install variant carries the whole policy table (216 B at the time
+// of writing — `default-dir` pushed it past the lint's 200 B delta
+// against the lean flash variant). Target lists hold a handful of
+// entries at most, so the padding cost of boxing would buy nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum TargetConfig {
@@ -756,6 +762,17 @@ pub struct InstallConfig {
     #[serde(default)]
     pub launch_after_install: ShortcutPolicy,
 
+    /// Overrides the wizard's default install location (the first
+    /// location candidate and the headless fallback, replacing the
+    /// `%LOCALAPPDATA%\<product>` convention). Environment variables
+    /// expand at runtime in both spellings — `%LOCALAPPDATA%` and
+    /// `${LOCALAPPDATA}` — so one manifest fits every user. Products
+    /// whose appdata root is reserved for something else (a cache, like
+    /// WoWSP's `%LOCALAPPDATA%\WoWSP`) point this at their conventional
+    /// install path (`%LOCALAPPDATA%\Programs\WoWSP`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_dir: Option<String>,
+
     /// Install scope: per-user (the default, no elevation anywhere) or
     /// machine-wide (Windows: HKLM, all-users shortcuts; the shell
     /// self-elevates), or a wizard question.
@@ -804,6 +821,7 @@ impl Default for InstallConfig {
             desktop_shortcut: DesktopShortcutPolicy::Ask,
             start_menu_shortcut: DesktopShortcutPolicy::Always,
             launch_after_install: ShortcutPolicy::default(),
+            default_dir: None,
             scope: ScopePolicy::User,
             verbs: Vec::new(),
             deep_links: Vec::new(),
@@ -1208,6 +1226,12 @@ pub struct LicenseDocConfig {
     /// (`zh-Hans`, `ja`, ...); a matching entry wins over `path`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub locale_paths: BTreeMap<String, PathBuf>,
+
+    /// Per-locale heading overrides keyed like `locale_paths`; a
+    /// matching entry wins over `title` (localized headings for
+    /// document sets whose body already varies per locale).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub title_locales: BTreeMap<String, String>,
 }
 
 /// An optional companion resource (an asset pack) declared beside the
@@ -1618,6 +1642,12 @@ struct ShunMetadataDraft {
     /// Product name override; defaults to the package name.
     #[serde(default)]
     product: Option<String>,
+    /// Product version for standalone manifests (the cargo-manifest
+    /// lane takes the package version). Defaults to 0.0.0 — every
+    /// published artifact should pin it (the ARP entry and the
+    /// artifact file name both carry it).
+    #[serde(default)]
+    version: Option<String>,
     #[serde(default)]
     publisher: Option<String>,
     #[serde(default)]
@@ -2740,6 +2770,7 @@ zh-Hans = "NOTICE.zh-Hans.md"
             .license_locales
             .insert("zh-Hans".into(), "LICENSE.zh.md".into());
         config.licenses = vec![LicenseDocConfig {
+            title_locales: BTreeMap::new(),
             title: Some("Demo notice".into()),
             path: "NOTICE.md".into(),
             locale_paths: BTreeMap::from([("zh-Hans".into(), "NOTICE.zh-Hans.md".into())]),
@@ -2762,11 +2793,72 @@ zh-Hans = "NOTICE.zh-Hans.md"
     }
 
     #[test]
+    fn standalone_toml_carries_product_version_and_policies() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("shun.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+product = "Wowsp"
+version = "1.2.3"
+publisher = "langyo"
+payload = "payload"
+
+[install]
+local = true
+portable = true
+default-dir = '%LOCALAPPDATA%\Programs\Wowsp'
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_path(&manifest).unwrap();
+        assert_eq!(config.product.name, "Wowsp");
+        assert_eq!(config.product.version, "1.2.3");
+        assert_eq!(config.product.publisher.as_deref(), Some("langyo"));
+        let install = config
+            .targets
+            .iter()
+            .find_map(|t| match t {
+                TargetConfig::Install(install) => Some(install.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            install.default_dir.as_deref(),
+            Some(r"%LOCALAPPDATA%\Programs\Wowsp"),
+            "the standalone lane parses the install policies"
+        );
+    }
+    #[test]
+    fn title_locales_localize_the_document_headings() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("NOTICE.md"), "notice body\n").unwrap();
+        std::fs::write(dir.path().join("NOTICE.zh.md"), "notice body zh\n").unwrap();
+        let mut config = sample();
+        config.licenses = vec![LicenseDocConfig {
+            title_locales: BTreeMap::from([("zh-Hans".into(), "演示声明".into())]),
+            title: Some("Demo notice".into()),
+            path: "NOTICE.md".into(),
+            locale_paths: BTreeMap::from([("zh-Hans".into(), "NOTICE.zh.md".into())]),
+        }];
+
+        let steps = config.resolve_steps(dir.path(), Some("zh-Hans")).unwrap();
+        let license = steps.iter().find(|s| s.kind == StepKind::License).unwrap();
+        // The localized heading wins; an unmapped locale keeps the base.
+        assert_eq!(license.licenses[0].title.as_deref(), Some("演示声明"));
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        let license = steps.iter().find(|s| s.kind == StepKind::License).unwrap();
+        assert_eq!(license.licenses[0].title.as_deref(), Some("Demo notice"));
+    }
+
+    #[test]
     fn licenses_alone_trigger_the_license_step() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("NOTICE.md"), "notice\n").unwrap();
         let mut config = sample();
         config.licenses = vec![LicenseDocConfig {
+            title_locales: BTreeMap::new(),
             title: None,
             path: "NOTICE.md".into(),
             locale_paths: BTreeMap::new(),
@@ -2812,6 +2904,7 @@ zh-Hans = "NOTICE.zh-Hans.md"
         // Several documents: `body` concatenates in order over the
         // divider while `licenses` keeps them separate.
         config.licenses = vec![LicenseDocConfig {
+            title_locales: BTreeMap::new(),
             title: Some("B".into()),
             path: "b.md".into(),
             locale_paths: BTreeMap::new(),

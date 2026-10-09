@@ -263,22 +263,20 @@ impl WizardCore {
     /// appdata → Program Files → one folder per fixed drive), the
     /// default being the first writable candidate.
     pub fn refresh_dir_defaults(&mut self) {
-        let product = self.config.product.name.clone();
-        let candidates = dir_candidates_for(&product);
-        let paths: Vec<PathBuf> = candidates.iter().map(|(_, p)| p.clone()).collect();
-        let dir = crate::fs_probe::first_writable(&paths)
-            .or_else(|| paths.first().cloned())
-            .unwrap_or_else(|| local_appdata().join(&product));
-        self.state.dir = dir.to_string_lossy().into_owned();
-        self.state.dir_writable = Some(true);
-        self.state.candidates = candidates
-            .into_iter()
-            .map(|(kind, path)| DirCandidate {
-                kind,
-                writable: crate::fs_probe::is_dir_writable(&path),
-                path: path.to_string_lossy().into_owned(),
-            })
-            .collect();
+        // Manifest-aware: a configured install.default-dir leads the
+        // chain (see location_defaults_for) so every face — webview,
+        // egui, TUI — defaults to the pinned location alike.
+        let candidates = location_defaults_for(&self.config);
+        let dir = candidates
+            .iter()
+            .find(|candidate| candidate.writable)
+            .map(|candidate| candidate.path.clone())
+            .or_else(|| candidates.first().map(|candidate| candidate.path.clone()));
+        if let Some(dir) = dir {
+            self.state.dir = dir;
+            self.state.dir_writable = Some(true);
+        }
+        self.state.candidates = candidates;
     }
 
     /// Sets the shown path and probes its writability (the same test
@@ -756,9 +754,12 @@ pub fn current_exe_dir() -> Option<PathBuf> {
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
 }
 
-/// The writability-probed location candidates for a product (the
-/// command layer's thin entry — faces that hold a [`WizardCore`] get the
-/// same list through [`WizardCore::refresh_dir_defaults`]).
+/// The writability-probed location candidates under the product-name
+/// convention (`%LOCALAPPDATA%\<product>` first). Manifest-aware
+/// callers — the shell's command layer, the egui face,
+/// [`WizardCore::refresh_dir_defaults`] — go through
+/// [`location_defaults_for`], which additionally leads with a
+/// configured `install.default-dir` when the manifest pins one.
 pub fn location_defaults(product: &str) -> Vec<DirCandidate> {
     dir_candidates_for(product)
         .into_iter()
@@ -768,6 +769,34 @@ pub fn location_defaults(product: &str) -> Vec<DirCandidate> {
             path: path.to_string_lossy().into_owned(),
         })
         .collect()
+}
+
+/// [`location_defaults`], manifest-aware: a configured
+/// `install.default-dir` (env-expanded, see [`expand_env_vars`])
+/// replaces the appdata candidate as the first and default location.
+pub fn location_defaults_for(config: &ShunConfig) -> Vec<DirCandidate> {
+    match configured_default_dir(config) {
+        Some(dir) => {
+            // The pin carries its own kind (both faces render the
+            // kind label; "appdata" would lie for off-appdata pins),
+            // and the conventional chain follows MINUS a path-equal
+            // twin — duplicate rows would double up in every picker.
+            let pinned = DirCandidate {
+                kind: "default-dir",
+                writable: crate::fs_probe::is_dir_writable(&dir),
+                path: dir.display().to_string(),
+            };
+            let pinned_path = pinned.path.to_lowercase();
+            let mut candidates = vec![pinned];
+            candidates.extend(
+                location_defaults(&config.product.name)
+                    .into_iter()
+                    .filter(|candidate| candidate.path.to_lowercase() != pinned_path),
+            );
+            candidates
+        }
+        None => location_defaults(&config.product.name),
+    }
 }
 
 /// The default install location: the first writable candidate, else the
@@ -780,6 +809,68 @@ pub fn default_location(product: &str) -> String {
         .unwrap_or_else(|| local_appdata().join(product))
         .to_string_lossy()
         .into_owned()
+}
+
+/// [`default_location`], manifest-aware (see [`location_defaults_for`]).
+pub fn default_location_for(config: &ShunConfig) -> String {
+    let candidates = location_defaults_for(config);
+    candidates
+        .iter()
+        .find(|candidate| candidate.writable)
+        .map(|candidate| candidate.path.clone())
+        .or_else(|| candidates.first().map(|candidate| candidate.path.clone()))
+        .unwrap_or_else(|| default_location(&config.product.name))
+}
+
+/// The install target's `default-dir` knob, env-expanded — `None` when
+/// the manifest leaves the location convention to the wizard.
+fn configured_default_dir(config: &ShunConfig) -> Option<PathBuf> {
+    let raw = config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => install.default_dir.as_deref(),
+        _ => None,
+    })?;
+    Some(PathBuf::from(expand_env_vars(raw)))
+}
+
+/// Expands `%VAR%` and `${VAR}` references from the process environment
+/// (unknown variables empty out — a half-expanded path would silently
+/// install somewhere wrong, so the segment just vanishes; a bare `$`
+/// and an unclosed marker stay literal). Manifests are shared across
+/// users, so any user-specific location must ride an env var rather
+/// than a literal.
+fn expand_env_vars(raw: &str) -> String {
+    fn push_var(out: &mut String, name: &str) {
+        if let Some(value) = std::env::var_os(name).filter(|v| !v.is_empty()) {
+            out.push_str(&value.to_string_lossy());
+        }
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(idx) = rest.find(['%', '$']) {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx..];
+        if let Some(body) = after.strip_prefix("${") {
+            let Some(end) = body.find('}') else {
+                out.push_str(after);
+                return out;
+            };
+            push_var(&mut out, &body[..end]);
+            rest = &body[end + 1..];
+        } else if let Some(body) = after.strip_prefix('%') {
+            let Some(end) = body.find('%') else {
+                out.push_str(after);
+                return out;
+            };
+            push_var(&mut out, &body[..end]);
+            rest = &body[end + 1..];
+        } else {
+            // A bare `$` (no `${`): not a reference we expand.
+            out.push('$');
+            rest = &after[1..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The root-drive guard for a bare path, config-aware (free-function
@@ -951,6 +1042,118 @@ fn log_line_of(record: &FlowLog) -> Option<(LogKind, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A minimal config with an optional install.default-dir — the
+    /// knob under test; everything else stays at the defaults.
+    fn location_config(default_dir: Option<&str>) -> crate::config::ShunConfig {
+        crate::config::ShunConfig {
+            product: crate::config::ProductIdentity {
+                name: "Wowsp".into(),
+                version: "1.0.0".into(),
+                publisher: None,
+                logo: None,
+            },
+            payload: None,
+            webview2: None,
+            script: None,
+            targets: vec![crate::config::TargetConfig::Install(
+                crate::config::InstallConfig {
+                    default_dir: default_dir.map(str::to_string),
+                    ..Default::default()
+                },
+            )],
+            shell: None,
+            source: None,
+            variants: None,
+            update: None,
+            attachments: Vec::new(),
+            license_sysl: None,
+            msix: None,
+            license: None,
+            license_locales: Default::default(),
+            licenses: Vec::new(),
+            custom_steps: Vec::new(),
+            steps: None,
+            signing: None,
+        }
+    }
+
+    /// `%VAR%` and `${VAR}` expand; unknown vars vanish; a bare `$` and
+    /// unclosed markers stay literal.
+    #[test]
+    fn env_vars_expand_in_both_spellings() {
+        // SAFETY: a SHUN_-namespaced test variable; nothing else reads
+        // it concurrently.
+        unsafe { std::env::set_var("SHUN_TEST_LOC", r"D:\Base") };
+        assert_eq!(
+            expand_env_vars(r"%SHUN_TEST_LOC%\Programs\Wowsp"),
+            r"D:\Base\Programs\Wowsp"
+        );
+        assert_eq!(
+            expand_env_vars("${SHUN_TEST_LOC}/Programs/Wowsp"),
+            r"D:\Base/Programs/Wowsp"
+        );
+        assert_eq!(expand_env_vars(r"%SHUN_TEST_MISSING%\App"), r"\App");
+        assert_eq!(expand_env_vars(r"C:\costs $5"), r"C:\costs $5");
+        assert_eq!(expand_env_vars("%SHUN_TEST_LOC"), "%SHUN_TEST_LOC");
+        assert_eq!(expand_env_vars("${SHUN_TEST_LOC"), "${SHUN_TEST_LOC");
+        // Two refs in one string, mixed spellings.
+        assert_eq!(
+            expand_env_vars(r"%SHUN_TEST_LOC%\${SHUN_TEST_LOC}"),
+            r"D:\Base\D:\Base"
+        );
+        // Empty names vanish; an unclosed % keeps the WHOLE remainder
+        // literal (a later well-formed ref does not rescue it).
+        assert_eq!(expand_env_vars("a%%b"), "ab");
+        assert_eq!(expand_env_vars("${}x"), "x");
+        assert_eq!(
+            expand_env_vars(r"100% off ${SHUN_TEST_LOC}"),
+            r"100% off ${SHUN_TEST_LOC}"
+        );
+        // SAFETY: test-scope cleanup, see the set above.
+        unsafe { std::env::remove_var("SHUN_TEST_LOC") };
+    }
+
+    /// A configured install.default-dir leads the candidate chain and
+    /// becomes the default; an unconfigured manifest keeps the product
+    /// convention byte-for-byte.
+    #[test]
+    fn default_dir_leads_the_location_candidates() {
+        // SAFETY: a SHUN_-namespaced test variable (its own name — the
+        // sibling test mutates a different one, and cargo runs these
+        // in parallel).
+        unsafe { std::env::set_var("SHUN_TEST_PIN", r"D:\Base") };
+        let pinned = location_config(Some(r"%SHUN_TEST_PIN%\Programs\Wowsp"));
+        let candidates = location_defaults_for(&pinned);
+        // The pin carries its own kind; the conventional chain follows
+        // minus a path-equal twin.
+        assert_eq!(candidates[0].kind, "default-dir");
+        // The pin expanded (%SHUN_TEST_LOC% → the test value) and leads
+        // the chain — the expanded form is what the faces display.
+        assert!(
+            candidates[0].path.contains("Base") && candidates[0].path.ends_with("Wowsp"),
+            "first candidate is the expanded pinned dir: {}",
+            candidates[0].path
+        );
+        // The default is the first WRITABLE candidate of the pinned
+        // chain (a pin may point somewhere non-writable — a D:\ path on
+        // Linux — in which case the conventional chain legitimately
+        // wins; the structural contract is what both faces render).
+        let default = default_location_for(&pinned);
+        let expected = candidates
+            .iter()
+            .find(|candidate| candidate.writable)
+            .map(|candidate| candidate.path.clone())
+            .or_else(|| candidates.first().map(|candidate| candidate.path.clone()));
+        assert_eq!(Some(default), expected);
+        assert_eq!(
+            location_defaults_for(&location_config(None)),
+            location_defaults("Wowsp"),
+            "no knob: identical to the product-based chain"
+        );
+        // SAFETY: test-scope cleanup, see the set above.
+        unsafe { std::env::remove_var("SHUN_TEST_PIN") };
+    }
 
     fn core_with(config_json: &str) -> WizardCore {
         let config: crate::config::ShunConfig = serde_json::from_str(config_json).unwrap();

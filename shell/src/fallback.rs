@@ -1286,12 +1286,12 @@ impl FallbackApp {
         // The initial location resolves exactly like the web face's
         // default_dir command: the first writable candidate from the
         // config-driven list, else the wizard's default.
-        let probed = shun::wizard::location_defaults(&config.product.name);
+        let probed = shun::wizard::location_defaults_for(&config);
         let dir = probed
             .iter()
             .find(|candidate| candidate.writable)
             .map(|candidate| candidate.path.clone())
-            .unwrap_or_else(|| shun::wizard::default_location(&config.product.name));
+            .unwrap_or_else(|| shun::wizard::default_location_for(&config));
         // The toggle state mirrors what resolve_theme resolved (the
         // solar clock's first-paint verdict counts for the session
         // until the user pins — or the clock itself flips it).
@@ -1561,6 +1561,7 @@ impl FallbackApp {
                 self.dir.trim(),
                 self.desktop_shortcut,
                 uninstalling,
+                &[],
             )
         }) {
             self.outcome = Some(Outcome::Failed(err));
@@ -1945,7 +1946,7 @@ pub fn run(
             let (_sender, receiver) = channel::<WorkerMsg>();
             let wallpaper_rx = spawn_wallpaper_fetcher(&config);
             let caption_icons = CaptionIcons::load(&cc.egui_ctx);
-            let mut app = FallbackApp::new(
+            let app = FallbackApp::new(
                 config,
                 payload,
                 reason,
@@ -1958,8 +1959,14 @@ pub fn run(
                 caption_icons,
                 SHUN_FLAVOR.trim().to_string(),
             );
+            // The debug-only stage override rebinds mutably; a release
+            // build never touches it (an unconditional `mut` warns there).
             #[cfg(debug_assertions)]
-            app.debug_force_stage();
+            let app = {
+                let mut app = app;
+                app.debug_force_stage();
+                app
+            };
             Ok(Box::new(app))
         }),
     );

@@ -37,6 +37,12 @@ manifest). The variable is absent when no language was chosen.
 Exporting the fact is all shun does — writing the language into the
 installed application's own configuration is the payload script's job.
 
+Two delivery facts ride along into every step: `SHUN_INSTALL_DIR`
+(the root-padded directory the flow delivers into) and
+`SHUN_PORTABLE` (`1`/`0`). Post-install relocation hooks — moving
+shipped packs into a per-user cache, writing stamps, dropping the
+bootstrap subtree — branch on exactly those two.
+
 Gotchas to normalize in the shun wrappers: Windows backslash paths are
 escape characters in duckscript arguments (pass forward-slash paths),
 and assignment is output-capture syntax (`x = cmd args`).

@@ -153,6 +153,19 @@ struct Cli {
     #[arg(long)]
     no_desktop: bool,
 
+    /// Start-menu shortcut answer for headless installs (`0` skips — or
+    /// removes an existing launcher — `1` creates it; absent keeps the
+    /// always-on convention). This is the updater contract: a product's
+    /// updater passes the user's current choice so an in-place update
+    /// refreshes launchers instead of accumulating or dropping them.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=1))]
+    shortcut_menu: Option<u8>,
+
+    /// Desktop shortcut answer for headless installs (`0` removes, `1`
+    /// creates; absent falls back to the `--no-desktop` convention).
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=1))]
+    shortcut_desktop: Option<u8>,
+
     /// The wizard language (carried through elevation, into scripts and
     /// the on-disk manifest).
     #[arg(long)]
@@ -380,20 +393,16 @@ struct DirDefaults {
 #[tauri::command]
 fn default_dir(state: State<'_, AppState>, mode: String) -> DirDefaults {
     let _ = mode;
-    let product = state
-        .core
-        .lock()
-        .expect("wizard core")
-        .config
-        .product
-        .name
-        .clone();
-    let candidates = shun::wizard::location_defaults(&product);
+    // Manifest-aware: a configured install.default-dir (env-expanded)
+    // leads the candidate chain instead of the per-user appdata
+    // convention.
+    let config = state.core.lock().expect("wizard core").config.clone();
+    let candidates = shun::wizard::location_defaults_for(&config);
     let dir = candidates
         .iter()
         .find(|candidate| candidate.writable)
         .map(|candidate| candidate.path.clone())
-        .unwrap_or_else(|| shun::wizard::default_location(&product));
+        .unwrap_or_else(|| shun::wizard::default_location_for(&config));
     DirDefaults {
         dir,
         removable: false,
@@ -780,10 +789,18 @@ fn download_attachment(
 /// events printed to the attached console. Machine scope re-launches
 /// under UAC with the resolved answers before anything runs.
 fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Result<(), String> {
+    // The explicit shortcut answers (updater contract) win over the
+    // `--no-desktop` convention; resolution happens once so the
+    // elevation gate and the post-install application agree.
+    let desktop_answer = cli
+        .shortcut_desktop
+        .map(|v| v != 0)
+        .unwrap_or(!cli.no_desktop);
+    let menu_answer = cli.shortcut_menu.map(|v| v != 0).unwrap_or(true);
     let dir = cli
         .dir
         .clone()
-        .unwrap_or_else(|| shun::wizard::default_location(&config.product.name));
+        .unwrap_or_else(|| shun::wizard::default_location_for(config));
     let dir = shun::wizard::pad_root_dir(config, &dir);
     let portable = cli.mode == "portable";
     let machine = cli.scope.as_deref() == Some("machine");
@@ -794,7 +811,22 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
         let ctx =
             shun::wizard::elevation_context(config, &dir, portable, true, cli.language.as_deref())
                 .map_err(|e| e.to_string())?;
-        ensure_elevated_for(&ctx, &cli.mode, &dir, !cli.no_desktop, false)?;
+        let raw_shortcut_args: Vec<String> = [
+            cli.shortcut_menu.map(|v| format!("--shortcut-menu={v}")),
+            cli.shortcut_desktop
+                .map(|v| format!("--shortcut-desktop={v}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        ensure_elevated_for(
+            &ctx,
+            &cli.mode,
+            &dir,
+            desktop_answer,
+            false,
+            &raw_shortcut_args,
+        )?;
     }
 
     let core = WizardCore::new(config.clone(), BTreeMap::new());
@@ -830,18 +862,39 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
         machine,
     };
     shun::wizard::run_install(&core, payload, &request, &mut print_event)?;
-    // Headless runs never see the done page: apply the conventional
-    // shortcut defaults (real installs only — portable and uninstalls
-    // create none).
+    // Headless runs never see the done page: apply the resolved
+    // shortcut answers (real installs only — portable and uninstalls
+    // create none). An explicit `0` REMOVES the launcher, so an
+    // in-place update refreshes launchers to the user's current choice.
     if !portable {
         let _ = shun::targets::shortcuts::apply_shortcut_choices(
             &shun::wizard::shortcut_aumid_for(config),
             &config.product.name,
             &core.main_exe(),
-            Some(!cli.no_desktop),
-            Some(true),
+            Some(desktop_answer),
+            Some(menu_answer),
             &core.nested_path(&request.dir),
         );
+    }
+    // Unattended updates self-heal: a product pinning
+    // `launch-after-install = "always"` gets the freshly installed app
+    // back on its feet right after the delivery (the flow just stopped
+    // the running copy on an overwrite install). The `ask` default
+    // keeps the historical headless behavior — no launch.
+    if !portable
+        && config.targets.iter().any(|t| {
+            matches!(
+                t,
+                TargetConfig::Install(shun::config::InstallConfig {
+                    launch_after_install: shun::config::ShortcutPolicy::Always,
+                    ..
+                })
+            )
+        })
+    {
+        if let Err(err) = shun::wizard::launch_installed(&core, &request.dir) {
+            println!("shun: launch failed: {err}");
+        }
     }
     println!("shun: install complete");
     Ok(())
@@ -880,6 +933,7 @@ pub(crate) fn ensure_elevated_for(
     dir: &str,
     desktop: bool,
     uninstalling: bool,
+    raw_shortcut_args: &[String],
 ) -> Result<(), String> {
     use shun::targets::install::InstallScope;
     if ctx.scope != InstallScope::Machine || shun::targets::elevate::is_elevated() {
@@ -888,6 +942,13 @@ pub(crate) fn ensure_elevated_for(
     let mut args = format!("--silent --mode={mode} --dir=\"{}\"", dir.trim());
     if !desktop {
         args.push_str(" --no-desktop");
+    }
+    // The raw shortcut answers ride along verbatim: the elevated
+    // copy re-resolves them from its own argv, so losing one here
+    // would flip an explicit removal into the always-on default.
+    for raw in raw_shortcut_args {
+        args.push(' ');
+        args.push_str(raw);
     }
     args.push_str(" --scope=machine");
     if let Some(language) = &ctx.language {
@@ -1759,6 +1820,21 @@ mod tests {
         let parsed = cli(&["/S", "/uninstall"]);
         assert!(parsed.silent);
         assert!(parsed.uninstall);
+    }
+
+    #[test]
+    fn headless_shortcut_answers_parse() {
+        // The updater contract: explicit 0/1 answers override the
+        // --no-desktop convention.
+        let parsed = cli(&["--silent", "--shortcut-menu=0", "--shortcut-desktop=1"]);
+        assert_eq!(parsed.shortcut_menu, Some(0));
+        assert_eq!(parsed.shortcut_desktop, Some(1));
+        // Absent flags keep the conventional resolution.
+        let plain = cli(&["--silent"]);
+        assert_eq!(plain.shortcut_menu, None);
+        assert_eq!(plain.shortcut_desktop, None);
+        // Out-of-range answers are rejected, not silently clamped.
+        assert!(Cli::try_parse_from(["shun-installer", "--silent", "--shortcut-menu=2",]).is_err());
     }
 
     #[test]
