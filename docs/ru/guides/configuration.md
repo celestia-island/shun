@@ -39,6 +39,11 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # только Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version: распакованная папка рантайма
+# silent-install = true                    # evergreen-installer: тихо запустить bundled-
+                                           #   установщик на машине без рантайма (по умолчанию)
+# warn-missing = true                      # skip / evergreen-installer: egui-фолбэк предупреждает
+                                           #   в начале и в конце со ссылкой на официальную
+                                           #   страницу загрузки Microsoft (по умолчанию)
 
 [[package.metadata.shun.steps]]            # упорядоченный конвейер мастера (опционально)
 columns = 2              # число колонок сетки режимов (по умолчанию — по одной на режим)

@@ -52,6 +52,10 @@ pub mod targets;
 // same optional `ureq` dependency as the online payload source.
 #[cfg(feature = "online")]
 pub mod update;
+// Evergreen offline-installer delivery: discovery inside the payload,
+// per-user staging, and the silent `/silent /install` runner the shell
+// uses on runtime-less machines before the face ladder resolves.
+pub mod webview2;
 
 pub mod wizard;
 

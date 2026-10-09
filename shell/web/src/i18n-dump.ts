@@ -89,6 +89,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "未检测到 WebView2 运行时（缺失必要环境）—— 已自动切换至离线降级安装界面。安装功能不受影响，界面不带特效。",
     banner_manual:
       "已通过命令行参数 --no-webview 启用离线降级安装界面（离线版本，不带特效）。",
+    banner_download_link: "打开微软官方 WebView2 下载页",
+    done_warn_webview2: "本机缺少 WebView2 运行时，已安装的应用需要它才能启动——请先从微软官方下载页安装，再运行应用。",
     install: "开始安装",
     installing: "正在安装…",
     open_dir: "打开安装目录",
@@ -110,6 +112,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "未偵測到 WebView2 執行階段（缺失必要環境）—— 已自動切換至離線降級安裝介面。安裝功能不受影響，介面不帶特效。",
     banner_manual:
       "已透過命令列參數 --no-webview 啟用離線降級安裝介面（離線版本，不帶特效）。",
+    banner_download_link: "開啟微軟官方 WebView2 下載頁",
+    done_warn_webview2: "本機缺少 WebView2 執行階段，已安裝的應用程式需要它才能啟動——請先從微軟官方下載頁安裝，再執行應用程式。",
     install: "開始安裝",
     installing: "正在安裝…",
     open_dir: "開啟安裝目錄",
@@ -131,6 +135,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "No WebView2 runtime was detected (required environment) — switched to the offline fallback installer. Installing still works; the face has no effects.",
     banner_manual:
       "The offline fallback installer was enabled via the --no-webview command-line switch (offline build, no effects).",
+    banner_download_link: "Open Microsoft's official WebView2 download page",
+    done_warn_webview2: "This machine has no WebView2 runtime and the installed app needs it to start — install it from Microsoft's official download page first, then launch the app.",
     install: "Install",
     installing: "Installing…",
     open_dir: "Open install folder",
@@ -152,6 +158,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "Среда выполнения WebView2 не обнаружена (обязательное окружение) — переключились на автономный резервный установщик. Установка работает; эффектов в интерфейсе нет.",
     banner_manual:
       "Резервный автономный установщик включён ключом командной строки --no-webview (автономная сборка, без эффектов).",
+    banner_download_link: "Открыть официальную страницу загрузки WebView2 от Microsoft",
+    done_warn_webview2: "На этом компьютере нет среды выполнения WebView2, а установленному приложению она нужна для запуска — сначала установите её с официальной страницы Microsoft, затем запустите приложение.",
     install: "Установить",
     installing: "Установка…",
     open_dir: "Открыть папку установки",
@@ -173,6 +181,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "WebView2 ランタイムが検出されません（必須環境）—— オフライン代替インストーラーへ自動切替しました。インストールは通常どおり行えます。演出はありません。",
     banner_manual:
       "コマンドライン引数 --no-webview によりオフライン代替インストーラーを起動しました（オフライン版・演出なし）。",
+    banner_download_link: "Microsoft 公式の WebView2 ダウンロードページを開く",
+    done_warn_webview2: "このコンピューターには WebView2 ランタイムがなく、インストールしたアプリの起動に必要です。先に Microsoft 公式ダウンロードページからインストールしてからアプリを起動してください。",
     install: "インストール",
     installing: "インストール中…",
     open_dir: "インストール先を開く",
@@ -194,6 +204,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "WebView2 런타임이 감지되지 않았습니다(필수 환경) — 오프라인 대체 설치 관리자로 전환했습니다. 설치는 정상 동작하며 연출은 없습니다.",
     banner_manual:
       "명령줄 인수 --no-webview 로 오프라인 대체 설치 관리자를 실행했습니다(오프라인 빌드, 연출 없음).",
+    banner_download_link: "Microsoft 공식 WebView2 다운로드 페이지 열기",
+    done_warn_webview2: "이 컴퓨터에는 WebView2 런타임이 없으며 설치된 앱을 시작하려면 필요합니다. 먼저 Microsoft 공식 다운로드 페이지에서 설치한 뒤 앱을 실행하세요.",
     install: "설치",
     installing: "설치 중…",
     open_dir: "설치 폴더 열기",
@@ -215,6 +227,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "Le runtime WebView2 n'a pas été détecté (environnement requis) — bascule vers l'installateur de secours hors ligne. L'installation fonctionne ; l'interface est sans effets.",
     banner_manual:
       "L'installateur de secours hors ligne a été activé via l'argument --no-webview (build hors ligne, sans effets).",
+    banner_download_link: "Ouvrir la page officielle de téléchargement WebView2 de Microsoft",
+    done_warn_webview2: "Cette machine n'a pas d'exécutable WebView2, pourtant requis pour démarrer l'application installée — installez-le d'abord depuis la page officielle de téléchargement de Microsoft, puis lancez l'application.",
     install: "Installer",
     installing: "Installation…",
     open_dir: "Ouvrir le dossier d'installation",
@@ -236,6 +250,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "No se detectó el runtime de WebView2 (entorno necesario) — se cambió al instalador de reserva sin conexión. La instalación funciona; la interfaz no tiene efectos.",
     banner_manual:
       "El instalador de reserva sin conexión se activó con el argumento --no-webview (compilación sin conexión, sin efectos).",
+    banner_download_link: "Abrir la página oficial de descarga de WebView2 de Microsoft",
+    done_warn_webview2: "Este equipo no tiene el runtime de WebView2, necesario para iniciar la aplicación instalada: instálalo primero desde la página oficial de descargas de Microsoft y luego inicia la aplicación.",
     install: "Instalar",
     installing: "Instalando…",
     open_dir: "Abrir la carpeta de instalación",
@@ -257,6 +273,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "Die WebView2-Laufzeit wurde nicht gefunden (erforderliche Umgebung) — zum Offline-Ersatzinstaller gewechselt. Die Installation funktioniert; die Oberfläche ohne Effekte.",
     banner_manual:
       "Der Offline-Ersatzinstaller wurde per Kommandozeilen-Argument --no-webview gestartet (Offline-Build, ohne Effekte).",
+    banner_download_link: "Microsofts offizielle WebView2-Downloadseite öffnen",
+    done_warn_webview2: "Auf diesem Rechner fehlt die WebView2-Runtime, die die installierte App zum Starten braucht — installiere sie zuerst über Microsofts offizielle Downloadseite und starte dann die App.",
     install: "Installieren",
     installing: "Installation…",
     open_dir: "Installationsordner öffnen",
@@ -278,6 +296,8 @@ const EGUI_ONLY: Record<string, Record<string, string>> = {
       "O runtime WebView2 não foi detectado (ambiente necessário) — mudou para o instalador de reserva offline. A instalação funciona; a interface não tem efeitos.",
     banner_manual:
       "O instalador de reserva offline foi ativado pelo argumento --no-webview (build offline, sem efeitos).",
+    banner_download_link: "Abrir a página oficial de download do WebView2 da Microsoft",
+    done_warn_webview2: "Este computador não tem o runtime do WebView2, necessário para iniciar o aplicativo instalado — instale-o primeiro pela página oficial de download da Microsoft e depois execute o aplicativo.",
     install: "Instalar",
     installing: "Instalando…",
     open_dir: "Abrir a pasta de instalação",

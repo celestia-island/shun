@@ -47,6 +47,11 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # 仅 Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 专用：解压后的运行时目录
+# silent-install = true                    # evergreen-installer：无运行时的机器上静默执行
+                                           #   自带的安装器（默认开启）
+# warn-missing = true                      # skip / evergreen-installer：egui 降级界面在
+                                           #   开始与结束时警告并附微软官方下载页链接
+                                           #   （默认开启）
 
 [[package.metadata.shun.steps]]            # 有序向导管线（可选）
 columns = 2              # 可选：模式网格列数；默认每个模式一列
@@ -109,6 +114,33 @@ require-removable = true                   # 拒绝非可移动设备
 | `skip` | 无 | 系统 WebView2 | 标准发行物 |
 | `evergreen-installer` | Evergreen 离线安装器（约 127 MB） | 安装时提权 | 注册系统级运行时 |
 | `fixed-version` | 解压后的运行时目录 | 无 | 私有副本由壳与已装应用共享，横跨安装与便携模式 |
+
+### 无运行时机器的降级
+
+面阶梯永远不会因缺少运行时而死亡——只会降级。阶梯解析前，壳用加载器
+自身的判定（`wry::webview_version()`，正是 tauri 创建 webview 前的同一道
+门禁）探测运行时，注册表残值再也无法把 webview 面送进 tauri 那个英文
+"Could not find the WebView2 Runtime" 弹框：
+
+- `evergreen-installer` + `silent-install`（默认 `true`）：自带的安装器
+  （按 payload 的 `webview2/` 前缀发现）会先暂存到用户级缓存并以
+  `/silent /install` 静默执行（安装器要求提权时走 UAC）。执行成功即原地
+  升级机器，webview 面继续可用。
+- 无论结果如何，机器仍无运行时则落到 egui 面。`warn-missing`（默认
+  `true`）且未携带安装器时，该面在向导开始与结束处各警告一次，并内嵌
+  跳转到微软官方 WebView2 下载页的链接。两个开关均可按产品关闭：
+
+```toml
+[package.metadata.shun.webview2]
+type = "evergreen-installer"
+silent-install = false                  # 永不自动执行自带的安装器
+warn-missing = false                    # 静默降级，不带警告横幅
+```
+
+一个值得了解的上游限制：tauri 的运行时门禁不读取
+`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`，因此"仅 fixed-version、未安装
+Evergreen"的机器即便本可创建 webview，也会落到 egui 面——壳优先选择
+一定能渲染的面。
 
 ## 壳 UI
 

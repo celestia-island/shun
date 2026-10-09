@@ -569,6 +569,51 @@ fn gradient_midpoint(spec: &shun::config::BackgroundSpec) -> Option<Color32> {
 
 // ── UI copy: the i18n strings of the web shell (shell/web/src/i18n.ts) ──
 
+/// Microsoft's official WebView2 download page — the jump target behind
+/// the missing-runtime banner and done-page warnings. Locale-neutral
+/// URL; the page itself offers every language.
+const WEBVIEW2_DOWNLOAD_PAGE: &str = "https://developer.microsoft.com/microsoft-edge/webview2/";
+
+/// Opens the WebView2 download page in the system browser (no webview
+/// involved — this IS the runtime-less path).
+fn open_webview2_download_page() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let verb: Vec<u16> = std::ffi::OsStr::new("open")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let url: Vec<u16> = std::ffi::OsStr::new(WEBVIEW2_DOWNLOAD_PAGE)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: plain shell-execute with our own NUL-terminated wide
+        // strings; every pointer is either null or a valid buffer.
+        unsafe {
+            windows_sys::Win32::UI::Shell::ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                url.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let program = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        let _ = std::process::Command::new(program)
+            .arg(WEBVIEW2_DOWNLOAD_PAGE)
+            .spawn();
+    }
+}
+
 // The language the fallback UI renders in — the egui side carries the
 // two TEXTS tables below, so its first-step language selector offers
 // these two locales (the web shell offers all eight). The chosen value
@@ -585,6 +630,11 @@ fn gradient_midpoint(spec: &shun::config::BackgroundSpec) -> Option<Color32> {
 struct Texts {
     banner_missing: String,
     banner_manual: String,
+    /// The banner's embedded quick link: open Microsoft's official
+    /// WebView2 download page (armed by the `warn-missing` knob).
+    banner_download_link: String,
+    /// The install-end missing-runtime warning (done page).
+    done_warn_webview2: String,
     step_language: String,
     step_location: String,
     step_license: String,
@@ -1189,6 +1239,13 @@ struct FallbackApp {
     /// the ARP entry's GUI spelling): replaces the whole wizard with the
     /// web face's confirm → running → done/failed page, repair included.
     uninstall_mode: bool,
+    /// Whether the missing-runtime START banner (with the Microsoft
+    /// download link) is armed: a runtime-forced fallback, the config's
+    /// `warn-missing` knob (default on), and a payload that genuinely
+    /// carries no Evergreen installer to offer instead. The done page's
+    /// end warning arms on the same pair WITHOUT the carried clause —
+    /// see `finished_view`.
+    warn_missing_runtime: bool,
     /// Which action the uninstall page's run came from — repair relabels
     /// the running/done/failed copy (the web phases repairing/repaired/
     /// repair_failed).
@@ -1259,6 +1316,19 @@ impl FallbackApp {
                     )
                 })
                 .collect();
+        // Computed before `payload` moves into the app: the missing-
+        // runtime warning only arms when the fallback was runtime-forced
+        // (not --no-webview, not the uninstall page) and the manifest
+        // leaves `warn-missing` on (the default). The START banner
+        // additionally requires the payload to carry no Evergreen
+        // installer (that build had something better to offer and the
+        // user declined or it failed); the END warning on the done page
+        // does not — the just-installed app cannot start without the
+        // runtime either way, so that page re-checks the arming pair
+        // above without the carried clause.
+        let runtime_forced = reason == FallbackReason::MissingWebview2 && !uninstall_mode;
+        let warn_missing = runtime_forced && config.webview2_warn_missing();
+        let warn_missing_runtime = warn_missing && !shun::webview2::evergreen_carried(&payload);
         Self {
             dir,
             config,
@@ -1333,6 +1403,7 @@ impl FallbackApp {
             phase_active: None,
             uninstalling: None,
             uninstall_mode,
+            warn_missing_runtime,
             repairing: false,
             outcome: None,
             entry: None,
@@ -2308,6 +2379,7 @@ impl FallbackApp {
     /// missing-environment install must say so.
     fn banner(&mut self, ui: &mut egui::Ui) {
         let theme = &self.theme;
+        let texts = self.texts.clone();
         let text = match self.reason {
             FallbackReason::MissingWebview2 => self.texts.banner_missing.clone(),
             FallbackReason::ManualOverride => self.texts.banner_manual.clone(),
@@ -2319,6 +2391,23 @@ impl FallbackApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(RichText::new(text).color(theme.warning).size(12.5));
+                // The embedded quick link (install-start warning): the
+                // machine has no runtime and this build carries none —
+                // point at Microsoft's official download page. Armed by
+                // the manifest's `warn-missing` knob (default on).
+                if self.warn_missing_runtime
+                    && ui
+                        .button(
+                            RichText::new(texts.banner_download_link.as_str())
+                                .color(theme.warning)
+                                .underline()
+                                .size(12.5),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                {
+                    open_webview2_download_page();
+                }
             });
     }
 
@@ -3576,6 +3665,45 @@ impl FallbackApp {
                             .size(12.0)
                             .color(theme.text_tertiary),
                     );
+                    // Install-end warning: the app just installed needs
+                    // WebView2 and this machine has none — without it
+                    // the very first launch dies on a native message
+                    // box, so say it here with the official download
+                    // link one click away. Unlike the start banner this
+                    // arms even when the payload carried an installer
+                    // (the silent run may have failed or been declined):
+                    // by done-page time "runtime still missing" is the
+                    // only fact that matters.
+                    let warn_end = matches!(outcome.as_ref(), Some(Outcome::InstallOk))
+                        && self.reason == FallbackReason::MissingWebview2
+                        && self.config.webview2_warn_missing();
+                    if warn_end {
+                        ui.add_space(12.0);
+                        Frame::default()
+                            .fill(theme.warning_tint())
+                            .stroke(Stroke::new(1.0f32, theme.warning))
+                            .inner_margin(Margin::same(10))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.label(
+                                    RichText::new(texts.done_warn_webview2.as_str())
+                                        .color(theme.warning)
+                                        .size(12.5),
+                                );
+                                if ui
+                                    .button(
+                                        RichText::new(texts.banner_download_link.as_str())
+                                            .color(theme.warning)
+                                            .underline()
+                                            .size(12.5),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    open_webview2_download_page();
+                                }
+                            });
+                    }
                     // The done-page answers — the shared driver's flow
                     // creates nothing, so the finish button applies
                     // them. Three checkboxes stack left-aligned inside a

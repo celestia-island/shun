@@ -206,6 +206,14 @@ impl ArchivePayload {
         self.files.get(path).map(|bytes| bytes.as_slice())
     }
 
+    /// The archive manifest — every carried entry, in pack order. A
+    /// read-only view for callers that scan the payload without
+    /// extracting (e.g. the Evergreen installer discovery in
+    /// [`crate::webview2`]).
+    pub fn entries(&self) -> &[PayloadEntry] {
+        &self.entries
+    }
+
     /// Whether any carried entry sits under `prefix` — the shipped-pack
     /// check behind optional attachments (a full build carries the dest
     /// subtree, a lite build does not).

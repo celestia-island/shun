@@ -48,6 +48,11 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # Windows-only strategy
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version only: extracted runtime folder
+# silent-install = true                    # evergreen-installer: run the carried installer
+                                           #   silently on a runtime-less machine (default)
+# warn-missing = true                      # skip / evergreen-installer: the egui fallback
+                                           #   warns + links to Microsoft's download page
+                                           #   when the machine has no runtime (default)
 
 [[package.metadata.shun.steps]]            # ordered wizard pipeline (optional)
 columns = 2             # optional mode-grid columns; defaults to one column per mode
@@ -124,6 +129,39 @@ bootstraps itself by staging the payload's runtime subtree into
 `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` there; extraction is hash-aware, so
 re-installs and pre-staged files are adopted instead of rewritten
 ("Reusing" progress events) — no second copy of the same engine.
+
+### Runtime-less machines
+
+The face ladder never dies on the missing runtime — it degrades. Before
+the ladder resolves, the shell probes the runtime with the loader's own
+verdict (`wry::webview_version()`, the exact call tauri gates webview
+creation on), so a broken registry state can no longer send the webview
+face into tauri's English "Could not find the WebView2 Runtime" box:
+
+- `evergreen-installer` + `silent-install` (default `true`): the carried
+  installer — discovered under the payload's `webview2/` prefix — is
+  staged into the per-user cache and run with `/silent /install`
+  (elevating through UAC when the installer's manifest asks). A
+  successful run upgrades the machine in place and the webview face
+  stays reachable.
+- Whatever the outcome, a machine still without a runtime takes the
+  egui face. With `warn-missing` (default `true`) and no carried
+  installer, that face warns at the start and the end of the wizard and
+  embeds a link to Microsoft's official WebView2 download page. Turn
+  both knobs off per product:
+
+```toml
+[package.metadata.shun.webview2]
+type = "evergreen-installer"
+silent-install = false                  # never auto-run the carried installer
+warn-missing = false                    # silent fallback, no warning banners
+```
+
+One upstream limitation worth knowing: tauri's runtime gate ignores
+`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`, so a fixed-version-only machine
+(no installed Evergreen runtime) takes the egui face even though webview
+creation could otherwise succeed — the shell prefers the face that is
+guaranteed to render.
 
 ## MSIX logo plate
 
