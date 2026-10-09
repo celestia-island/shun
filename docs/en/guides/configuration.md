@@ -34,6 +34,7 @@ portable-marker = ".shun-portable"          # marker file name for portable copi
 desktop-shortcut = "ask"                   # always | never | ask (wizard checkbox, default checked)
 start-menu-shortcut = "always"             # always | never | ask (default: always — the desktop one is the asked-about convenience)
 launch-after-install = "ask"               # always | never | ask (done-page checkbox, default checked; pin it for shells without one)
+# default-dir = "%LOCALAPPDATA%\\Programs\\Wowsp"  # override the default location (env-expanded %VAR%/${VAR})
 deep-links = ["shundemo"]                  # URL schemes the app owns (myapp://...)
 aumid = "celestia-island.ShunDemo"         # default: generated from publisher + product
 icon = "assets/icon.png"                   # payload-relative launcher icon (Linux Icon=)
@@ -80,7 +81,7 @@ require-removable = true                   # refuse non-removable devices
 | `logo` | path | — | Shell logo asset (relative to the manifest) |
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
-| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `verbs`, `deep-links`, `aumid`, `icon`, `root-dir-folder` (folder padded under a bare drive-root target, default: the product name) |
+| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `default-dir` (env-expanded default location override), `verbs`, `deep-links`, `aumid`, `icon`, `root-dir-folder` (folder padded under a bare drive-root target, default: the product name) |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |

@@ -32,6 +32,16 @@ pub const PORTABLE_MARKER: &str = ".shun-portable";
 /// script ([`InstallContext::script_env`]).
 pub const LANGUAGE_ENV: &str = "SHUN_LANGUAGE";
 
+/// The install directory as exported to payload script steps — the
+/// root-padded path the flow actually delivered into (see
+/// [`InstallContext::script_env`]).
+pub const INSTALL_DIR_ENV: &str = "SHUN_INSTALL_DIR";
+
+/// Whether the delivery ran in portable mode (`1`/`0`), as exported to
+/// payload script steps — post-install relocation hooks branch on it
+/// (portable copies keep their data beside the executable).
+pub const PORTABLE_ENV: &str = "SHUN_PORTABLE";
+
 /// Name of the uninstaller binary copied into the install directory.
 #[cfg(windows)]
 pub const UNINSTALLER_NAME: &str = "uninstall.exe";
@@ -228,15 +238,28 @@ impl InstallContext {
         }
     }
 
-    /// The environment shun exports to payload script steps (see
-    /// [`LANGUAGE_ENV`]): the wizard language when the context carries
-    /// one, empty otherwise — the variable is absent rather than blank,
-    /// so scripts can distinguish "not chosen" from a value.
+    /// The environment shun exports to payload script steps: the wizard
+    /// language ([`LANGUAGE_ENV`]) when the context carries one — the
+    /// variable is absent rather than blank, so scripts can distinguish
+    /// "not chosen" from a value — plus the delivery facts hooks
+    /// otherwise cannot know: [`INSTALL_DIR_ENV`] (where the payload
+    /// landed, root-padded) and [`PORTABLE_ENV`] (`1`/`0`). Post-install
+    /// relocation hooks (moving shipped packs into a cache root, writing
+    /// stamps) ride exactly those two.
     pub fn script_env(&self) -> Vec<(String, String)> {
-        match &self.language {
-            Some(language) => vec![(LANGUAGE_ENV.to_string(), language.clone())],
-            None => Vec::new(),
+        let mut vars = Vec::new();
+        if let Some(language) = &self.language {
+            vars.push((LANGUAGE_ENV.to_string(), language.clone()));
         }
+        vars.push((
+            INSTALL_DIR_ENV.to_string(),
+            self.install_dir.display().to_string(),
+        ));
+        vars.push((
+            PORTABLE_ENV.to_string(),
+            if self.portable { "1" } else { "0" }.to_string(),
+        ));
+        vars
     }
 
     /// Applies the install-target configuration knobs onto a context:
@@ -1499,16 +1522,31 @@ mod tests {
 
     #[test]
     fn script_env_exports_the_wizard_language() {
-        let mut ctx =
-            InstallContext::new("Wowsp".into(), "1.0.0".into(), PathBuf::from("."), false);
-        assert!(
-            ctx.script_env().is_empty(),
-            "no language chosen, no variable exported"
+        let mut ctx = InstallContext::new(
+            "Wowsp".into(),
+            "1.0.0".into(),
+            PathBuf::from(r"D:\Games\Wowsp"),
+            false,
         );
-        ctx.language = Some("zh-Hans".into());
+        // The delivery facts are always exported; the language only when
+        // the context carries one (absent, never blank).
         assert_eq!(
             ctx.script_env(),
-            vec![(LANGUAGE_ENV.to_string(), "zh-Hans".to_string())]
+            vec![
+                (INSTALL_DIR_ENV.to_string(), r"D:\Games\Wowsp".to_string()),
+                (PORTABLE_ENV.to_string(), "0".to_string()),
+            ],
+            "no language chosen: only the delivery facts"
+        );
+        ctx.language = Some("zh-Hans".into());
+        ctx.portable = true;
+        assert_eq!(
+            ctx.script_env(),
+            vec![
+                (LANGUAGE_ENV.to_string(), "zh-Hans".to_string()),
+                (INSTALL_DIR_ENV.to_string(), r"D:\Games\Wowsp".to_string()),
+                (PORTABLE_ENV.to_string(), "1".to_string()),
+            ]
         );
     }
 

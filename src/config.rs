@@ -703,6 +703,11 @@ impl ShunConfig {
 
 /// Delivery target. `install` performs direct Windows registration; `flash`
 /// writes images to block devices.
+// The install variant carries the whole policy table (216 B at the time
+// of writing — `default-dir` pushed it past the lint's 200 B delta
+// against the lean flash variant). Target lists hold a handful of
+// entries at most, so the padding cost of boxing would buy nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum TargetConfig {
@@ -756,6 +761,17 @@ pub struct InstallConfig {
     #[serde(default)]
     pub launch_after_install: ShortcutPolicy,
 
+    /// Overrides the wizard's default install location (the first
+    /// location candidate and the headless fallback, replacing the
+    /// `%LOCALAPPDATA%\<product>` convention). Environment variables
+    /// expand at runtime in both spellings — `%LOCALAPPDATA%` and
+    /// `${LOCALAPPDATA}` — so one manifest fits every user. Products
+    /// whose appdata root is reserved for something else (a cache, like
+    /// WoWSP's `%LOCALAPPDATA%\WoWSP`) point this at their conventional
+    /// install path (`%LOCALAPPDATA%\Programs\WoWSP`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_dir: Option<String>,
+
     /// Install scope: per-user (the default, no elevation anywhere) or
     /// machine-wide (Windows: HKLM, all-users shortcuts; the shell
     /// self-elevates), or a wizard question.
@@ -804,6 +820,7 @@ impl Default for InstallConfig {
             desktop_shortcut: DesktopShortcutPolicy::Ask,
             start_menu_shortcut: DesktopShortcutPolicy::Always,
             launch_after_install: ShortcutPolicy::default(),
+            default_dir: None,
             scope: ScopePolicy::User,
             verbs: Vec::new(),
             deep_links: Vec::new(),

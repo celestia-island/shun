@@ -758,7 +758,10 @@ pub fn current_exe_dir() -> Option<PathBuf> {
 
 /// The writability-probed location candidates for a product (the
 /// command layer's thin entry — faces that hold a [`WizardCore`] get the
-/// same list through [`WizardCore::refresh_dir_defaults`]).
+/// same list through [`WizardCore::refresh_dir_defaults`]). Products
+/// whose manifest pins `install.default-dir` should call
+/// [`location_defaults_for`] instead — this plain form keeps the
+/// `%LOCALAPPDATA%\<product>` convention.
 pub fn location_defaults(product: &str) -> Vec<DirCandidate> {
     dir_candidates_for(product)
         .into_iter()
@@ -768,6 +771,24 @@ pub fn location_defaults(product: &str) -> Vec<DirCandidate> {
             path: path.to_string_lossy().into_owned(),
         })
         .collect()
+}
+
+/// [`location_defaults`], manifest-aware: a configured
+/// `install.default-dir` (env-expanded, see [`expand_env_vars`])
+/// replaces the appdata candidate as the first and default location.
+pub fn location_defaults_for(config: &ShunConfig) -> Vec<DirCandidate> {
+    match configured_default_dir(config) {
+        Some(dir) => {
+            let mut candidates = vec![DirCandidate {
+                kind: "appdata",
+                writable: crate::fs_probe::is_dir_writable(&dir),
+                path: dir.display().to_string(),
+            }];
+            candidates.extend(location_defaults(&config.product.name));
+            candidates
+        }
+        None => location_defaults(&config.product.name),
+    }
 }
 
 /// The default install location: the first writable candidate, else the
@@ -780,6 +801,68 @@ pub fn default_location(product: &str) -> String {
         .unwrap_or_else(|| local_appdata().join(product))
         .to_string_lossy()
         .into_owned()
+}
+
+/// [`default_location`], manifest-aware (see [`location_defaults_for`]).
+pub fn default_location_for(config: &ShunConfig) -> String {
+    let candidates = location_defaults_for(config);
+    candidates
+        .iter()
+        .find(|candidate| candidate.writable)
+        .map(|candidate| candidate.path.clone())
+        .or_else(|| candidates.first().map(|candidate| candidate.path.clone()))
+        .unwrap_or_else(|| default_location(&config.product.name))
+}
+
+/// The install target's `default-dir` knob, env-expanded — `None` when
+/// the manifest leaves the location convention to the wizard.
+fn configured_default_dir(config: &ShunConfig) -> Option<PathBuf> {
+    let raw = config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => install.default_dir.as_deref(),
+        _ => None,
+    })?;
+    Some(PathBuf::from(expand_env_vars(raw)))
+}
+
+/// Expands `%VAR%` and `${VAR}` references from the process environment
+/// (unknown variables empty out — a half-expanded path would silently
+/// install somewhere wrong, so the segment just vanishes; a bare `$`
+/// and an unclosed marker stay literal). Manifests are shared across
+/// users, so any user-specific location must ride an env var rather
+/// than a literal.
+fn expand_env_vars(raw: &str) -> String {
+    fn push_var(out: &mut String, name: &str) {
+        if let Some(value) = std::env::var_os(name).filter(|v| !v.is_empty()) {
+            out.push_str(&value.to_string_lossy());
+        }
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(idx) = rest.find(['%', '$']) {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx..];
+        if let Some(body) = after.strip_prefix("${") {
+            let Some(end) = body.find('}') else {
+                out.push_str(after);
+                return out;
+            };
+            push_var(&mut out, &body[..end]);
+            rest = &body[end + 1..];
+        } else if let Some(body) = after.strip_prefix('%') {
+            let Some(end) = body.find('%') else {
+                out.push_str(after);
+                return out;
+            };
+            push_var(&mut out, &body[..end]);
+            rest = &body[end + 1..];
+        } else {
+            // A bare `$` (no `${`): not a reference we expand.
+            out.push('$');
+            rest = &after[1..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The root-drive guard for a bare path, config-aware (free-function
@@ -951,6 +1034,85 @@ fn log_line_of(record: &FlowLog) -> Option<(LogKind, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A minimal config with an optional install.default-dir — the
+    /// knob under test; everything else stays at the defaults.
+    fn location_config(default_dir: Option<&str>) -> crate::config::ShunConfig {
+        crate::config::ShunConfig {
+            product: crate::config::ProductIdentity {
+                name: "Wowsp".into(),
+                version: "1.0.0".into(),
+                publisher: None,
+                logo: None,
+            },
+            payload: None,
+            webview2: None,
+            script: None,
+            targets: vec![crate::config::TargetConfig::Install(
+                crate::config::InstallConfig {
+                    default_dir: default_dir.map(str::to_string),
+                    ..Default::default()
+                },
+            )],
+            shell: None,
+            source: None,
+            variants: None,
+            update: None,
+            attachments: Vec::new(),
+            license_sysl: None,
+            msix: None,
+            license: None,
+            license_locales: Default::default(),
+            licenses: Vec::new(),
+            custom_steps: Vec::new(),
+            steps: None,
+            signing: None,
+        }
+    }
+
+    /// `%VAR%` and `${VAR}` expand; unknown vars vanish; a bare `$` and
+    /// unclosed markers stay literal.
+    #[test]
+    fn env_vars_expand_in_both_spellings() {
+        // SAFETY: a SHUN_-namespaced test variable; nothing else reads
+        // it concurrently.
+        unsafe { std::env::set_var("SHUN_TEST_LOC", r"D:\Base") };
+        assert_eq!(
+            expand_env_vars(r"%SHUN_TEST_LOC%\Programs\Wowsp"),
+            r"D:\Base\Programs\Wowsp"
+        );
+        assert_eq!(
+            expand_env_vars("${SHUN_TEST_LOC}/Programs/Wowsp"),
+            r"D:\Base/Programs/Wowsp"
+        );
+        assert_eq!(expand_env_vars(r"%SHUN_TEST_MISSING%\App"), r"\App");
+        assert_eq!(expand_env_vars(r"C:\costs $5"), r"C:\costs $5");
+        assert_eq!(expand_env_vars("%SHUN_TEST_LOC"), "%SHUN_TEST_LOC");
+        assert_eq!(expand_env_vars("${SHUN_TEST_LOC"), "${SHUN_TEST_LOC");
+    }
+
+    /// A configured install.default-dir leads the candidate chain and
+    /// becomes the default; an unconfigured manifest keeps the product
+    /// convention byte-for-byte.
+    #[test]
+    fn default_dir_leads_the_location_candidates() {
+        // SAFETY: see the sibling test.
+        unsafe { std::env::set_var("SHUN_TEST_LOC", r"D:\Base") };
+        let pinned = location_config(Some(r"%SHUN_TEST_LOC%\Programs\Wowsp"));
+        let candidates = location_defaults_for(&pinned);
+        assert_eq!(candidates[0].kind, "appdata");
+        assert!(
+            candidates[0].path.ends_with(r"\Programs\Wowsp"),
+            "first candidate is the pinned dir: {}",
+            candidates[0].path
+        );
+        assert!(default_location_for(&pinned).ends_with(r"\Programs\Wowsp"));
+        assert_eq!(
+            location_defaults_for(&location_config(None)),
+            location_defaults("Wowsp"),
+            "no knob: identical to the product-based chain"
+        );
+    }
 
     fn core_with(config_json: &str) -> WizardCore {
         let config: crate::config::ShunConfig = serde_json::from_str(config_json).unwrap();

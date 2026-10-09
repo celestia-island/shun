@@ -1286,12 +1286,12 @@ impl FallbackApp {
         // The initial location resolves exactly like the web face's
         // default_dir command: the first writable candidate from the
         // config-driven list, else the wizard's default.
-        let probed = shun::wizard::location_defaults(&config.product.name);
+        let probed = shun::wizard::location_defaults_for(&config);
         let dir = probed
             .iter()
             .find(|candidate| candidate.writable)
             .map(|candidate| candidate.path.clone())
-            .unwrap_or_else(|| shun::wizard::default_location(&config.product.name));
+            .unwrap_or_else(|| shun::wizard::default_location_for(&config));
         // The toggle state mirrors what resolve_theme resolved (the
         // solar clock's first-paint verdict counts for the session
         // until the user pins — or the clock itself flips it).

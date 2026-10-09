@@ -33,6 +33,7 @@ portable-marker = ".shun-portable"          # 便携副本写入的标记文件�
 desktop-shortcut = "ask"                   # always | never | ask（向导复选框，默认勾选）
 start-menu-shortcut = "always"             # always | never | ask（默认 always，向导只询问桌面那份）
 launch-after-install = "ask"               # always | never | ask（完成页复选框，默认勾选；无该选项的壳可固定取值）
+# default-dir = "%LOCALAPPDATA%\\Programs\\Wowsp"  # 覆盖默认安装位置（运行时展开 %VAR%/${VAR}）
 deep-links = ["shundemo"]                  # 应用持有的 URL scheme（myapp://…）
 aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生成
 icon = "assets/icon.png"                   # 载荷内启动器图标（Linux 的 Icon=）
