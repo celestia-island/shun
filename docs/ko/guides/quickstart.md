@@ -21,7 +21,7 @@ cargo run --example demo_install -- --uninstall       # 제거 (모든 흔적 �
 
 ```bash
 pnpm --dir shell/web install
-cargo run -p shun_demo_shell
+cargo run -p shun_installer
 ```
 
 셸은 빌드 시점에 데모 payload를 내장(단일 파일 설치 패턴)하며,

@@ -22,7 +22,7 @@ shortcut, and a self-copying `uninstall.exe`. Portable mode writes a
 
 ```bash
 pnpm --dir shell/web install
-cargo run -p shun_demo_shell
+cargo run -p shun_installer
 ```
 
 The shell embeds the demo payload at build time (single-file installer

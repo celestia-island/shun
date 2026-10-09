@@ -22,7 +22,7 @@ cargo run --example demo_install -- --uninstall       # アンインストール
 
 ```bash
 pnpm --dir shell/web install
-cargo run -p shun_demo_shell
+cargo run -p shun_installer
 ```
 
 シェルはビルド時にデモ payload を埋め込み（シングルファイルインストーラー

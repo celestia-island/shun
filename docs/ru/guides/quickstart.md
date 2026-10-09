@@ -22,7 +22,7 @@ cargo run --example demo_install -- --uninstall       # удаление (все
 
 ```bash
 pnpm --dir shell/web install
-cargo run -p shun_demo_shell
+cargo run -p shun_installer
 ```
 
 Оболочка встраивает демо-payload во время сборки (паттерн однофайлового
