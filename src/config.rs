@@ -474,8 +474,12 @@ impl ShunConfig {
                 let path = locale
                     .and_then(|l| doc.locale_paths.get(l))
                     .unwrap_or(&doc.path);
+                let title = locale
+                    .and_then(|l| doc.title_locales.get(l))
+                    .cloned()
+                    .or_else(|| doc.title.clone());
                 docs.push(ResolvedLicenseDoc {
-                    title: doc.title.clone(),
+                    title,
                     body: read_license(&path.display().to_string())?,
                 });
             }
@@ -1225,6 +1229,12 @@ pub struct LicenseDocConfig {
     /// (`zh-Hans`, `ja`, ...); a matching entry wins over `path`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub locale_paths: BTreeMap<String, PathBuf>,
+
+    /// Per-locale heading overrides keyed like `locale_paths`; a
+    /// matching entry wins over `title` (localized headings for
+    /// document sets whose body already varies per locale).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub title_locales: BTreeMap<String, String>,
 }
 
 /// An optional companion resource (an asset pack) declared beside the
@@ -2757,6 +2767,7 @@ zh-Hans = "NOTICE.zh-Hans.md"
             .license_locales
             .insert("zh-Hans".into(), "LICENSE.zh.md".into());
         config.licenses = vec![LicenseDocConfig {
+            title_locales: BTreeMap::new(),
             title: Some("Demo notice".into()),
             path: "NOTICE.md".into(),
             locale_paths: BTreeMap::from([("zh-Hans".into(), "NOTICE.zh-Hans.md".into())]),
@@ -2784,6 +2795,7 @@ zh-Hans = "NOTICE.zh-Hans.md"
         std::fs::write(dir.path().join("NOTICE.md"), "notice\n").unwrap();
         let mut config = sample();
         config.licenses = vec![LicenseDocConfig {
+            title_locales: BTreeMap::new(),
             title: None,
             path: "NOTICE.md".into(),
             locale_paths: BTreeMap::new(),
@@ -2829,6 +2841,7 @@ zh-Hans = "NOTICE.zh-Hans.md"
         // Several documents: `body` concatenates in order over the
         // divider while `licenses` keeps them separate.
         config.licenses = vec![LicenseDocConfig {
+            title_locales: BTreeMap::new(),
             title: Some("B".into()),
             path: "b.md".into(),
             locale_paths: BTreeMap::new(),

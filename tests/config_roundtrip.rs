@@ -72,6 +72,7 @@ fn sample() -> ShunConfig {
         license: Some("docs/LICENSE.md".into()),
         license_locales: BTreeMap::from([("zh-Hans".into(), "docs/LICENSE.zh.md".into())]),
         licenses: vec![shun::config::LicenseDocConfig {
+            title_locales: BTreeMap::new(),
             title: Some("Copyright notice".into()),
             path: "docs/NOTICE.md".into(),
             locale_paths: BTreeMap::from([("zh-Hans".into(), "docs/NOTICE.zh-Hans.md".into())]),
