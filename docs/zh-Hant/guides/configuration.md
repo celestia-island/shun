@@ -38,6 +38,10 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # 僅 Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 專用：解壓後的執行時目錄
+# silent-install = true                    # evergreen-installer：無執行階段的機器上靜默
+                                           #   執行自帶的安裝器（預設開啟）
+# warn-missing = true                      # skip / evergreen-installer：egui 降級介面在開始
+                                           #   與結束時警告並附微軟官方下載頁連結（預設開啟）
 
 [[package.metadata.shun.steps]]            # 有序的精靈管線（可選）
 columns = 2              # 可選：模式網格欄數；預設每個模式一欄

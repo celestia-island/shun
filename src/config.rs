@@ -621,22 +621,84 @@ pub struct ProductIdentity {
 /// the installed app across install and portable modes — no admin, no
 /// system writes, no version drift. The Evergreen installer instead
 /// registers a system-wide runtime (~127 MB embedded) shared with other
-/// apps, but requires elevation at install time.
+/// apps, but requires elevation at install time; on a runtime-less
+/// machine the shell runs it silently before choosing a face (the
+/// `silent-install` knob, default on). Both `skip` and
+/// `evergreen-installer` also carry `warn-missing` (default on): when the
+/// machine still has no runtime and the payload carries no installer, the
+/// egui fallback warns at the start and the end of the wizard and links
+/// to Microsoft's WebView2 download page.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+// `rename_all` covers the variant tags, `rename_all_fields` the knobs
+// inside them (`silent-install`, `warn-missing`) — the enum attribute
+// alone leaves the fields in snake_case.
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case"
+)]
 pub enum Webview2Strategy {
     /// Carry nothing: the host must already provide WebView2.
-    Skip,
+    Skip {
+        /// Warn (fallback banner + done page, with the Microsoft
+        /// download link) when the machine has no runtime. Default on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warn_missing: Option<bool>,
+    },
 
     /// Embed the Evergreen standalone installer and register the runtime
-    /// system-wide during install.
-    EvergreenInstaller,
+    /// system-wide during install. The installer executable is discovered
+    /// inside the payload under the `webview2/` prefix (see
+    /// [`crate::webview2`]).
+    EvergreenInstaller {
+        /// Silently run the carried installer when the machine has no
+        /// runtime (before the face ladder resolves). Default on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        silent_install: Option<bool>,
+        /// Warn (fallback banner + done page, with the Microsoft
+        /// download link) when the machine still has no runtime. Default
+        /// on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warn_missing: Option<bool>,
+    },
 
     /// Carry a fixed-version runtime privately.
     FixedVersion {
         /// Build-time path to the extracted fixed-version runtime folder.
         path: String,
     },
+}
+
+impl ShunConfig {
+    /// Whether the shell may silently run a carried Evergreen installer
+    /// on a runtime-less machine — `evergreen-installer` with
+    /// `silent-install` not disabled (default on); every other strategy
+    /// carries nothing to run.
+    pub fn webview2_silent_install(&self) -> bool {
+        match self.webview2.as_ref() {
+            Some(Webview2Strategy::EvergreenInstaller { silent_install, .. }) => {
+                silent_install.unwrap_or(true)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the egui fallback should warn about the missing runtime
+    /// (banner + done page + the Microsoft download link). Default on
+    /// for `skip` and `evergreen-installer`; `fixed-version` carries its
+    /// own runtime, so its fallback needs no missing-runtime warning.
+    pub fn webview2_warn_missing(&self) -> bool {
+        match self.webview2.as_ref() {
+            Some(Webview2Strategy::FixedVersion { .. }) => false,
+            // An absent stanza behaves as `skip` everywhere else (the
+            // docs' default), so it warns like one too.
+            None => true,
+            Some(Webview2Strategy::Skip { warn_missing })
+            | Some(Webview2Strategy::EvergreenInstaller { warn_missing, .. }) => {
+                warn_missing.unwrap_or(true)
+            }
+        }
+    }
 }
 
 /// Delivery target. `install` performs direct Windows registration; `flash`
@@ -2229,6 +2291,72 @@ mod tests {
     fn webview2_strategy_uses_kebab_case_tags() {
         let json = serde_json::to_value(sample()).unwrap();
         assert_eq!(json["webview2"]["type"], "fixed-version");
+    }
+
+    /// The sample with its `webview2` slot swapped — the cheapest way to
+    /// build a full ShunConfig for strategy-level assertions.
+    fn sample_with_webview2(webview2: serde_json::Value) -> ShunConfig {
+        let mut json = serde_json::to_value(sample()).unwrap();
+        json["webview2"] = webview2;
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn webview2_policy_defaults_on_for_skip_and_evergreen() {
+        // Bare strategy tables (the pre-0.5.3 spellings) keep parsing
+        // and arm both behaviors — silent-install only exists for the
+        // strategies that carry something to run.
+        let skip = sample_with_webview2(serde_json::json!({"type": "skip"}));
+        assert!(!skip.webview2_silent_install());
+        assert!(skip.webview2_warn_missing());
+
+        let evergreen = sample_with_webview2(serde_json::json!({"type": "evergreen-installer"}));
+        assert!(evergreen.webview2_silent_install());
+        assert!(evergreen.webview2_warn_missing());
+
+        let fixed =
+            sample_with_webview2(serde_json::json!({"type": "fixed-version", "path": "wv2"}));
+        assert!(!fixed.webview2_silent_install());
+        assert!(!fixed.webview2_warn_missing());
+
+        // An absent stanza behaves as `skip` (the documented default):
+        // nothing to silently run, but the missing-runtime warning stays
+        // armed.
+        let none = {
+            let mut json = serde_json::to_value(sample()).unwrap();
+            json["webview2"].take();
+            serde_json::from_value::<ShunConfig>(json).unwrap()
+        };
+        assert!(!none.webview2_silent_install());
+        assert!(none.webview2_warn_missing());
+    }
+
+    #[test]
+    fn webview2_policy_knobs_parse_kebab_case() {
+        let evergreen = sample_with_webview2(serde_json::json!({
+            "type": "evergreen-installer",
+            "silent-install": false,
+            "warn-missing": false,
+        }));
+        assert!(!evergreen.webview2_silent_install());
+        assert!(!evergreen.webview2_warn_missing());
+
+        let skip = sample_with_webview2(serde_json::json!({
+            "type": "skip",
+            "warn-missing": false,
+        }));
+        assert!(!skip.webview2_warn_missing());
+    }
+
+    #[test]
+    fn webview2_policy_defaults_roundtrip_without_extra_keys() {
+        // A bare strategy table must serialize back bare: the embedded
+        // config round-trip (build.rs → shell) stays byte-stable for
+        // manifests that never mention the knobs.
+        let json = serde_json::json!({"type": "skip"});
+        let config = sample_with_webview2(json.clone());
+        let out = serde_json::to_value(&config).unwrap();
+        assert_eq!(out["webview2"], json);
     }
 
     #[test]

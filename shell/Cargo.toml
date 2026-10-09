@@ -70,6 +70,13 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 # The OS app-theme probe (AppsUseLightTheme) for the `system` mode.
 winreg = "0.56.0"
+# The loader-parity WebView2 probe (`webview2_loader_ready`): the same
+# `webview_version()` call tauri-runtime-wry gates webview creation on,
+# so the face ladder can never disagree with the gate (the disagreement
+# is what surfaces tauri's English "runtime missing" box). Pinned to the
+# same minor the lockfile already resolves for tauri (a looser line
+# would compile a second wry tree for nothing).
+wry = "0.57"
 
 # The shell carries no `[package.metadata.shun]` of its own: the delivery
 # manifest it embeds comes from the target application (SHUN_MANIFEST, or

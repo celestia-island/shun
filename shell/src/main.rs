@@ -1061,7 +1061,28 @@ fn main() {
     // `--no-gui` from cmd/PowerShell otherwise resolves to the help
     // text instead of the TUI.
     let _ = shun::env_probe::attach_parent_console();
-    let caps = UiCapabilities::probe();
+    // Evergreen bootstrap FIRST — but ONLY when the webview face is a
+    // live candidate for this run. On a runtime-less machine whose
+    // payload carries the offline installer (and `silent-install` is
+    // not turned off), this upgrades the machine in place BEFORE the
+    // ladder resolves, keeping the webview face reachable; a declined
+    // elevation or failed run just leaves the runtime missing and the
+    // refined probe degrades to the egui face. The candidate gate
+    // matters as much as the ordering: `--silent` promises no UI at all
+    // (a UAC consent would break it), the ARP `/uninstall` must not
+    // mutate the machine on its way OUT, `--no-gui` may resolve to the
+    // read-only help text, and the forced-egui flags explicitly
+    // declined the webview face.
+    let webview_face_candidate = !cli.silent
+        && !cli.uninstall
+        && !cli.no_gui
+        && !cli.no_webview
+        && !cli.fallback
+        && !cli.egui;
+    if webview_face_candidate {
+        bootstrap_evergreen_webview2(&config, &payload);
+    }
+    let caps = refine_caps_with_loader(UiCapabilities::probe());
     let face = resolve_face(&cli, &caps, &faces);
 
     match face {
@@ -1094,43 +1115,165 @@ fn main() {
             // install wizard) when WebView2 is missing — the same face
             // ladder every other run takes.
             let uninstall = cli.uninstall;
-            #[cfg(windows)]
-            if let Some(path) = &cli.screenshot {
-                let title = fallback::window_title(&config, uninstall);
-                screenshot::schedule_by_title(
-                    title,
-                    path.clone(),
-                    cli.screenshot_delay.unwrap_or(2500),
-                );
-            }
-            // The egui face is the last GUI resort: if even it cannot
-            // start (renderer failure on broken drivers), say so in a
-            // native message box instead of dying silently.
-            let result = std::panic::catch_unwind(|| {
-                fallback::run(
-                    config,
-                    payload,
-                    reason,
-                    uninstall,
-                    LOGO_KIND.trim(),
-                    LOGO_BYTES,
-                    license_docs(),
-                );
-            });
-            if result.is_err() {
-                native_fatal_box(
-                    "无法启动安装界面 / the installer UI could not start",
-                    "The egui fallback failed to initialize (graphics driver?). \
-                     Run with --silent for the headless install.",
-                );
-                std::process::exit(1);
-            }
+            run_egui_face(
+                config,
+                payload,
+                reason,
+                uninstall,
+                cli.screenshot.clone(),
+                cli.screenshot_delay,
+            );
         }
         Face::Tauri => {
             let uninstall = cli.uninstall;
-            run_tauri(cli, config, payload, uninstall);
+            let screenshot = cli.screenshot.clone();
+            let screenshot_delay = cli.screenshot_delay;
+            if let Err(err) = run_tauri(cli, config, payload, uninstall) {
+                // The refined probe and tauri's own gate read the same
+                // loader verdict, so a webview-runtime failure here
+                // should be unreachable — but if one still slips through
+                // (the English runtime box may already have shown),
+                // degrade to the egui face instead of dying. Any other
+                // failure is real: report and exit.
+                if !webview2_loader_ready() && faces.contains(&UiFace::Egui) {
+                    crate::diag!("shun: webview face failed ({err}); degrading to egui");
+                    let (config, payload) = embedded_pair();
+                    run_egui_face(
+                        config,
+                        payload,
+                        fallback::FallbackReason::MissingWebview2,
+                        uninstall,
+                        screenshot,
+                        screenshot_delay,
+                    );
+                } else {
+                    crate::diag!("shun: webview face failed: {err}");
+                    std::process::exit(1);
+                }
+            }
         }
     }
+}
+
+/// Runs the egui fallback face behind the panic guard: the face is the
+/// last GUI resort, so a renderer failure (broken drivers) gets the
+/// native message box instead of a silent death.
+fn run_egui_face(
+    config: ShunConfig,
+    payload: ArchivePayload,
+    reason: fallback::FallbackReason,
+    uninstall: bool,
+    screenshot: Option<PathBuf>,
+    screenshot_delay: Option<u64>,
+) {
+    #[cfg(windows)]
+    if let Some(path) = &screenshot {
+        let title = fallback::window_title(&config, uninstall);
+        screenshot::schedule_by_title(title, path.clone(), screenshot_delay.unwrap_or(2500));
+    }
+    #[cfg(not(windows))]
+    let _ = (&screenshot, &screenshot_delay);
+    let result = std::panic::catch_unwind(|| {
+        fallback::run(
+            config,
+            payload,
+            reason,
+            uninstall,
+            LOGO_KIND.trim(),
+            LOGO_BYTES,
+            license_docs(),
+        );
+    });
+    if result.is_err() {
+        native_fatal_box(
+            "无法启动安装界面 / the installer UI could not start",
+            "The egui fallback failed to initialize (graphics driver?). \
+             Run with --silent for the headless install.",
+        );
+        std::process::exit(1);
+    }
+}
+
+/// The loader's own verdict on whether a WebView2 runtime is usable —
+/// the SAME call (`wry::webview_version` →
+/// `GetAvailableCoreWebView2BrowserVersionString`) tauri-runtime-wry
+/// gates webview creation on. Probing with anything else (registry `pv`
+/// keys) can disagree with that gate on broken installs, and the
+/// disagreement ends in tauri's English "Could not find the WebView2
+/// Runtime" box plus a hard error instead of the egui fallback.
+///
+/// The gate is also environment-unaware: a fixed-version runtime via
+/// `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` (what the fixed bootstrap below
+/// sets) does NOT flip this verdict — tauri would refuse the webview
+/// face even though creation could succeed, so fixed-version-only
+/// machines take the egui face. `SHUN_FORCE_FALLBACK` forces the
+/// degraded answer for testing, same as the registry probe.
+#[cfg(windows)]
+fn webview2_loader_ready() -> bool {
+    if std::env::var_os("SHUN_FORCE_FALLBACK").is_some() {
+        return false;
+    }
+    wry::webview_version().is_ok()
+}
+
+/// Non-Windows platforms always have their system webview; the tauri
+/// face never auto-degrades there (`--no-webview` still forces egui).
+#[cfg(not(windows))]
+fn webview2_loader_ready() -> bool {
+    if std::env::var_os("SHUN_FORCE_FALLBACK").is_some() {
+        return false;
+    }
+    true
+}
+
+/// Aligns the probed capabilities with the loader's verdict: the webview
+/// face is offered only when BOTH the registry probe and the loader say
+/// a runtime is usable. The registry alone over-reports (stale `pv`
+/// keys, uninstalled runtimes), and the loader's answer is the one
+/// tauri enforces at webview creation.
+fn refine_caps_with_loader(mut caps: UiCapabilities) -> UiCapabilities {
+    if caps.webview2 {
+        caps.webview2 = webview2_loader_ready();
+    }
+    caps
+}
+
+/// Stages and silently runs the carried Evergreen installer when the
+/// machine reports no runtime — the `evergreen-installer` strategy's
+/// `silent-install` knob (default on). Best-effort by design: a failed
+/// or declined run leaves the runtime missing, and the refined probe
+/// degrades to the egui face (which warns per `warn-missing`).
+fn bootstrap_evergreen_webview2(config: &ShunConfig, payload: &ArchivePayload) {
+    if !config.webview2_silent_install() || webview2_loader_ready() {
+        return;
+    }
+    if !shun::webview2::evergreen_carried(payload) {
+        return;
+    }
+    let Some(cache) = shun::webview2::evergreen_cache(&config.product.name) else {
+        eprintln!("shun: no LOCALAPPDATA to stage the Evergreen installer in");
+        return;
+    };
+    let Some(installer) = shun::webview2::stage_evergreen(payload, &cache) else {
+        eprintln!("shun: staging the Evergreen installer failed; degrading");
+        return;
+    };
+    println!("shun: no WebView2 runtime — running the carried Evergreen installer silently");
+    if let Err(err) = shun::webview2::run_evergreen_silent(&installer) {
+        eprintln!("shun: running the Evergreen installer failed ({err}); degrading");
+    }
+    // Success or not, the refined probe that called us re-reads the
+    // loader and decides the face.
+}
+
+/// Re-decodes the embedded config + payload. The webview-face error
+/// path hands ownership to tauri, and the egui fallback needs its own
+/// pair — one extra payload decode, paid only on that rare path.
+fn embedded_pair() -> (ShunConfig, ArchivePayload) {
+    let config: ShunConfig =
+        serde_json::from_str(SHUN_CONFIG_JSON).expect("embedded config decodes");
+    let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
+    (config, payload)
 }
 
 /// A native, webview-free message box (the zero-dependency floor).
@@ -1158,7 +1301,12 @@ fn decode_logo_rgba(bytes: &[u8]) -> Option<image::RgbaImage> {
 /// Boots the webview face (the richest one): fixed-runtime bootstrap,
 /// screenshot capture, the command surface, and the localized native
 /// frame title.
-fn run_tauri(cli: Cli, config: ShunConfig, payload: ArchivePayload, uninstall_mode: bool) {
+fn run_tauri(
+    cli: Cli,
+    config: ShunConfig,
+    payload: ArchivePayload,
+    uninstall_mode: bool,
+) -> Result<(), tauri::Error> {
     let screenshot = cli.screenshot.clone();
     let delay = cli.screenshot_delay.unwrap_or(4000);
     bootstrap_fixed_webview2(&config, &payload);
@@ -1503,7 +1651,7 @@ fn run_shell(
     uninstall_mode: bool,
     screenshot: Option<std::path::PathBuf>,
     delay: u64,
-) {
+) -> Result<(), tauri::Error> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage({
@@ -1593,7 +1741,6 @@ fn run_shell(
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running the shun installer shell");
 }
 
 #[cfg(test)]

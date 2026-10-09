@@ -39,6 +39,11 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # Windows uniquement
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version : dossier runtime extrait
+# silent-install = true                    # evergreen-installer : exécute en silence
+                                           #   l'installateur embarqué sans runtime (défaut)
+# warn-missing = true                      # skip / evergreen-installer : le repli egui avertit
+                                           #   au début et à la fin, avec le lien officiel
+                                           #   Microsoft (défaut)
 
 [[package.metadata.shun.steps]]            # pipeline ordonné de l'assistant (optionnel)
 columns = 2              # colonnes de la grille des modes (par défaut : une par mode)

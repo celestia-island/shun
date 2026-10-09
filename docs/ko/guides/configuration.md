@@ -39,6 +39,11 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # Windows 전용
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 전용: 압축 해제된 런타임 폴더
+# silent-install = true                    # evergreen-installer: 런타임 없는 컴퓨터에서 동봉된
+                                           #   설치 관리자를 자동 설치(기본 켜짐)
+# warn-missing = true                      # skip / evergreen-installer: egui 대체 화면이 시작과
+                                           #   끝에 경고하고 Microsoft 공식 다운로드 페이지 링크
+                                           #   제공(기본 켜짐)
 
 [[package.metadata.shun.steps]]            # 순서가 있는 마법사 파이프라인(선택)
 columns = 2              # 선택: 모드 그리드 열 수 (기본은 모드별 1열)
