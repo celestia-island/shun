@@ -23,7 +23,7 @@ escribe un marcador `.shun-portable` y nunca toca el registro.
 
 ```bash
 pnpm --dir shell/web install
-cargo run -p shun_demo_shell
+cargo run -p shun_installer
 ```
 
 El shell incrusta el payload de demo en tiempo de construcción (patrón de

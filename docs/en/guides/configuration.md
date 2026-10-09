@@ -188,7 +188,7 @@ on Windows (the banner states the missing environment explicitly) or
 forced manually:
 
 ```bash
-shun-demo-shell --fallback     # same wizard, offline renderer
+shun-installer --fallback     # same wizard, offline renderer
 ```
 
 Both UIs support offline screenshots — the window content is captured
@@ -196,8 +196,8 @@ with `PrintWindow`, no desktop automation, and the process exits after
 saving:
 
 ```bash
-shun-demo-shell --screenshot=ui.png               # hikari (webview) UI
-shun-demo-shell --fallback --screenshot=ui.png    # egui offline UI
+shun-installer --screenshot=ui.png               # hikari (webview) UI
+shun-installer --fallback --screenshot=ui.png    # egui offline UI
 ```
 
 ## Shell UI

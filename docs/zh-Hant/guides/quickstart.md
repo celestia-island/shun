@@ -19,7 +19,7 @@ cargo run --example demo_install -- --uninstall       # 解除安裝（清除全
 
 ```bash
 pnpm --dir shell/web install
-cargo run -p shun_demo_shell
+cargo run -p shun_installer
 ```
 
 殼在建置期嵌入 demo payload（單檔安裝器模式），並渲染

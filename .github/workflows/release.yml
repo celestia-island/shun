@@ -36,13 +36,13 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target\release\shun-demo-shell.exe dist\shun-demo-shell-windows-x64.exe
-          Compress-Archive -Path dist\shun-demo-shell-windows-x64.exe -DestinationPath shun-demo-shell-windows-x64.zip
+          Copy-Item target\release\shun-installer.exe dist\shun-installer-windows-x64.exe
+          Compress-Archive -Path dist\shun-installer-windows-x64.exe -DestinationPath shun-installer-windows-x64.zip
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: shun-demo-shell-windows-x64.zip
+          files: shun-installer-windows-x64.zip
 
   build-linux:
     name: Linux demo binaries

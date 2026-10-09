@@ -24,7 +24,7 @@ registre.
 
 ```bash
 pnpm --dir shell/web install
-cargo run -p shun_demo_shell
+cargo run -p shun_installer
 ```
 
 Le shell embarque le payload de démo à la construction (modèle
