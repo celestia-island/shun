@@ -120,7 +120,7 @@ pub(crate) struct Theme {
 impl Theme {
     /// The dark token set (the installer default), with the optional
     /// accent override from `shell.theme.accent`.
-    fn dark(accent: Option<[u8; 3]>) -> Self {
+    pub(crate) fn dark(accent: Option<[u8; 3]>) -> Self {
         Self {
             background: Color32::from_rgb(12, 18, 30),
             surface: Color32::from_rgb(22, 30, 46),
@@ -169,6 +169,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)] // retired with the inline banners; the callout mixes its own
     /// Warning banner fill (warning at ~12% over the background).
     fn warning_tint(&self) -> Color32 {
         mix(self.background, self.warning, 0.12)
@@ -409,7 +410,7 @@ pub(crate) fn hairline_box(
 }
 
 /// Alpha-blends `over` onto `base`.
-fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
+pub(crate) fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
     let channel = |b: u8, o: u8| {
         let blended = f32::from(b) * (1.0 - factor) + f32::from(o) * factor;
         blended.round().clamp(0.0, 255.0) as u8
@@ -907,26 +908,33 @@ mod lucide {
     pub(crate) const APP_WINDOW: &str = r#"<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>"#;
     pub(crate) const HARD_DRIVE: &str = r#"<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>"#;
     pub(crate) const ALERT_TRIANGLE: &str = r#"<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-1"/><path d="M12 9v4"/><path d="M12 17h.01"/>"#;
+    pub(crate) const INFO: &str =
+        r#"<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>"#;
+    pub(crate) const CHECK_CIRCLE: &str =
+        r#"<path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/>"#;
 }
 
-/// The caption's four glyph textures (white strokes — tinted per state
+/// The caption glyph textures (white strokes — tinted per state
 /// at draw time, like `stroke="currentColor"`).
 #[derive(Clone)]
-struct CaptionIcons {
-    minus: TextureHandle,
-    x: TextureHandle,
-    sun: TextureHandle,
-    moon: TextureHandle,
+pub(crate) struct CaptionIcons {
+    pub(crate) minus: TextureHandle,
+    pub(crate) x: TextureHandle,
+    pub(crate) sun: TextureHandle,
+    pub(crate) moon: TextureHandle,
     /// The select trigger's dropdown arrow (HkSelect's ChevronDown).
-    chevron: TextureHandle,
-    folder: TextureHandle,
-    app_window: TextureHandle,
-    hard_drive: TextureHandle,
-    alert: TextureHandle,
+    pub(crate) chevron: TextureHandle,
+    /// The callout block's info / success glyphs (HkAlert's set).
+    pub(crate) info: TextureHandle,
+    pub(crate) check: TextureHandle,
+    pub(crate) folder: TextureHandle,
+    pub(crate) app_window: TextureHandle,
+    pub(crate) hard_drive: TextureHandle,
+    pub(crate) alert: TextureHandle,
 }
 
 impl CaptionIcons {
-    fn load(ctx: &Context) -> Self {
+    pub(crate) fn load(ctx: &Context) -> Self {
         let render = |name: &str, body: &str| {
             let svg = format!(
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" \
@@ -952,6 +960,8 @@ impl CaptionIcons {
             app_window: render("app-window", lucide::APP_WINDOW),
             hard_drive: render("hard-drive", lucide::HARD_DRIVE),
             alert: render("alert-triangle", lucide::ALERT_TRIANGLE),
+            info: render("info", lucide::INFO),
+            check: render("check-circle", lucide::CHECK_CIRCLE),
         }
     }
 }
@@ -2382,27 +2392,37 @@ impl FallbackApp {
         }
     }
 
-    /// The fallback-reason banner. This is the contract: a
+    /// The fallback-reason notice, rendered as the LAST item of the
+    /// current page's document flow through the generic callout block —
+    /// never a pinned position. This is the contract: a
     /// missing-environment install must say so.
     fn banner(&mut self, ui: &mut egui::Ui) {
-        let theme = &self.theme;
+        let theme = self.theme;
         let texts = self.texts.clone();
-        let text = match self.reason {
-            FallbackReason::MissingWebview2 => self.texts.banner_missing.clone(),
-            FallbackReason::ManualOverride => self.texts.banner_manual.clone(),
+        // The sole call site gates on MissingWebview2 (a deliberate
+        // --no-webview launch never banners); the manual-override copy
+        // stays referenced for the web table parity.
+        let _ = &texts.banner_manual;
+        let text = texts.banner_missing.clone();
+        let warn_missing = self.warn_missing_runtime;
+        let icons = crate::callout::CalloutIcons {
+            alert: &self.caption_icons.alert,
+            info: &self.caption_icons.info,
+            check: &self.caption_icons.check,
         };
-        Frame::default()
-            .fill(theme.warning_tint())
-            .stroke(Stroke::new(1.0f32, theme.warning))
-            .inner_margin(Margin::same(10))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new(text).color(theme.warning).size(12.5));
+        crate::callout::callout(
+            ui,
+            &theme,
+            &icons,
+            crate::callout::CalloutLevel::Warning,
+            None,
+            &text,
+            &mut |ui| {
                 // The embedded quick link (install-start warning): the
                 // machine has no runtime and this build carries none —
                 // point at Microsoft's official download page. Armed by
                 // the manifest's `warn-missing` knob (default on).
-                if self.warn_missing_runtime
+                if warn_missing
                     && ui
                         .button(
                             RichText::new(texts.banner_download_link.as_str())
@@ -2415,7 +2435,8 @@ impl FallbackApp {
                 {
                     open_webview2_download_page();
                 }
-            });
+            },
+        );
     }
 
     /// The configure pane: dispatches on the fixed wizard steps —
@@ -3676,7 +3697,7 @@ impl FallbackApp {
                     // WebView2 and this machine has none — without it
                     // the very first launch dies on a native message
                     // box, so say it here with the official download
-                    // link one click away. Unlike the start banner this
+                    // link one click away. Unlike the start notice this
                     // arms even when the payload carried an installer
                     // (the silent run may have failed or been declined):
                     // by done-page time "runtime still missing" is the
@@ -3686,20 +3707,24 @@ impl FallbackApp {
                         && self.config.webview2_warn_missing();
                     if warn_end {
                         ui.add_space(12.0);
-                        Frame::default()
-                            .fill(theme.warning_tint())
-                            .stroke(Stroke::new(1.0f32, theme.warning))
-                            .inner_margin(Margin::same(10))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(
-                                    RichText::new(texts.done_warn_webview2.as_str())
-                                        .color(theme.warning)
-                                        .size(12.5),
-                                );
+                        let icons = crate::callout::CalloutIcons {
+                            alert: &self.caption_icons.alert,
+                            info: &self.caption_icons.info,
+                            check: &self.caption_icons.check,
+                        };
+                        let body = texts.done_warn_webview2.clone();
+                        let link = texts.banner_download_link.clone();
+                        crate::callout::callout(
+                            ui,
+                            &theme,
+                            &icons,
+                            crate::callout::CalloutLevel::Warning,
+                            None,
+                            &body,
+                            &mut |ui| {
                                 if ui
                                     .button(
-                                        RichText::new(texts.banner_download_link.as_str())
+                                        RichText::new(link.as_str())
                                             .color(theme.warning)
                                             .underline()
                                             .size(12.5),
@@ -3709,7 +3734,8 @@ impl FallbackApp {
                                 {
                                     open_webview2_download_page();
                                 }
-                            });
+                            },
+                        );
                     }
                     // The done-page answers — the shared driver's flow
                     // creates nothing, so the finish button applies
@@ -4435,15 +4461,6 @@ impl eframe::App for FallbackApp {
                     self.timeline(ui, false);
                     ui.add_space(10.0);
                 }
-                // The degradation banner is information, not decoration:
-                // show it only when the runtime forced the fallback (no
-                // WebView2). A deliberate --no-webview launch needs no
-                // warning about itself, and the uninstall page mirrors
-                // the web uninstaller (which never banners).
-                if self.reason == FallbackReason::MissingWebview2 && !self.uninstall_mode {
-                    self.banner(ui);
-                    ui.add_space(12.0);
-                }
                 // THE unified content origin (user direction: both faces
                 // left-align everything at a FIXED inset — no per-page
                 // centering, so the heading parks at the same spot on
@@ -4476,6 +4493,24 @@ impl eframe::App for FallbackApp {
                             Stage::Configure => self.configure_view(ui),
                             Stage::Running => self.running_view(ui),
                             Stage::Finished => self.finished_view(ui),
+                        }
+                        // The degradation notice is information, not
+                        // decoration: it rides the page's document flow as
+                        // the last item — never a pinned position. Two pages
+                        // opt out: the RUNNING page pins its log strip to
+                        // the pane bottom (a trailing block would clip
+                        // entirely below the fold), and a SUCCESSFUL done
+                        // page already shows the install-end warning — a
+                        // second identical block would read as a glitch.
+                        // A deliberate --no-webview launch needs no warning
+                        // about itself; the uninstall page mirrors the web
+                        // uninstaller, which never banners.
+                        let notice_owned_by_page = self.stage == Stage::Running
+                            || (self.stage == Stage::Finished
+                                && matches!(self.outcome.as_ref(), Some(Outcome::InstallOk)));
+                        if self.reason == FallbackReason::MissingWebview2 && !notice_owned_by_page {
+                            ui.add_space(12.0);
+                            self.banner(ui);
                         }
                     },
                 );
