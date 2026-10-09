@@ -1561,6 +1561,7 @@ impl FallbackApp {
                 self.dir.trim(),
                 self.desktop_shortcut,
                 uninstalling,
+                &[],
             )
         }) {
             self.outcome = Some(Outcome::Failed(err));

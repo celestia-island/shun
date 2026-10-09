@@ -811,7 +811,22 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
         let ctx =
             shun::wizard::elevation_context(config, &dir, portable, true, cli.language.as_deref())
                 .map_err(|e| e.to_string())?;
-        ensure_elevated_for(&ctx, &cli.mode, &dir, desktop_answer, false)?;
+        let raw_shortcut_args: Vec<String> = [
+            cli.shortcut_menu.map(|v| format!("--shortcut-menu={v}")),
+            cli.shortcut_desktop
+                .map(|v| format!("--shortcut-desktop={v}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        ensure_elevated_for(
+            &ctx,
+            &cli.mode,
+            &dir,
+            desktop_answer,
+            false,
+            &raw_shortcut_args,
+        )?;
     }
 
     let core = WizardCore::new(config.clone(), BTreeMap::new());
@@ -918,6 +933,7 @@ pub(crate) fn ensure_elevated_for(
     dir: &str,
     desktop: bool,
     uninstalling: bool,
+    raw_shortcut_args: &[String],
 ) -> Result<(), String> {
     use shun::targets::install::InstallScope;
     if ctx.scope != InstallScope::Machine || shun::targets::elevate::is_elevated() {
@@ -926,6 +942,13 @@ pub(crate) fn ensure_elevated_for(
     let mut args = format!("--silent --mode={mode} --dir=\"{}\"", dir.trim());
     if !desktop {
         args.push_str(" --no-desktop");
+    }
+    // The raw shortcut answers ride along verbatim: the elevated
+    // copy re-resolves them from its own argv, so losing one here
+    // would flip an explicit removal into the always-on default.
+    for raw in raw_shortcut_args {
+        args.push(' ');
+        args.push_str(raw);
     }
     args.push_str(" --scope=machine");
     if let Some(language) = &ctx.language {

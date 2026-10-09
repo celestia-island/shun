@@ -263,22 +263,20 @@ impl WizardCore {
     /// appdata → Program Files → one folder per fixed drive), the
     /// default being the first writable candidate.
     pub fn refresh_dir_defaults(&mut self) {
-        let product = self.config.product.name.clone();
-        let candidates = dir_candidates_for(&product);
-        let paths: Vec<PathBuf> = candidates.iter().map(|(_, p)| p.clone()).collect();
-        let dir = crate::fs_probe::first_writable(&paths)
-            .or_else(|| paths.first().cloned())
-            .unwrap_or_else(|| local_appdata().join(&product));
-        self.state.dir = dir.to_string_lossy().into_owned();
-        self.state.dir_writable = Some(true);
-        self.state.candidates = candidates
-            .into_iter()
-            .map(|(kind, path)| DirCandidate {
-                kind,
-                writable: crate::fs_probe::is_dir_writable(&path),
-                path: path.to_string_lossy().into_owned(),
-            })
-            .collect();
+        // Manifest-aware: a configured install.default-dir leads the
+        // chain (see location_defaults_for) so every face — webview,
+        // egui, TUI — defaults to the pinned location alike.
+        let candidates = location_defaults_for(&self.config);
+        let dir = candidates
+            .iter()
+            .find(|candidate| candidate.writable)
+            .map(|candidate| candidate.path.clone())
+            .or_else(|| candidates.first().map(|candidate| candidate.path.clone()));
+        if let Some(dir) = dir {
+            self.state.dir = dir;
+            self.state.dir_writable = Some(true);
+        }
+        self.state.candidates = candidates;
     }
 
     /// Sets the shown path and probes its writability (the same test
@@ -756,12 +754,12 @@ pub fn current_exe_dir() -> Option<PathBuf> {
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
 }
 
-/// The writability-probed location candidates for a product (the
-/// command layer's thin entry — faces that hold a [`WizardCore`] get the
-/// same list through [`WizardCore::refresh_dir_defaults`]). Products
-/// whose manifest pins `install.default-dir` should call
-/// [`location_defaults_for`] instead — this plain form keeps the
-/// `%LOCALAPPDATA%\<product>` convention.
+/// The writability-probed location candidates under the product-name
+/// convention (`%LOCALAPPDATA%\<product>` first). Manifest-aware
+/// callers — the shell's command layer, the egui face,
+/// [`WizardCore::refresh_dir_defaults`] — go through
+/// [`location_defaults_for`], which additionally leads with a
+/// configured `install.default-dir` when the manifest pins one.
 pub fn location_defaults(product: &str) -> Vec<DirCandidate> {
     dir_candidates_for(product)
         .into_iter()
@@ -779,12 +777,22 @@ pub fn location_defaults(product: &str) -> Vec<DirCandidate> {
 pub fn location_defaults_for(config: &ShunConfig) -> Vec<DirCandidate> {
     match configured_default_dir(config) {
         Some(dir) => {
-            let mut candidates = vec![DirCandidate {
-                kind: "appdata",
+            // The pin carries its own kind (both faces render the
+            // kind label; "appdata" would lie for off-appdata pins),
+            // and the conventional chain follows MINUS a path-equal
+            // twin — duplicate rows would double up in every picker.
+            let pinned = DirCandidate {
+                kind: "default-dir",
                 writable: crate::fs_probe::is_dir_writable(&dir),
                 path: dir.display().to_string(),
-            }];
-            candidates.extend(location_defaults(&config.product.name));
+            };
+            let pinned_path = pinned.path.to_lowercase();
+            let mut candidates = vec![pinned];
+            candidates.extend(
+                location_defaults(&config.product.name)
+                    .into_iter()
+                    .filter(|candidate| candidate.path.to_lowercase() != pinned_path),
+            );
             candidates
         }
         None => location_defaults(&config.product.name),
@@ -1089,6 +1097,21 @@ mod tests {
         assert_eq!(expand_env_vars(r"C:\costs $5"), r"C:\costs $5");
         assert_eq!(expand_env_vars("%SHUN_TEST_LOC"), "%SHUN_TEST_LOC");
         assert_eq!(expand_env_vars("${SHUN_TEST_LOC"), "${SHUN_TEST_LOC");
+        // Two refs in one string, mixed spellings.
+        assert_eq!(
+            expand_env_vars(r"%SHUN_TEST_LOC%\${SHUN_TEST_LOC}"),
+            r"D:\Base\D:\Base"
+        );
+        // Empty names vanish; an unclosed % keeps the WHOLE remainder
+        // literal (a later well-formed ref does not rescue it).
+        assert_eq!(expand_env_vars("a%%b"), "ab");
+        assert_eq!(expand_env_vars("${}x"), "x");
+        assert_eq!(
+            expand_env_vars(r"100% off ${SHUN_TEST_LOC}"),
+            r"100% off ${SHUN_TEST_LOC}"
+        );
+        // SAFETY: test-scope cleanup, see the set above.
+        unsafe { std::env::remove_var("SHUN_TEST_LOC") };
     }
 
     /// A configured install.default-dir leads the candidate chain and
@@ -1096,22 +1119,36 @@ mod tests {
     /// convention byte-for-byte.
     #[test]
     fn default_dir_leads_the_location_candidates() {
-        // SAFETY: see the sibling test.
-        unsafe { std::env::set_var("SHUN_TEST_LOC", r"D:\Base") };
-        let pinned = location_config(Some(r"%SHUN_TEST_LOC%\Programs\Wowsp"));
+        // SAFETY: a SHUN_-namespaced test variable (its own name — the
+        // sibling test mutates a different one, and cargo runs these
+        // in parallel).
+        unsafe { std::env::set_var("SHUN_TEST_PIN", r"D:\Base") };
+        let pinned = location_config(Some(r"%SHUN_TEST_PIN%\Programs\Wowsp"));
         let candidates = location_defaults_for(&pinned);
-        assert_eq!(candidates[0].kind, "appdata");
+        // The pin carries its own kind; the conventional chain follows
+        // minus a path-equal twin.
+        assert_eq!(candidates[0].kind, "default-dir");
+        // The pin expanded (%SHUN_TEST_LOC% → the test value) and leads
+        // the chain — the expanded form is what the faces display.
         assert!(
-            candidates[0].path.ends_with(r"\Programs\Wowsp"),
-            "first candidate is the pinned dir: {}",
+            candidates[0].path.contains("Base") && candidates[0].path.ends_with("Wowsp"),
+            "first candidate is the expanded pinned dir: {}",
             candidates[0].path
         );
-        assert!(default_location_for(&pinned).ends_with(r"\Programs\Wowsp"));
+        // Platform-agnostic containment: Path::ends_with is separator-
+        // sensitive, and the pin's separators follow the manifest.
+        let default = default_location_for(&pinned);
+        assert!(
+            default.contains("Base") && default.ends_with("Wowsp"),
+            "the default resolves the pinned dir: {default}"
+        );
         assert_eq!(
             location_defaults_for(&location_config(None)),
             location_defaults("Wowsp"),
             "no knob: identical to the product-based chain"
         );
+        // SAFETY: test-scope cleanup, see the set above.
+        unsafe { std::env::remove_var("SHUN_TEST_PIN") };
     }
 
     fn core_with(config_json: &str) -> WizardCore {

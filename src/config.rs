@@ -2790,6 +2790,28 @@ zh-Hans = "NOTICE.zh-Hans.md"
     }
 
     #[test]
+    fn title_locales_localize_the_document_headings() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("NOTICE.md"), "notice body\n").unwrap();
+        std::fs::write(dir.path().join("NOTICE.zh.md"), "notice body zh\n").unwrap();
+        let mut config = sample();
+        config.licenses = vec![LicenseDocConfig {
+            title_locales: BTreeMap::from([("zh-Hans".into(), "演示声明".into())]),
+            title: Some("Demo notice".into()),
+            path: "NOTICE.md".into(),
+            locale_paths: BTreeMap::from([("zh-Hans".into(), "NOTICE.zh.md".into())]),
+        }];
+
+        let steps = config.resolve_steps(dir.path(), Some("zh-Hans")).unwrap();
+        let license = steps.iter().find(|s| s.kind == StepKind::License).unwrap();
+        // The localized heading wins; an unmapped locale keeps the base.
+        assert_eq!(license.licenses[0].title.as_deref(), Some("演示声明"));
+        let steps = config.resolve_steps(dir.path(), None).unwrap();
+        let license = steps.iter().find(|s| s.kind == StepKind::License).unwrap();
+        assert_eq!(license.licenses[0].title.as_deref(), Some("Demo notice"));
+    }
+
+    #[test]
     fn licenses_alone_trigger_the_license_step() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("NOTICE.md"), "notice\n").unwrap();

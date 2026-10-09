@@ -134,8 +134,13 @@ writefile {marker} ${{language}}
     let mut context = Context::new();
     duckscriptsdk::load(&mut context.commands).expect("sdk command set loads");
     let result = runner::run_script(&script, context, None);
-    // Safety: symmetric cleanup of the seeding above, under ENV_LOCK.
-    unsafe { std::env::remove_var(LANGUAGE_ENV) };
+    // Safety: symmetric cleanup of the seeding above, under ENV_LOCK —
+    // the delivery facts ride the same seeding loop now.
+    unsafe {
+        std::env::remove_var(LANGUAGE_ENV);
+        std::env::remove_var(shun::targets::install::INSTALL_DIR_ENV);
+        std::env::remove_var(shun::targets::install::PORTABLE_ENV);
+    }
 
     result.expect("script runs to completion");
     assert_eq!(

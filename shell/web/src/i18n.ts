@@ -374,6 +374,7 @@ const zhHans: InstallerStrings = {
       cdrom: "光盘",
       ramdisk: "RAM 盘",
       unknown: "未知磁盘",
+      defaultDir: "默认位置",
     },
   },
 };
@@ -514,6 +515,7 @@ const zhHant: InstallerStrings = {
       cdrom: "光碟",
       ramdisk: "RAM 碟",
       unknown: "未知磁碟",
+      defaultDir: "預設位置",
     },
   },
 };
@@ -656,6 +658,7 @@ const en: InstallerStrings = {
       cdrom: "Optical drive",
       ramdisk: "RAM disk",
       unknown: "Unknown drive",
+      defaultDir: "Default location",
     },
   },
 };
@@ -795,6 +798,7 @@ const ru: InstallerStrings = {
       cdrom: "Оптический диск",
       ramdisk: "RAM-диск",
       unknown: "Неизвестный диск",
+      defaultDir: "Расположение по умолчанию",
     },
   },
 };
@@ -952,6 +956,7 @@ const ja: InstallerStrings = {
       cdrom: "光学ドライブ",
       ramdisk: "RAM ディスク",
       unknown: "不明なドライブ",
+      defaultDir: "既定の場所",
     },
   },
 };
@@ -1104,6 +1109,7 @@ const ko: InstallerStrings = {
       cdrom: "광학 드라이브",
       ramdisk: "RAM 디스크",
       unknown: "알 수 없는 드라이브",
+      defaultDir: "기본 위치",
     },
   },
 };
@@ -1257,6 +1263,7 @@ const fr: InstallerStrings = {
       cdrom: "Lecteur optique",
       ramdisk: "Disque RAM",
       unknown: "Disque inconnu",
+      defaultDir: "Emplacement par défaut",
     },
   },
 };
@@ -1410,6 +1417,7 @@ const es: InstallerStrings = {
       cdrom: "Unidad óptica",
       ramdisk: "Disco RAM",
       unknown: "Unidad desconocida",
+      defaultDir: "Ubicación predeterminada",
     },
   },
 };
@@ -1562,6 +1570,7 @@ const de: InstallerStrings = {
       cdrom: "Optisches Laufwerk",
       ramdisk: "RAM-Laufwerk",
       unknown: "Unbekanntes Laufwerk",
+      defaultDir: "Standardort",
     },
   },
 };
@@ -1715,6 +1724,7 @@ const pt: InstallerStrings = {
       cdrom: "Unidade ótica",
       ramdisk: "Disco RAM",
       unknown: "Disco desconhecido",
+      defaultDir: "Local predefinido",
     },
   },
 };

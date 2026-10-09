@@ -55,6 +55,7 @@ const MAP: Record<string, string> = {
   kind_cdrom: "pathField.kinds.cdrom",
   kind_ramdisk: "pathField.kinds.ramdisk",
   kind_unknown: "pathField.kinds.unknown",
+  kind_default_dir: "pathField.kinds.defaultDir",
   next: "nav.next",
   back: "nav.back",
   log: "logPane.title",
