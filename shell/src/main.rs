@@ -532,6 +532,10 @@ fn license_locale_key(locale: &str) -> &'static str {
         "fr"
     } else if lower.starts_with("es") {
         "es"
+    } else if lower.starts_with("de") {
+        "de"
+    } else if lower.starts_with("pt") {
+        "pt"
     } else {
         "en"
     }
