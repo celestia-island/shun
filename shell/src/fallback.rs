@@ -47,6 +47,12 @@ pub enum FallbackReason {
 /// Messages from the worker thread back to the UI thread.
 enum WorkerMsg {
     Event(FlowEvent),
+    /// A direct log-pane row from the worker (the WebView2 runtime
+    /// download's decile rows — FlowEvent::Log's records are structured
+    /// file/script operations, too narrow for a plain progress line).
+    LogLine(crate::terminal::LineKind, String),
+    /// The runtime download's smoothed speed in MiB/s.
+    RuntimeSpeed(f32),
     Done(Result<(), String>),
 }
 
@@ -645,6 +651,9 @@ struct Texts {
     runtime_download: String,
     /// The install-step silent-install step row.
     runtime_install: String,
+    /// The runtime download's live speed label (the chip's tag; the
+    /// value follows in monospace).
+    download_speed: String,
     step_language: String,
     step_location: String,
     step_license: String,
@@ -1262,6 +1271,16 @@ struct FallbackApp {
     phase_active: Option<FlowPhase>,
     /// What the running worker is doing; `true` = uninstalling.
     uninstalling: Option<bool>,
+    /// The WebView2 runtime download's smoothed speed (MiB/s) and the
+    /// moment it last moved — the step-text row renders a labeled chip
+    /// beside the percent while the value is fresh, and drops it once
+    /// the download ends (or the feed stalls).
+    runtime_speed: Option<(f32, std::time::Instant)>,
+    /// Debug builds only: SHUN_DEBUG_SPEED's pinned value — refreshed
+    /// into `runtime_speed` every frame so the screenshot delay can't
+    /// stale it out.
+    #[cfg(debug_assertions)]
+    debug_speed_pin: Option<f32>,
     /// The standalone uninstaller face (`/uninstall` without `--silent`,
     /// the ARP entry's GUI spelling): replaces the whole wizard with the
     /// web face's confirm → running → done/failed page, repair included.
@@ -1426,6 +1445,9 @@ impl FallbackApp {
                 matches!(shell.log_order, Some(shun::config::LogOrder::Oldest)),
             ),
             log_level: shell.log_level.unwrap_or(shun::config::LogVerbosity::All),
+            runtime_speed: None,
+            #[cfg(debug_assertions)]
+            debug_speed_pin: None,
             phases_done: Vec::new(),
             phase_active: None,
             uninstalling: None,
@@ -1458,6 +1480,11 @@ impl FallbackApp {
         if std::env::var("SHUN_DEBUG_PATH_EDIT").is_ok_and(|v| v == "1") {
             self.path_editing = true;
             self.path_focus_request = true;
+        }
+        // SHUN_DEBUG_SPEED=<MiB/s> pins the runtime download's speed
+        // chip (the real value rides the worker's EMA feed).
+        if let Ok(speed) = std::env::var("SHUN_DEBUG_SPEED") {
+            self.debug_speed_pin = speed.parse::<f32>().ok();
         }
         let Ok(stage) = std::env::var("SHUN_DEBUG_STAGE") else {
             return;
@@ -1609,6 +1636,7 @@ impl FallbackApp {
         self.entry = install_of(&self.config)
             .and_then(|install| install.main_exe.clone())
             .map(|main| Path::new(self.dir.trim()).join(main));
+        self.runtime_speed = None;
 
         let (sender, receiver) = channel();
         self.receiver = receiver;
@@ -1639,46 +1667,75 @@ impl FallbackApp {
                 // same event channel (the register-phase weighting
                 // keeps the extraction bar in place).
                 let install = install.map(|()| {
-                    // Localized step rows: every phase change and every
-                    // decile changes the step text, which the running
-                    // pane's apply_event both logs and shows in the strip
-                    // header — the download reports itself like the
-                    // extraction steps do.
+                    // The runtime acquire reports itself three ways, all
+                    // localized: the step line under the bar (constant
+                    // label + the weighted percent the view appends), a
+                    // decile log row per tenth (plain LogLine rows — the
+                    // step string stays constant so the pane's
+                    // log-on-change rule can't double-append the
+                    // percent), and a labeled live speed chip fed at
+                    // ~4 Hz from an EMA of the byte deltas.
                     let download_label = texts.runtime_download.clone();
                     let install_label = texts.runtime_install.clone();
-                    let mut last_step = String::new();
-                    let mut emit = |step: String, percent: Option<u8>| {
-                        if step != last_step {
-                            last_step = step.clone();
-                            let _ = sender.send(WorkerMsg::Event(FlowEvent::Progress {
-                                phase: shun::flow::FlowPhase::Register,
-                                step,
-                                percent,
-                            }));
-                            repaint.request_repaint();
-                        }
+                    let send = |event: WorkerMsg| {
+                        let _ = sender.send(event);
+                        repaint.request_repaint();
                     };
-                    let percent_of = |so_far: u64, total: Option<u64>| {
-                        total.map(|total| (so_far * 100 / total.max(1)).min(100) as u8)
-                    };
+                    send(WorkerMsg::Event(FlowEvent::Progress {
+                        phase: shun::flow::FlowPhase::Register,
+                        step: download_label.clone(),
+                        percent: Some(0),
+                    }));
+                    let mut last_decile = -1i32;
+                    let mut last_bytes = 0u64;
+                    let mut last_tick = std::time::Instant::now();
+                    let mut ema: Option<f32> = None;
                     crate::acquire_webview2_at_install(&core.config, &payload, &mut |event| {
                         match event {
-                            crate::RuntimeEvent::DownloadStart => {
-                                emit(download_label.clone(), Some(0));
-                            }
+                            crate::RuntimeEvent::DownloadStart => {}
                             crate::RuntimeEvent::Download(so_far, total) => {
-                                let percent = percent_of(so_far, total);
+                                let percent =
+                                    total.map(|total| (so_far * 100 / total.max(1)).min(100) as u8);
+                                let now = std::time::Instant::now();
+                                let dt = last_tick.elapsed().as_secs_f32();
+                                if dt >= 0.25 {
+                                    let instant = (so_far.saturating_sub(last_bytes)) as f32 / dt;
+                                    ema = Some(match ema {
+                                        Some(ema) => ema * 0.6 + instant * 0.4,
+                                        None => instant,
+                                    });
+                                    last_bytes = so_far;
+                                    last_tick = now;
+                                    if let Some(mibs) = ema {
+                                        send(WorkerMsg::RuntimeSpeed(mibs / (1024.0 * 1024.0)));
+                                    }
+                                }
                                 if let Some(percent) = percent {
-                                    // One row per decile — enough signal
-                                    // without flooding the pane.
-                                    emit(
-                                        format!("{}… {}%", download_label, percent / 10 * 10),
-                                        Some(percent),
-                                    );
+                                    let decile = (percent / 10) as i32;
+                                    if decile > last_decile {
+                                        last_decile = decile;
+                                        send(WorkerMsg::LogLine(
+                                            crate::terminal::LineKind::Step,
+                                            format!("{}… {}%", download_label, decile * 10),
+                                        ));
+                                        send(WorkerMsg::Event(FlowEvent::Progress {
+                                            phase: shun::flow::FlowPhase::Register,
+                                            step: download_label.clone(),
+                                            percent: Some(percent),
+                                        }));
+                                    }
                                 }
                             }
                             crate::RuntimeEvent::InstallStart => {
-                                emit(install_label.clone(), None);
+                                send(WorkerMsg::Event(FlowEvent::Progress {
+                                    phase: shun::flow::FlowPhase::Register,
+                                    step: install_label.clone(),
+                                    percent: None,
+                                }));
+                                send(WorkerMsg::LogLine(
+                                    crate::terminal::LineKind::Step,
+                                    install_label.clone(),
+                                ));
                             }
                         }
                     });
@@ -1744,8 +1801,13 @@ impl FallbackApp {
         while let Ok(msg) = self.receiver.try_recv() {
             match msg {
                 WorkerMsg::Event(event) => self.apply_event(event),
+                WorkerMsg::LogLine(kind, text) => self.terminal.push(kind, text),
+                WorkerMsg::RuntimeSpeed(mibs) => {
+                    self.runtime_speed = Some((mibs, std::time::Instant::now()));
+                }
                 WorkerMsg::Done(result) => {
                     self.progress = None;
+                    self.runtime_speed = None;
                     if matches!(result, Ok(())) {
                         self.phases_done = ALL_PHASES.to_vec();
                         self.phase_active = None;
@@ -1803,13 +1865,17 @@ impl FallbackApp {
                     }
                 }
                 // Overall completion is phase-weighted: download maps to
-                // the first tenth, extraction to the following 85%; the
-                // trailing registration is instant and `Completed` caps
-                // the bar.
+                // the first tenth, extraction to the next 80%, and the
+                // WebView2 runtime acquire — the ONLY source of a
+                // percentful Register event (the flow's own registration
+                // is instant, percent-less) — walks the final tenth, so
+                // the download's bar crawls 90→100 like every phase.
+                // `Completed` caps the bar.
                 if let Some(percent) = percent {
                     let weighted = match phase {
                         FlowPhase::Download => (percent as u16) / 10,
-                        FlowPhase::Extract | FlowPhase::Verify => 10 + (percent as u16) * 85 / 100,
+                        FlowPhase::Extract | FlowPhase::Verify => 10 + (percent as u16) * 80 / 100,
+                        FlowPhase::Register => 90 + (percent as u16) * 10 / 100,
                         _ => self.overall.map(u16::from).unwrap_or(0),
                     };
                     let overall = weighted.max(self.overall.map(u16::from).unwrap_or(0));
@@ -3701,6 +3767,10 @@ impl FallbackApp {
     fn running_view(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let uninstalling = self.uninstalling == Some(true);
+        #[cfg(debug_assertions)]
+        if let Some(mibs) = self.debug_speed_pin {
+            self.runtime_speed = Some((mibs, std::time::Instant::now()));
+        }
 
         let strip_h = self.terminal.height_hint();
         // The unified fixed-origin column: the progress block starts at
@@ -3767,11 +3837,43 @@ impl FallbackApp {
                     Some(pct) if !uninstalling => format!("{step} · {pct}%"),
                     _ => step,
                 };
-                ui.label(
-                    RichText::new(step_text)
-                        .size(12.0)
-                        .color(theme.text_tertiary),
-                );
+                // The runtime download's labeled live speed, right of
+                // the step text — hidden once the feed stalls past 2.5s
+                // (the silent-install phase has no byte feed) or the run
+                // ends. Same muted small-text treatment both faces use
+                // for inline stats.
+                let speed_fresh = self
+                    .runtime_speed
+                    .is_some_and(|(_, at)| at.elapsed() < std::time::Duration::from_millis(2500))
+                    .then_some(())
+                    .and(self.runtime_speed.as_ref().map(|(mibs, _)| *mibs));
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(step_text)
+                            .size(12.0)
+                            .color(theme.text_tertiary),
+                    );
+                    if let Some(mibs) = speed_fresh {
+                        let speed_text = if mibs >= 1.0 {
+                            format!("{mibs:.1} MB/s")
+                        } else {
+                            format!("{:.0} KB/s", mibs * 1024.0)
+                        };
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(speed_text)
+                                    .font(egui::FontId::monospace(11.0))
+                                    .color(theme.text_secondary),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(self.texts.download_speed.as_str())
+                                    .size(12.0)
+                                    .color(theme.text_tertiary),
+                            );
+                        });
+                    }
+                });
             },
         );
         // Pin the strip to the pane's bottom edge: fill the gap between
