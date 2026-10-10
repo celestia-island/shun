@@ -2999,26 +2999,20 @@ impl FallbackApp {
                         self.path_editing = false;
                     }
                 } else {
-                    // Resting: the text is PAINTER-DRAWN at the exact
-                    // baseline-true position - the TextEdit's internal
-                    // row centering shifted glyphs by DPI-dependent
-                    // points no static margin could track.
-                    let galley = ui.painter().layout_no_wrap(
-                        rest.clone(),
+                    // Resting: painter-drawn, vertically centered EXACTLY
+                    // like the drive chip's label (LEFT_CENTER at the
+                    // field center with the same +1.5 optical nudge —
+                    // the chip got this right and the old baseline-true
+                    // derivation sat visibly low), and truncated to the
+                    // input's width with the TAIL kept: the deep
+                    // segments are the informative ones (HkInput's
+                    // middle-ellipsis convention for long paths).
+                    let display = fit_path(ui.painter(), &rest, input_rect.width());
+                    ui.painter().text(
+                        pos2(input_rect.left(), field_rect.center().y + 1.5),
+                        egui::Align2::LEFT_CENTER,
+                        &display,
                         egui::FontId::monospace(13.0),
-                        theme.text,
-                    );
-                    let row_baseline = galley
-                        .rows
-                        .first()
-                        .and_then(|row| row.glyphs.first())
-                        .map(|g| g.pos.y)
-                        .unwrap_or(galley.size().y * 0.8);
-                    let g_ascent = galley.size().y * 0.55;
-                    let baseline_y = field_rect.center().y + g_ascent * 0.75;
-                    ui.painter().galley(
-                        pos2(input_rect.left(), baseline_y - row_baseline),
-                        galley,
                         theme.text,
                     );
                     // Click-to-edit: a raw pointer test on the field's
@@ -4526,19 +4520,20 @@ impl eframe::App for FallbackApp {
                         }
                         // The degradation notice is information, not
                         // decoration: it rides the page's document flow as
-                        // the last item — never a pinned position. Two pages
-                        // opt out: the RUNNING page pins its log strip to
-                        // the pane bottom (a trailing block would clip
-                        // entirely below the fold), and a SUCCESSFUL done
-                        // page already shows the install-end warning — a
-                        // second identical block would read as a glitch.
-                        // A deliberate --no-webview launch needs no warning
-                        // about itself; the uninstall page mirrors the web
+                        // the last item — never a pinned position. It
+                        // shows on the wizard's FIRST page only (an
+                        // entry-page fact): middle pages read as
+                        // nagging, the running page pins its log strip
+                        // to the pane bottom, and the done page owns
+                        // the install-end story — its live loader probe
+                        // keeps that one silent when the install step
+                        // just fixed the machine (download-url
+                        // acquire). A deliberate --no-webview launch
+                        // needs no warning about itself; the uninstall
+                        // page returned above mirrors the web
                         // uninstaller, which never banners.
-                        let notice_owned_by_page = self.stage == Stage::Running
-                            || (self.stage == Stage::Finished
-                                && matches!(self.outcome.as_ref(), Some(Outcome::InstallOk)));
-                        if self.reason == FallbackReason::MissingWebview2 && !notice_owned_by_page {
+                        let on_first_page = self.stage == Stage::Configure && self.step == 0;
+                        if self.reason == FallbackReason::MissingWebview2 && on_first_page {
                             ui.add_space(12.0);
                             self.banner(ui);
                         }
@@ -4573,6 +4568,51 @@ fn apply_dwm_rounding(frame: &eframe::Frame) {
             4,
         );
     }
+}
+
+/// Fits a path remainder into `max_w` for the resting path field:
+/// when the full text is too wide, LEADING segments drop behind a
+/// leading ellipsis and the tail stays visible — the deep segments
+/// (`…\Programs\WoWSP`) are the informative ones, the same
+/// middle-ellipsis convention HkInput applies to long paths. Pure
+/// width math on the painter's font metrics; unit-tested because the
+/// loop's convergence (segment exhaustion, single giant segment) is
+/// exactly where off-by-ones hide.
+fn fit_path(painter: &egui::Painter, path: &str, max_w: f32) -> String {
+    let font = egui::FontId::monospace(13.0);
+    let width = |s: &str| {
+        painter
+            .layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE)
+            .size()
+            .x
+    };
+    if width(path) <= max_w {
+        return path.to_owned();
+    }
+    let sep = if path.contains('/') { '/' } else { '\\' };
+    let segs: Vec<&str> = path.split(sep).filter(|s| !s.is_empty()).collect();
+    let mut tail = segs.join(&sep.to_string());
+    // Drop whole leading segments while any remain beyond the first.
+    while tail.contains(sep) {
+        tail = tail
+            .split_once(sep)
+            .map(|(_, rest)| rest.to_string())
+            .unwrap_or_default();
+        let candidate = format!("…{sep}{tail}");
+        if width(&candidate) <= max_w {
+            return candidate;
+        }
+    }
+    // Even the final segment alone overflows: clip characters from
+    // its start — the name's tail stays visible.
+    while width(&format!("…{sep}{tail}")) > max_w && !tail.is_empty() {
+        tail = tail
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| tail[i..].to_string())
+            .unwrap_or_default();
+    }
+    format!("…{sep}{tail}")
 }
 
 #[cfg(test)]
@@ -4627,5 +4667,85 @@ mod strings_tests {
                 "{locale}: done_warn_webview2"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod path_fit_tests {
+    use super::*;
+
+    /// Font metrics need one pass loop first (the callout tests' same
+    /// rule), so `fit_path` runs inside a headless `ctx.run` against
+    /// the panel's painter.
+    fn fit_in_headless(path: &str, max_w: f32) -> String {
+        let ctx = egui::Context::default();
+        let mut fitted = None;
+        let mut f = Some((path.to_owned(), max_w, &mut fitted));
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                if let Some((path, max_w, out)) = f.take() {
+                    *out = Some(fit_path(ui.painter(), &path, max_w));
+                }
+            });
+        });
+        fitted.expect("the pass loop ran")
+    }
+
+    #[test]
+    fn short_paths_pass_through_untouched() {
+        assert_eq!(fit_in_headless("Users\\me", 500.0), "Users\\me");
+    }
+
+    #[test]
+    fn long_paths_keep_the_tail_behind_an_ellipsis() {
+        let deep = "Users\\WDAGUtilityAccount\\AppData\\Local\\Programs\\WoWSP";
+        let fitted = fit_in_headless(deep, 240.0);
+        assert!(fitted.starts_with('…'), "{fitted}");
+        assert!(fitted.ends_with("WoWSP"), "{fitted}");
+        let ctx = egui::Context::default();
+        let mut w = None;
+        let mut f = Some(fitted.clone());
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                if let Some(text) = f.take() {
+                    w = Some(
+                        ui.painter()
+                            .layout_no_wrap(text, egui::FontId::monospace(13.0), Color32::WHITE)
+                            .size()
+                            .x,
+                    );
+                }
+            });
+        });
+        let w = w.expect("measured");
+        assert!(w <= 240.0, "width {w} overflows 240");
+    }
+
+    #[test]
+    fn a_single_giant_segment_clips_characters() {
+        let giant = format!("long-dir-{}", "x".repeat(120));
+        let fitted = fit_in_headless(&giant, 200.0);
+        assert!(fitted.starts_with('…'), "{fitted}");
+        // The clip eats the segment from its START — what survives is
+        // the name's tail.
+        assert!(!fitted.contains("long-dir"), "{fitted}");
+        assert!(fitted.ends_with('x'), "{fitted}");
+        let ctx = egui::Context::default();
+        let mut w = None;
+        let mut f = Some(fitted.clone());
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                if let Some(text) = f.take() {
+                    w = Some(
+                        ui.painter()
+                            .layout_no_wrap(text, egui::FontId::monospace(13.0), Color32::WHITE)
+                            .size()
+                            .x,
+                    );
+                }
+            });
+        });
+        let w = w.expect("measured");
+        assert!(w <= 200.0, "width {w} overflows 200");
     }
 }
