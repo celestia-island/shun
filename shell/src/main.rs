@@ -906,12 +906,13 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
             crate::RuntimeEvent::InstallRetryElevated => {
                 println!("shun: the Evergreen installer failed unelevated — retrying through UAC")
             }
-            crate::RuntimeEvent::Done(ready) => {
+            crate::RuntimeEvent::Done(ready, code) => {
                 if ready {
                     println!("shun: the WebView2 runtime is ready");
                 } else {
+                    let code = code.map(|c| format!(" (exit {c})")).unwrap_or_default();
                     println!(
-                        "shun: the WebView2 runtime is STILL MISSING — the installed app needs it to start"
+                        "shun: the WebView2 runtime is STILL MISSING{code} — the installed app needs it to start"
                     );
                 }
             }
@@ -1421,8 +1422,10 @@ pub(crate) enum RuntimeEvent {
     InstallRetryElevated,
     /// The acquire settled: the loader now reports a usable runtime
     /// (`true`), or it doesn't (`false` — the done page's warning and
-    /// the log row tell the story).
-    Done(bool),
+    /// the log row tell the story). The exit code of the last silent
+    /// run rides along for the failure row (`None` when the process
+    /// never spawned or succeeded cleanly).
+    Done(bool, Option<i32>),
 }
 
 #[cfg(windows)]
@@ -1450,7 +1453,7 @@ pub(crate) fn acquire_webview2_at_install(
         Ok(path) => path,
         Err(err) => {
             eprintln!("shun: fetching the Evergreen installer failed ({err}); skipping");
-            on_event(RuntimeEvent::Done(false));
+            on_event(RuntimeEvent::Done(false, None));
             return;
         }
     };
@@ -1465,14 +1468,23 @@ pub(crate) fn acquire_webview2_at_install(
         on_event(RuntimeEvent::InstallRetryElevated);
         status = shun::webview2::run_evergreen_elevated(&installer);
     }
-    if let Err(err) = &status {
-        eprintln!("shun: running the Evergreen installer failed ({err}); skipping");
+    let mut exit_code = match &status {
+        Ok(status) => status.code(),
+        Err(err) => {
+            eprintln!("shun: running the Evergreen installer failed ({err}); skipping");
+            None
+        }
+    };
+    if exit_code.is_none() {
+        if let Ok(status) = &status {
+            exit_code = Some(i32::from(!status.success()));
+        }
     }
     // The loader's verdict, not the exit code: it re-reads the machine
     // after the silent run and is the same probe the face ladder and
     // the done page's warning ride.
     let ready = webview2_loader_ready();
-    on_event(RuntimeEvent::Done(ready));
+    on_event(RuntimeEvent::Done(ready, exit_code.filter(|_| !ready)));
 }
 
 /// The cache file name for a downloaded installer: the URL's last path

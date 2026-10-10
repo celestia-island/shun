@@ -194,8 +194,12 @@ pub fn run_evergreen_elevated(installer: &Path) -> std::io::Result<std::process:
     // join passes two positional parameters and PowerShell rejects the
     // command outright (verified: ParameterBindingException, exit 1).
     let exe = installer.display().to_string().replace('\'', "''");
+    // -PassThru + exit: Start-Process -Wait alone returns POWERSHELL's
+    // own exit code (0) whatever the elevated installer did — the
+    // child's code must be carried out explicitly or a failed silent
+    // install reads as success (the sandbox's silent skip).
     let script = format!(
-        "Start-Process -FilePath '{exe}' -ArgumentList '{}' -Verb RunAs -Wait",
+        "$p = Start-Process -FilePath '{exe}' -ArgumentList '{}' -Verb RunAs -PassThru -Wait; exit $p.ExitCode",
         args.join("','")
     );
     std::process::Command::new("powershell")
