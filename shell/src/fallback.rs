@@ -654,6 +654,11 @@ struct Texts {
     /// The runtime download's live speed label (the chip's tag; the
     /// value follows in monospace).
     download_speed: String,
+    /// The runtime install's elevated-retry step row.
+    runtime_elevate: String,
+    /// The runtime acquire's settled verdict rows (loader-probed).
+    runtime_ready: String,
+    runtime_failed: String,
     step_language: String,
     step_location: String,
     step_license: String,
@@ -840,12 +845,28 @@ fn install_system_fonts(ctx: &Context) -> bool {
         let Ok(bytes) = std::fs::read(path) else {
             continue;
         };
+        // The CJK faces carry a baseline tweak: egui positions each
+        // fallback font's glyphs by that font's own ascent, and
+        // YaHei/Malgun's ascent towers over Segoe UI's — every mixed
+        // CJK+Latin line drew the Latin fragments floating a couple of
+        // pixels above the Han glyphs (the sandbox report). A negative
+        // y_offset lifts the CJK rasters onto the Latin baseline; the
+        // layout metrics stay untouched.
+        let tweak = if name == "ms-yahei" || name == "malgun-gothic" {
+            egui::FontTweak {
+                y_offset_factor: 0.0,
+                y_offset: -1.8,
+                ..Default::default()
+            }
+        } else {
+            Default::default()
+        };
         fonts.font_data.insert(
             name.to_string(),
             egui::FontData {
                 font: bytes.into(),
                 index,
-                tweak: Default::default(),
+                tweak,
             }
             .into(),
         );
@@ -1502,6 +1523,10 @@ impl FallbackApp {
                 _ => crate::terminal::LineKind::Echo,
             };
             let text = match i % 9 {
+                // Every third row is CJK+Latin mixed — the baseline
+                // alignment the fallback-font tweak calibrates needs a
+                // mixed line in every capture.
+                2 => format!("写入 data/packs/chapter_{i:03}.json"),
                 0 => format!("running script installer/post-install.dk [{i:>2}]"),
                 4 => format!("verified data/packs/chapter_{i:03}.json"),
                 _ => format!("write data/packs/chapter_{i:03}.json"),
@@ -1654,7 +1679,19 @@ impl FallbackApp {
             let result = if uninstalling {
                 shun::wizard::run_uninstall(&core).map_err(|e| e.to_string())
             } else {
+                // The flow's Completed fires BEFORE the post-install
+                // runtime acquire — forwarding it would cap the bar at
+                // 100 and the pane's max() weighting would keep it there
+                // through the whole download. Hold it; a synthetic copy
+                // forwards after the trailing steps, so the bar's final
+                // tenth belongs to the runtime download.
+                let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let completed_seen = completed.clone();
                 let install = shun::wizard::run_install(&core, &payload, &request, &mut |event| {
+                    if matches!(event, FlowEvent::Completed) {
+                        completed_seen.store(true, std::sync::atomic::Ordering::Relaxed);
+                        return;
+                    }
                     let _ = sender.send(WorkerMsg::Event(event.clone()));
                     repaint.request_repaint();
                 })
@@ -1737,6 +1774,29 @@ impl FallbackApp {
                                     install_label.clone(),
                                 ));
                             }
+                            crate::RuntimeEvent::InstallRetryElevated => {
+                                send(WorkerMsg::LogLine(
+                                    crate::terminal::LineKind::Step,
+                                    texts.runtime_elevate.clone(),
+                                ));
+                            }
+                            crate::RuntimeEvent::Done(ready) => {
+                                // The loader's verdict, straight into the
+                                // pane: an error row force-opens the
+                                // drawer, so a failed install can't hide.
+                                send(WorkerMsg::LogLine(
+                                    if ready {
+                                        crate::terminal::LineKind::Ok
+                                    } else {
+                                        crate::terminal::LineKind::Error
+                                    },
+                                    if ready {
+                                        texts.runtime_ready.clone()
+                                    } else {
+                                        texts.runtime_failed.clone()
+                                    },
+                                ));
+                            }
                         }
                     });
                 });
@@ -1744,7 +1804,10 @@ impl FallbackApp {
                 // the payload (the web face's download pass, same
                 // channel). A failed attachment fails the run — half an
                 // install lies about what it delivered.
-                install.and_then(|()| {
+                // The trailing passes fold back into the same result: a
+                // failed attachment fails the run — half an install
+                // lies about what it delivered.
+                let install = install.and_then(|()| {
                     for (key, _, included, _, picked) in &attachments {
                         if *included || !*picked {
                             continue;
@@ -1766,7 +1829,14 @@ impl FallbackApp {
                         .map_err(|e| e.to_string())?;
                     }
                     Ok(())
-                })
+                });
+                // The runtime and attachment passes settled — NOW the
+                // held flow completion lands (bar 100, its log row).
+                if completed.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = sender.send(WorkerMsg::Event(FlowEvent::Completed));
+                    repaint.request_repaint();
+                }
+                install
             };
             let _ = sender.send(WorkerMsg::Done(result));
             repaint.request_repaint();

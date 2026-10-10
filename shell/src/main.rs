@@ -903,6 +903,18 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
             crate::RuntimeEvent::InstallStart => {
                 println!("shun: running the downloaded Evergreen installer silently")
             }
+            crate::RuntimeEvent::InstallRetryElevated => {
+                println!("shun: the Evergreen installer failed unelevated — retrying through UAC")
+            }
+            crate::RuntimeEvent::Done(ready) => {
+                if ready {
+                    println!("shun: the WebView2 runtime is ready");
+                } else {
+                    println!(
+                        "shun: the WebView2 runtime is STILL MISSING — the installed app needs it to start"
+                    );
+                }
+            }
         }
     });
     // Headless runs never see the done page: apply the resolved
@@ -1404,6 +1416,13 @@ pub(crate) enum RuntimeEvent {
     Download(u64, Option<u64>),
     /// The downloaded installer is running silently.
     InstallStart,
+    /// The silent installer needs elevation — retrying through the UAC
+    /// consent (the bootstrapper runs asInvoker and fails unelevated).
+    InstallRetryElevated,
+    /// The acquire settled: the loader now reports a usable runtime
+    /// (`true`), or it doesn't (`false` — the done page's warning and
+    /// the log row tell the story).
+    Done(bool),
 }
 
 #[cfg(windows)]
@@ -1431,13 +1450,29 @@ pub(crate) fn acquire_webview2_at_install(
         Ok(path) => path,
         Err(err) => {
             eprintln!("shun: fetching the Evergreen installer failed ({err}); skipping");
+            on_event(RuntimeEvent::Done(false));
             return;
         }
     };
     on_event(RuntimeEvent::InstallStart);
-    if let Err(err) = shun::webview2::run_evergreen_silent(&installer) {
+    let mut status = shun::webview2::run_evergreen_silent(&installer);
+    // The downloaded BOOTSTRAPPER runs asInvoker: unelevated it exits
+    // non-zero on access denied without ever tripping the 740 spawn
+    // gate that the carried installer's path handles — a failed status
+    // from an unelevated shell retries through the UAC consent once.
+    if matches!(&status, Ok(s) if !s.success()) && !shun::targets::elevate::is_elevated() {
+        eprintln!("shun: the Evergreen installer failed unelevated; retrying through UAC");
+        on_event(RuntimeEvent::InstallRetryElevated);
+        status = shun::webview2::run_evergreen_elevated(&installer);
+    }
+    if let Err(err) = &status {
         eprintln!("shun: running the Evergreen installer failed ({err}); skipping");
     }
+    // The loader's verdict, not the exit code: it re-reads the machine
+    // after the silent run and is the same probe the face ladder and
+    // the done page's warning ride.
+    let ready = webview2_loader_ready();
+    on_event(RuntimeEvent::Done(ready));
 }
 
 /// The cache file name for a downloaded installer: the URL's last path
