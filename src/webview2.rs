@@ -157,7 +157,10 @@ pub fn evergreen_source(config: &ShunConfig, payload: &ArchivePayload) -> Evergr
 /// `CREATE_NO_WINDOW` so no console ever flashes in front of the
 /// wizard. Callers decide success by re-probing the loader afterwards —
 /// the exit code alone cannot distinguish "installed" from "already
-/// present, nothing to do".
+/// present, nothing to do" — and MUST treat a non-zero exit as a
+/// failure to retry elevated (the downloaded BOOTSTRAPPER runs
+/// asInvoker: unelevated it exits non-zero on access denied without
+/// ever surfacing the 740 spawn gate; see [`run_evergreen_elevated`]).
 ///
 /// Non-Windows platforms have no WebView2 story; the call is a no-op
 /// error so callers can stay unconditional.
@@ -166,33 +169,39 @@ pub fn run_evergreen_silent(installer: &Path) -> std::io::Result<std::process::E
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let args = ["/silent", "/install"];
-    match std::process::Command::new(installer)
-        .args(args)
+    std::process::Command::new(installer)
+        .args(["/silent", "/install"])
         .creation_flags(CREATE_NO_WINDOW)
         .status()
-    {
-        Ok(status) => Ok(status),
-        Err(err) if err.raw_os_error() == Some(740) => {
-            // Single-quote PowerShell literals; a quote inside the
-            // literal (profile paths like `O'Brien`) escapes by
-            // doubling. The argument list is fixed flags, so only the
-            // path needs the treatment — and the flags must COMMA-join
-            // into one -ArgumentList array: a space join passes two
-            // positional parameters and PowerShell rejects the command
-            // outright (verified: ParameterBindingException, exit 1).
-            let exe = installer.display().to_string().replace('\'', "''");
-            let script = format!(
-                "Start-Process -FilePath '{exe}' -ArgumentList '{}' -Verb RunAs -Wait",
-                args.join("','")
-            );
-            std::process::Command::new("powershell")
-                .args(["-NoProfile", "-Command", &script])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status()
-        }
-        Err(err) => Err(err),
-    }
+}
+
+/// Relaunches the Evergreen installer through the UAC consent
+/// (`Start-Process -Verb RunAs -Wait`). The elevated-retry half of
+/// [`run_evergreen_silent`]'s 740 gate, callable directly: the
+/// downloaded bootstrapper runs asInvoker and FAILS (non-zero exit)
+/// unelevated without tripping the 740 spawn gate, so the caller
+/// retries on a failed status, not only on a failed spawn.
+#[cfg(windows)]
+pub fn run_evergreen_elevated(installer: &Path) -> std::io::Result<std::process::ExitStatus> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let args = ["/silent", "/install"];
+    // Single-quote PowerShell literals; a quote inside the literal
+    // (profile paths like `O'Brien`) escapes by doubling. The argument
+    // list is fixed flags, so only the path needs the treatment — and
+    // the flags must COMMA-join into one -ArgumentList array: a space
+    // join passes two positional parameters and PowerShell rejects the
+    // command outright (verified: ParameterBindingException, exit 1).
+    let exe = installer.display().to_string().replace('\'', "''");
+    let script = format!(
+        "Start-Process -FilePath '{exe}' -ArgumentList '{}' -Verb RunAs -Wait",
+        args.join("','")
+    );
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
 }
 
 #[cfg(not(windows))]
