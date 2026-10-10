@@ -630,6 +630,10 @@ fn open_webview2_download_page() {
 #[serde(default)]
 struct Texts {
     banner_missing: String,
+    /// The banner variant for builds whose manifest declares
+    /// `download-url` (nothing carried, runtime fetched at install
+    /// time): says the runtime is coming, instead of only warning.
+    banner_download: String,
     banner_manual: String,
     /// The banner's embedded quick link: open Microsoft's official
     /// WebView2 download page (armed by the `warn-missing` knob).
@@ -1609,6 +1613,29 @@ impl FallbackApp {
                     repaint.request_repaint();
                 })
                 .map_err(|e| e.to_string());
+                // A runtime-less machine whose manifest declares
+                // `download-url` fetches and silently installs the
+                // WebView2 runtime right here — the installed app needs
+                // it to start, and the done page's warning only arms
+                // when this failed. Trailing-step progress rides the
+                // same event channel (the register-phase weighting
+                // keeps the extraction bar in place).
+                let install = install.map(|()| {
+                    crate::acquire_webview2_at_install(
+                        &core.config,
+                        &payload,
+                        &mut |so_far, total| {
+                            let percent =
+                                total.map(|total| (so_far * 100 / total.max(1)).min(100) as u8);
+                            let _ = sender.send(WorkerMsg::Event(FlowEvent::Progress {
+                                phase: shun::flow::FlowPhase::Register,
+                                step: "WebView2 runtime".into(),
+                                percent,
+                            }));
+                            repaint.request_repaint();
+                        },
+                    );
+                });
                 // Picked non-bundled attachments stream in right after
                 // the payload (the web face's download pass, same
                 // channel). A failed attachment fails the run — half an
@@ -2403,7 +2430,13 @@ impl FallbackApp {
         // --no-webview launch never banners); the manual-override copy
         // stays referenced for the web table parity.
         let _ = &texts.banner_manual;
-        let text = texts.banner_missing.clone();
+        // A build resolving to the networked source tells the truth up
+        // front: the runtime is coming with the install step, not from
+        // this wizard's own payload.
+        let text = match shun::webview2::evergreen_source(&self.config, &self.payload) {
+            shun::webview2::EvergreenSource::Download(_) => texts.banner_download.clone(),
+            _ => texts.banner_missing.clone(),
+        };
         let warn_missing = self.warn_missing_runtime;
         let icons = crate::callout::CalloutIcons {
             alert: &self.caption_icons.alert,
@@ -2419,19 +2452,18 @@ impl FallbackApp {
             &text,
             &mut |ui| {
                 // The embedded quick link (install-start warning): the
-                // machine has no runtime and this build carries none —
-                // point at Microsoft's official download page. Armed by
-                // the manifest's `warn-missing` knob (default on).
+                // machine has no runtime and this build installs none
+                // from itself — point at Microsoft's official download
+                // page. Armed by the manifest's `warn-missing` knob
+                // (default on); styled as the wizard's normal secondary
+                // button (see callout::action_button).
                 if warn_missing
-                    && ui
-                        .button(
-                            RichText::new(texts.banner_download_link.as_str())
-                                .color(theme.warning)
-                                .underline()
-                                .size(12.5),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
+                    && crate::callout::action_button(
+                        ui,
+                        &theme,
+                        texts.banner_download_link.as_str(),
+                    )
+                    .clicked()
                 {
                     open_webview2_download_page();
                 }
@@ -3701,10 +3733,15 @@ impl FallbackApp {
                     // arms even when the payload carried an installer
                     // (the silent run may have failed or been declined):
                     // by done-page time "runtime still missing" is the
-                    // only fact that matters.
+                    // only fact that matters — probed LIVE, because the
+                    // install step itself may have just fixed the
+                    // machine (download-url acquire): the fallback
+                    // reason is historical, the loader's verdict now
+                    // is not.
                     let warn_end = matches!(outcome.as_ref(), Some(Outcome::InstallOk))
                         && self.reason == FallbackReason::MissingWebview2
-                        && self.config.webview2_warn_missing();
+                        && self.config.webview2_warn_missing()
+                        && !crate::webview2_loader_ready();
                     if warn_end {
                         ui.add_space(12.0);
                         let icons = crate::callout::CalloutIcons {
@@ -3722,14 +3759,7 @@ impl FallbackApp {
                             None,
                             &body,
                             &mut |ui| {
-                                if ui
-                                    .button(
-                                        RichText::new(link.as_str())
-                                            .color(theme.warning)
-                                            .underline()
-                                            .size(12.5),
-                                    )
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                if crate::callout::action_button(ui, &theme, link.as_str())
                                     .clicked()
                                 {
                                     open_webview2_download_page();
@@ -4567,6 +4597,35 @@ mod glow_tests {
             let a = at(d);
             assert!(a <= prev + 1e-6);
             prev = a;
+        }
+    }
+}
+
+#[cfg(test)]
+mod strings_tests {
+    use super::*;
+
+    /// Every authored locale carries the degrade-banner variants: a
+    /// locale missing one would silently render an empty banner for
+    /// that language (serde(default) masks the gap).
+    #[test]
+    fn every_locale_authors_the_banner_variants() {
+        let strings = wizard_strings();
+        for locale in &strings.locales {
+            let texts = strings.texts(locale);
+            assert!(!texts.banner_missing.is_empty(), "{locale}: banner_missing");
+            assert!(
+                !texts.banner_download.is_empty(),
+                "{locale}: banner_download"
+            );
+            assert!(
+                !texts.banner_download_link.is_empty(),
+                "{locale}: banner_download_link"
+            );
+            assert!(
+                !texts.done_warn_webview2.is_empty(),
+                "{locale}: done_warn_webview2"
+            );
         }
     }
 }

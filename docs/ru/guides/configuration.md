@@ -41,6 +41,9 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version: распакованная папка рантайма
 # silent-install = true                    # evergreen-installer: тихо запустить bundled-
                                            #   установщик на машине без рантайма (по умолчанию)
+# download-url = "https://…"               # evergreen-installer: если установщик не встроен, скачать
+                                           #   его при установке и запустить без участия пользователя
+                                           #   (тот же переключатель)
 # warn-missing = true                      # skip / evergreen-installer: egui-фолбэк предупреждает
                                            #   в начале и в конце со ссылкой на официальную
                                            #   страницу загрузки Microsoft (по умолчанию)

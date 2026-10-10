@@ -51,6 +51,9 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version only: extracted runtime folder
 # silent-install = true                    # evergreen-installer: run the carried installer
                                            #   silently on a runtime-less machine (default)
+# download-url = "https://…"               # evergreen-installer: when nothing is carried,
+                                           #   fetch the Evergreen installer at install
+                                           #   time and run it silently (same knob)
 # warn-missing = true                      # skip / evergreen-installer: the egui fallback
                                            #   warns + links to Microsoft's download page
                                            #   when the machine has no runtime (default)
@@ -145,6 +148,13 @@ face into tauri's English "Could not find the WebView2 Runtime" box:
   (elevating through UAC when the installer's manifest asks). A
   successful run upgrades the machine in place and the webview face
   stays reachable.
+- A build that carries no installer but declares `download-url`
+  (and keeps `silent-install` on) fetches the Evergreen installer from
+  that URL during the install step and runs it through the same silent
+  path — a lite flavor upgrades the machine from the network instead of
+  its own payload. A slow or absent network never blocks the first UI:
+  the fetch happens inside the install flow, and the degrade banner
+  says the runtime is coming.
 - Whatever the outcome, a machine still without a runtime takes the
   egui face. With `warn-missing` (default `true`) and no carried
   installer, that face warns at the start and the end of the wizard and

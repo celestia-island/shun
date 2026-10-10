@@ -867,6 +867,36 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
         machine,
     };
     shun::wizard::run_install(&core, payload, &request, &mut print_event)?;
+    // The app files have landed; a runtime-less machine with a
+    // `download-url` manifest gets its WebView2 fetched and installed
+    // now — the installed app (or the launch-after-install step) needs
+    // it to start at all. Best-effort: failure falls through to the
+    // usual "install complete", the runtime stays missing.
+    let mut last_tenth = 0u64;
+    let mut last_mark = 0u64;
+    acquire_webview2_at_install(config, payload, &mut |so_far, total| {
+        // A silent install must stay chatty enough for CI logs without
+        // flooding them: one line per decile when the size is known,
+        // one per 4 MiB otherwise.
+        match total {
+            Some(total) => {
+                let tenth = so_far * 10 / total.max(1);
+                if tenth > last_tenth {
+                    last_tenth = tenth;
+                    println!("shun: downloading the WebView2 runtime… {}%", tenth * 10);
+                }
+            }
+            None => {
+                if so_far - last_mark >= 4 * 1024 * 1024 {
+                    last_mark = so_far;
+                    println!(
+                        "shun: downloading the WebView2 runtime… {}",
+                        format_bytes(so_far)
+                    );
+                }
+            }
+        }
+    });
     // Headless runs never see the done page: apply the resolved
     // shortcut answers (real installs only — portable and uninstalls
     // create none). An explicit `0` REMOVES the launcher, so an
@@ -1275,7 +1305,7 @@ fn run_egui_face(
 /// machines take the egui face. `SHUN_FORCE_FALLBACK` forces the
 /// degraded answer for testing, same as the registry probe.
 #[cfg(windows)]
-fn webview2_loader_ready() -> bool {
+pub(crate) fn webview2_loader_ready() -> bool {
     if std::env::var_os("SHUN_FORCE_FALLBACK").is_some() {
         return false;
     }
@@ -1285,7 +1315,7 @@ fn webview2_loader_ready() -> bool {
 /// Non-Windows platforms always have their system webview; the tauri
 /// face never auto-degrades there (`--no-webview` still forces egui).
 #[cfg(not(windows))]
-fn webview2_loader_ready() -> bool {
+pub(crate) fn webview2_loader_ready() -> bool {
     if std::env::var_os("SHUN_FORCE_FALLBACK").is_some() {
         return false;
     }
@@ -1309,6 +1339,11 @@ fn refine_caps_with_loader(mut caps: UiCapabilities) -> UiCapabilities {
 /// `silent-install` knob (default on). Best-effort by design: a failed
 /// or declined run leaves the runtime missing, and the refined probe
 /// degrades to the egui face (which warns per `warn-missing`).
+///
+/// Carried-only by intent: a build resolving to
+/// [`shun::webview2::EvergreenSource::Download`] must not stall the
+/// face ladder on the network — its runtime lands during the install
+/// step instead (see [`acquire_webview2_at_install`]).
 fn bootstrap_evergreen_webview2(config: &ShunConfig, payload: &ArchivePayload) {
     if !config.webview2_silent_install() || webview2_loader_ready() {
         return;
@@ -1330,6 +1365,132 @@ fn bootstrap_evergreen_webview2(config: &ShunConfig, payload: &ArchivePayload) {
     }
     // Success or not, the refined probe that called us re-reads the
     // loader and decides the face.
+}
+
+/// The install-step runtime acquire for builds that carry no Evergreen
+/// installer: when the machine still has no runtime and the manifest
+/// declares `download-url` (with the shared `silent-install` knob on),
+/// fetch the Evergreen installer over the network and run it silently —
+/// the networked twin of [`bootstrap_evergreen_webview2`]. Runs INSIDE
+/// the install flow (egui wizard worker / headless run), never before
+/// the face ladder, so a slow or absent network never delays the first
+/// UI. A carried source is deliberately ignored here: the startup
+/// bootstrap already ran it, and re-attempting would prompt UAC a
+/// second time on a declined run.
+///
+/// Best-effort like its twin: failure leaves the runtime missing and
+/// the done page's `warn-missing` warning tells the story — the install
+/// itself is already complete and must not fail.
+#[cfg(windows)]
+pub(crate) fn acquire_webview2_at_install(
+    config: &ShunConfig,
+    payload: &ArchivePayload,
+    on_download: &mut dyn FnMut(u64, Option<u64>),
+) {
+    if webview2_loader_ready() {
+        return;
+    }
+    let url = match shun::webview2::evergreen_source(config, payload) {
+        shun::webview2::EvergreenSource::Download(url) => url,
+        _ => return,
+    };
+    let Some(cache) = shun::webview2::evergreen_cache(&config.product.name) else {
+        eprintln!("shun: no LOCALAPPDATA to download the Evergreen installer into");
+        return;
+    };
+    println!("shun: no WebView2 runtime — downloading the Evergreen installer");
+    let downloaded = download_evergreen(&url, &cache, on_download);
+    let installer = match downloaded {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("shun: fetching the Evergreen installer failed ({err}); skipping");
+            return;
+        }
+    };
+    println!("shun: running the downloaded Evergreen installer silently");
+    if let Err(err) = shun::webview2::run_evergreen_silent(&installer) {
+        eprintln!("shun: running the Evergreen installer failed ({err}); skipping");
+    }
+}
+
+/// The cache file name for a downloaded installer: the URL's last path
+/// segment when it ends in `.exe`, else the Evergreen bootstrapper's
+/// canonical name (fwlink permalinks carry no file name at all).
+#[cfg(windows)]
+fn evergreen_download_name(url: &str) -> String {
+    // The query/fragment never names the file — strip it before taking
+    // the last path segment.
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    path.rsplit('/')
+        .find(|seg| !seg.is_empty())
+        .filter(|seg| seg.to_lowercase().ends_with(".exe"))
+        .map(str::to_string)
+        .unwrap_or_else(|| "MicrosoftEdgeWebview2Setup.exe".to_string())
+}
+
+/// Downloads the Evergreen installer from `url` into `dest_dir` and
+/// returns the written executable's path. `on_progress` receives
+/// `(bytes_so_far, total_when_known)` — the bootstrapper is a few MB,
+/// the standalone ~127 MB, so the caller can show a bar either way.
+///
+/// Shell-side (not a [`shun::webview2`] item) because this crate
+/// depends on `ureq` unconditionally, while the library keeps it behind
+/// the optional `online` feature and must build without it.
+#[cfg(windows)]
+fn download_evergreen(
+    url: &str,
+    dest_dir: &Path,
+    on_progress: &mut dyn FnMut(u64, Option<u64>),
+) -> Result<PathBuf, String> {
+    use std::io::Read;
+
+    let dest = dest_dir.join(evergreen_download_name(url));
+
+    let response = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .map_err(|e| format!("download failed: {e}"))?;
+    let total = response
+        .header("Content-Length")
+        .and_then(|len| len.parse::<u64>().ok());
+
+    std::fs::create_dir_all(dest_dir).map_err(|e| format!("cache dir: {e}"))?;
+    let mut file = std::fs::File::create(&dest).map_err(|e| format!("cache file: {e}"))?;
+    let mut reader = response.into_reader();
+    let mut buffer = [0u8; 64 * 1024];
+    let mut so_far = 0u64;
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|e| format!("download stream: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        std::io::Write::write_all(&mut file, &buffer[..read])
+            .map_err(|e| format!("cache write: {e}"))?;
+        so_far += read as u64;
+        on_progress(so_far, total);
+    }
+    Ok(dest)
+}
+
+/// Human-scaled byte count for the indeterminate download lines.
+fn format_bytes(bytes: u64) -> String {
+    let mb = bytes as f64 / (1024.0 * 1024.0);
+    if mb >= 1.0 {
+        format!("{mb:.1} MiB")
+    } else {
+        format!("{:.0} KiB", bytes as f64 / 1024.0)
+    }
+}
+
+/// Non-Windows platforms have no WebView2 story — nothing to acquire.
+#[cfg(not(windows))]
+pub(crate) fn acquire_webview2_at_install(
+    _config: &ShunConfig,
+    _payload: &ArchivePayload,
+    _on_download: &mut dyn FnMut(u64, Option<u64>),
+) {
 }
 
 /// Re-decodes the embedded config + payload. The webview-face error
@@ -1818,6 +1979,25 @@ mod tests {
         let mut argv = vec!["shun-installer".to_string()];
         argv.extend(normalize_switches(args.iter().map(|s| s.to_string())));
         Cli::parse_from(argv)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn download_name_comes_from_the_url_tail() {
+        assert_eq!(
+            evergreen_download_name("https://example.com/pack/MicrosoftEdgeWebview2Setup.exe"),
+            "MicrosoftEdgeWebview2Setup.exe"
+        );
+        // fwlink permalinks carry no file name: canonical fallback.
+        assert_eq!(
+            evergreen_download_name("https://go.microsoft.com/fwlink/?linkid=2124701"),
+            "MicrosoftEdgeWebview2Setup.exe"
+        );
+        // A query string must not leak into the name.
+        assert_eq!(
+            evergreen_download_name("https://example.com/setup.exe?mirrors"),
+            "setup.exe"
+        );
     }
 
     #[test]

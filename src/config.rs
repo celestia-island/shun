@@ -623,12 +623,14 @@ pub struct ProductIdentity {
 /// system writes, no version drift. The Evergreen installer instead
 /// registers a system-wide runtime (~127 MB embedded) shared with other
 /// apps, but requires elevation at install time; on a runtime-less
-/// machine the shell runs it silently before choosing a face (the
-/// `silent-install` knob, default on). Both `skip` and
-/// `evergreen-installer` also carry `warn-missing` (default on): when the
-/// machine still has no runtime and the payload carries no installer, the
-/// egui fallback warns at the start and the end of the wizard and links
-/// to Microsoft's WebView2 download page.
+/// machine the shell runs a carried installer silently before choosing a
+/// face, and a build that carries none can still fetch Microsoft's
+/// Evergreen installer from the network at install time (`download-url`)
+/// — the `silent-install` knob (default on) gates both sources. Both
+/// `skip` and `evergreen-installer` also carry `warn-missing` (default
+/// on): when the machine still has no runtime and nothing to install
+/// from, the egui fallback warns at the start and the end of the wizard
+/// and links to Microsoft's WebView2 download page.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 // `rename_all` covers the variant tags, `rename_all_fields` the knobs
 // inside them (`silent-install`, `warn-missing`) — the enum attribute
@@ -661,6 +663,17 @@ pub enum Webview2Strategy {
         /// on.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         warn_missing: Option<bool>,
+        /// Networked fallback for builds that carry no `webview2/`
+        /// subtree (lite flavors): when the machine has no runtime, the
+        /// install step downloads Microsoft's Evergreen installer from
+        /// this URL and runs it silently — the SAME `silent-install`
+        /// knob gates the carried and the downloaded source, so
+        /// disabling it opts out of both. Empty/absent keeps the build
+        /// fully offline (warnings only). A permanent permalink such as
+        /// the Evergreen bootstrapper's fwlink is the intended value;
+        /// the file is a few MB and fetches the runtime itself.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        download_url: Option<String>,
     },
 
     /// Carry a fixed-version runtime privately.
@@ -681,6 +694,21 @@ impl ShunConfig {
                 silent_install.unwrap_or(true)
             }
             _ => false,
+        }
+    }
+
+    /// The networked Evergreen source for builds that carry no runtime
+    /// installer (see the `download-url` field): the URL to fetch at
+    /// install time when the machine has no runtime. `None` for every
+    /// non-evergreen strategy and for blank values (a blank string
+    /// parses, but means "no network").
+    pub fn webview2_download_url(&self) -> Option<&str> {
+        match self.webview2.as_ref() {
+            Some(Webview2Strategy::EvergreenInstaller { download_url, .. }) => download_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|u| !u.is_empty()),
+            _ => None,
         }
     }
 
@@ -2329,6 +2357,28 @@ mod tests {
         let mut json = serde_json::to_value(sample()).unwrap();
         json["webview2"] = webview2;
         serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn download_url_only_answers_for_evergreen() {
+        // The intended spelling: a permanent permalink, padding trimmed.
+        let with = sample_with_webview2(serde_json::json!({
+            "type": "evergreen-installer",
+            "download-url": " https://go.microsoft.com/fwlink/?linkid=2124701 "
+        }));
+        assert_eq!(
+            with.webview2_download_url(),
+            Some("https://go.microsoft.com/fwlink/?linkid=2124701")
+        );
+        // A blank string parses but means "no network".
+        let blank = sample_with_webview2(serde_json::json!({
+            "type": "evergreen-installer",
+            "download-url": "   "
+        }));
+        assert_eq!(blank.webview2_download_url(), None);
+        // Non-evergreen strategies carry no networked source.
+        let skip = sample_with_webview2(serde_json::json!({"type": "skip"}));
+        assert_eq!(skip.webview2_download_url(), None);
     }
 
     #[test]

@@ -40,6 +40,8 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version 專用：解壓後的執行時目錄
 # silent-install = true                    # evergreen-installer：無執行階段的機器上靜默
                                            #   執行自帶的安裝器（預設開啟）
+# download-url = "https://…"               # evergreen-installer：不攜帶安裝器時，安裝期透過網路取得
+                                           #   Evergreen 安裝器並靜默執行（與 silent-install 同一開關）
 # warn-missing = true                      # skip / evergreen-installer：egui 降級介面在開始
                                            #   與結束時警告並附微軟官方下載頁連結（預設開啟）
 

@@ -204,6 +204,26 @@ fn left_edge(painter: &egui::Painter, rect: Rect, width: f32, color: Color32) {
     painter.add(egui::Shape::convex_polygon(pts, color, egui::Stroke::NONE));
 }
 
+/// The callout's action button — the wizard's normal secondary button
+/// (surface fill, hairline border, plain text), NOT an underlined
+/// accent label on a dark plate: egui draws underlines from font
+/// metrics that sit low against CJK glyphs, and the hyperlink styling
+/// read as a misaligned baseline rather than a link. Shared by the
+/// degrade banner and the done-page warning so both render identically.
+pub(crate) fn action_button(ui: &mut egui::Ui, theme: &Theme, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(
+            egui::RichText::new(label)
+                .size(13.0)
+                .color(theme.text_secondary),
+        )
+        .fill(theme.surface)
+        .stroke(Stroke::new(1.0f32, theme.border))
+        .corner_radius(CornerRadius::same(6)),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
