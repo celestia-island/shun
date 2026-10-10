@@ -280,10 +280,13 @@ body {
 
 .license-box {
   // The cap keeps the tall agreement text from pushing the checkbox and
-  // footer buttons out of the window: the box scrolls internally.
-  flex: 1 1 0;
+  // footer buttons out of the window: the box scrolls internally, and
+  // the cap stops it well above the bottom edge so the agree row keeps
+  // open air under it instead of hugging the window bottom (the old
+  // 300px reserve let the box eat every free pixel down to the footer).
+  flex: 0 1 auto;
   min-height: 0;
-  max-height: calc(100vh - 300px);
+  max-height: calc(100vh - 400px);
   min-width: 0;
   border: 1px solid rgb(var(--color-border));
   border-radius: var(--radius-md);
