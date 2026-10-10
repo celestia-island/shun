@@ -908,6 +908,8 @@ mod lucide {
     pub(crate) const SUN: &str = r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>"#;
     pub(crate) const MOON: &str = r#"<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>"#;
     pub(crate) const CHEVRON_DOWN: &str = r#"<path d="m6 9 6 6 6-6"/>"#;
+    pub(crate) const CHEVRON_LEFT: &str = r#"<path d="m15 18-6-6 6-6"/>"#;
+    pub(crate) const CHEVRON_RIGHT: &str = r#"<path d="m9 18 6-6-6-6"/>"#;
     pub(crate) const FOLDER_OPEN: &str = r#"<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>"#;
     pub(crate) const APP_WINDOW: &str = r#"<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>"#;
     pub(crate) const HARD_DRIVE: &str = r#"<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>"#;
@@ -928,6 +930,10 @@ pub(crate) struct CaptionIcons {
     pub(crate) moon: TextureHandle,
     /// The select trigger's dropdown arrow (HkSelect's ChevronDown).
     pub(crate) chevron: TextureHandle,
+    /// The license pager's prev/next arrows (HkButton's ChevronLeft /
+    /// ChevronRight).
+    pub(crate) chevron_left: TextureHandle,
+    pub(crate) chevron_right: TextureHandle,
     /// The callout block's info / success glyphs (HkAlert's set).
     pub(crate) info: TextureHandle,
     pub(crate) check: TextureHandle,
@@ -960,6 +966,8 @@ impl CaptionIcons {
             sun: render("sun", lucide::SUN),
             moon: render("moon", lucide::MOON),
             chevron: render("chevron-down", lucide::CHEVRON_DOWN),
+            chevron_left: render("chevron-left", lucide::CHEVRON_LEFT),
+            chevron_right: render("chevron-right", lucide::CHEVRON_RIGHT),
             folder: render("folder-open", lucide::FOLDER_OPEN),
             app_window: render("app-window", lucide::APP_WINDOW),
             hard_drive: render("hard-drive", lucide::HARD_DRIVE),
@@ -2601,57 +2609,77 @@ impl FallbackApp {
         let theme = self.theme;
         ui.label(RichText::new(title).strong().size(22.0).color(theme.text));
         ui.add_space(10.0);
+        // The card is BOUNDED to the pane below the heading — the same
+        // treatment the license page got: painting over `ui.max_rect()`
+        // filled across the just-drawn heading, and the fixed 300px
+        // viewport neither absorbed the pane's free height nor scaled
+        // with the window.
+        let card_h = (ui.available_height()).max(120.0);
+        let card_rect = egui::Rect::from_min_size(
+            pos2(ui.max_rect().left(), ui.cursor().top()),
+            egui::vec2(ui.available_width(), card_h),
+        );
         // hairline_box borders: the Frame stroke would feather the
         // corners thick; paint the uniform sandwich instead.
-        hairline_box(ui.painter(), ui.max_rect(), 10, theme.border, theme.surface);
-        Frame::default()
-            .fill(Color32::TRANSPARENT)
-            .inner_margin(Margin::same(12))
-            .corner_radius(CornerRadius::same(10))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                egui::ScrollArea::vertical()
-                    .id_salt(ui.id().with("content-doc"))
-                    .max_height(300.0)
-                    .auto_shrink([false, true])
+        hairline_box(ui.painter(), card_rect, 10, theme.border, theme.surface);
+        ui.allocate_ui_with_layout(
+            egui::vec2(card_rect.width(), card_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                Frame::default()
+                    .fill(Color32::TRANSPARENT)
+                    .inner_margin(Margin::same(12))
+                    .corner_radius(CornerRadius::same(10))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        for raw in body.lines() {
-                            let line = raw.trim_start();
-                            let (text, size, strong, indent, muted) =
-                                if let Some(h) = line.strip_prefix("# ") {
-                                    (h.trim(), 16.0, true, 0.0, false)
-                                } else if let Some(h) = line.strip_prefix("## ") {
-                                    (h.trim(), 14.0, true, 0.0, false)
-                                } else if let Some(h) = line.strip_prefix("### ") {
-                                    (h.trim(), 13.0, true, 0.0, false)
-                                } else if let Some(item) =
-                                    line.strip_prefix("- ").or_else(|| line.strip_prefix("* "))
-                                {
-                                    (item.trim(), 12.5, false, 16.0, false)
-                                } else if let Some(q) = line.strip_prefix("> ") {
-                                    (q.trim(), 12.5, false, 8.0, true)
-                                } else {
-                                    (line, 12.5, false, 0.0, false)
-                                };
-                            let plain = text.replace(['*', '`'], "");
-                            let color = if muted {
-                                theme.text_secondary
-                            } else {
-                                theme.text
-                            };
-                            ui.horizontal(|ui| {
-                                ui.add_space(indent);
-                                let mut text = RichText::new(plain).size(size).color(color);
-                                if strong {
-                                    text = text.strong();
+                        egui::ScrollArea::vertical()
+                            .id_salt(ui.id().with("content-doc"))
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                for raw in body.lines() {
+                                    let line = raw.trim_start();
+                                    let (text, size, strong, indent, muted) = if let Some(h) =
+                                        line.strip_prefix("# ")
+                                    {
+                                        (h.trim(), 16.0, true, 0.0, false)
+                                    } else if let Some(h) = line.strip_prefix("## ") {
+                                        (h.trim(), 14.0, true, 0.0, false)
+                                    } else if let Some(h) = line.strip_prefix("### ") {
+                                        (h.trim(), 13.0, true, 0.0, false)
+                                    } else if let Some(item) =
+                                        line.strip_prefix("- ").or_else(|| line.strip_prefix("* "))
+                                    {
+                                        (item.trim(), 12.5, false, 16.0, false)
+                                    } else if let Some(q) = line.strip_prefix("> ") {
+                                        (q.trim(), 12.5, false, 8.0, true)
+                                    } else {
+                                        (line, 12.5, false, 0.0, false)
+                                    };
+                                    let plain = text.replace(['*', '`'], "");
+                                    let color = if muted {
+                                        theme.text_secondary
+                                    } else {
+                                        theme.text
+                                    };
+                                    // horizontal_wrapped: a long paragraph
+                                    // line wraps at the card width —
+                                    // plain `horizontal` runs unbounded
+                                    // and overflows the bordered card.
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.add_space(indent);
+                                        let mut text = RichText::new(plain).size(size).color(color);
+                                        if strong {
+                                            text = text.strong();
+                                        }
+                                        ui.label(text);
+                                    });
+                                    ui.add_space(2.0);
                                 }
-                                ui.label(text);
                             });
-                            ui.add_space(2.0);
-                        }
                     });
-            });
+            },
+        );
     }
 
     fn language_view(&mut self, ui: &mut egui::Ui) {
@@ -3426,6 +3454,7 @@ impl FallbackApp {
     fn license_view(&mut self, ui: &mut egui::Ui) {
         let theme = &self.theme;
         let texts = self.texts.clone();
+        let icons = self.caption_icons.clone();
         // Snapshot the documents so the ui closures below can mutate
         // wizard state freely (the step borrow would otherwise span the
         // checkbox and pager). The documents follow the wizard language:
@@ -3497,44 +3526,86 @@ impl FallbackApp {
             },
         );
         ui.add_space(8.0);
+        // ── Bounded card ── the web pane's flex column, flattened to a
+        // fixed vertical budget: the document card absorbs the free
+        // height with an INTERNAL scroll, and the pager plus the agree
+        // checkbox stay ON the pane. v0.6.6 painted the border over
+        // `ui.max_rect()` — the whole pane: its fill covered the
+        // just-drawn heading, the pager row rode the border, and the
+        // checkbox landed under the footer band.
+        let pager_h = if total > 1 { 24.0 + 6.0 } else { 0.0 };
+        let checkbox_h = 26.0;
+        let gaps = 8.0 + 8.0 + 8.0;
+        let card_h = (ui.available_height() - pager_h - checkbox_h - gaps).max(120.0);
+        let card_rect = egui::Rect::from_min_size(
+            pos2(ui.max_rect().left(), ui.cursor().top()),
+            egui::vec2(ui.available_width(), card_h),
+        );
         // hairline_box borders: the Frame stroke would feather the
-        // corners thick; paint the uniform sandwich instead.
-        hairline_box(ui.painter(), ui.max_rect(), 10, theme.border, theme.surface);
-        Frame::default()
-            .fill(Color32::TRANSPARENT)
-            .inner_margin(Margin::same(12))
-            .corner_radius(CornerRadius::same(10))
-            .show(ui, |ui| {
-                // Documents read left-aligned regardless of the pane's
-                // centered text alignment — like the webview card.
-                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("license-body")
-                        .auto_shrink([false, false])
-                        .max_height(ui.available_height() - 44.0)
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            if let Some(title) = title {
-                                ui.label(
-                                    RichText::new(title).strong().size(15.0).color(theme.text),
-                                );
-                                ui.add_space(6.0);
-                            }
-                            ui.label(RichText::new(body).size(12.5).color(theme.text_secondary));
+        // corners thick; paint the uniform sandwich instead — on the
+        // card's OWN rect, never the pane's.
+        hairline_box(ui.painter(), card_rect, 10, theme.border, theme.surface);
+        ui.allocate_ui_with_layout(
+            egui::vec2(card_rect.width(), card_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                Frame::default()
+                    .fill(Color32::TRANSPARENT)
+                    .inner_margin(Margin::same(12))
+                    .corner_radius(CornerRadius::same(10))
+                    .show(ui, |ui| {
+                        // Documents read left-aligned regardless of the
+                        // pane's centered text alignment — like the
+                        // webview card. The scroll absorbs the document
+                        // length; the per-doc salt resets the position
+                        // when the pager swaps documents.
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt(("license-body", index))
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    if let Some(title) = title {
+                                        ui.label(
+                                            RichText::new(title)
+                                                .strong()
+                                                .size(15.0)
+                                                .color(theme.text),
+                                        );
+                                        ui.add_space(6.0);
+                                    }
+                                    ui.label(
+                                        RichText::new(body).size(12.5).color(theme.text_secondary),
+                                    );
+                                });
                         });
-                });
-            });
-        // Pager for multi-document licenses: [<] left, the position
-        // indicator centered between, [>] right (disabled at the ends).
+                    });
+            },
+        );
+        // Pager for multi-document licenses: icon button left, the
+        // position indicator centered between, icon button right
+        // (disabled at the ends) — the webview face's ghost HkButtons
+        // with ChevronLeft / ChevronRight, same 44×24 chrome.
         if total > 1 {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let pager_button = |ui: &mut egui::Ui, glyph: &str, enabled: bool| {
+                let tint = |enabled: bool| {
+                    if enabled {
+                        theme.text_secondary
+                    } else {
+                        mix(theme.text_secondary, theme.background, 0.55)
+                    }
+                };
+                let pager_icon_button = |ui: &mut egui::Ui,
+                                         tex: &egui::TextureHandle,
+                                         enabled: bool|
+                 -> egui::Response {
                     Self::hand(
                         ui.add_enabled(
                             enabled,
-                            Button::new(
-                                RichText::new(glyph).size(13.0).color(theme.text_secondary),
+                            Button::image(
+                                egui::Image::new((tex.id(), egui::vec2(12.0, 12.0)))
+                                    .tint(tint(enabled)),
                             )
                             .fill(theme.surface)
                             .stroke(Stroke::new(1.0f32, theme.border))
@@ -3543,7 +3614,7 @@ impl FallbackApp {
                         ),
                     )
                 };
-                if pager_button(ui, "[<]", index > 0).clicked() {
+                if pager_icon_button(ui, &icons.chevron_left, index > 0).clicked() {
                     self.license_doc_index = index - 1;
                 }
                 let indicator = format!(
@@ -3568,7 +3639,7 @@ impl FallbackApp {
                         .color(theme.text_secondary),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if pager_button(ui, "[>]", index + 1 < total).clicked() {
+                    if pager_icon_button(ui, &icons.chevron_right, index + 1 < total).clicked() {
                         self.license_doc_index = index + 1;
                     }
                 });
