@@ -1442,6 +1442,10 @@ impl FallbackApp {
         if std::env::var("SHUN_DEBUG_LANG_POPUP").is_ok_and(|v| v == "1") {
             self.lang_combo_open = true;
         }
+        if std::env::var("SHUN_DEBUG_PATH_EDIT").is_ok_and(|v| v == "1") {
+            self.path_editing = true;
+            self.path_focus_request = true;
+        }
         let Ok(stage) = std::env::var("SHUN_DEBUG_STAGE") else {
             return;
         };
@@ -2934,24 +2938,12 @@ impl FallbackApp {
                     self.drive_open = !self.drive_open;
                 }
 
-                // The mono path remainder inside the field. Baseline-true
-                // placement: egui's TextEdit draws its galley from the rect's
-                // top plus the margin, so the margin is COMPUTED from the
-                // layout's measured baseline to put the glyphs' mass center on
-                // the field's center - exact at any DPI, where static margins
-                // drifted with the physical-pixel rounding.
-                let probe = ui.painter().layout_no_wrap(
-                    "Ag".to_owned(),
-                    egui::FontId::monospace(13.0),
-                    Color32::WHITE,
-                );
-                let baseline_offset = probe
-                    .rows
-                    .first()
-                    .and_then(|row| row.glyphs.first())
-                    .map(|g| g.pos.y)
-                    .unwrap_or(probe.size().y * 0.8);
-                let ascent = probe.size().y * 0.55;
+                // The mono path remainder inside the field. Both states
+                // park the text's line box on the field's center with
+                // the chip's +1.5 optical nudge, so resting and editing
+                // are pixel-identical.
+                let font = egui::FontId::monospace(13.0);
+                let row_h = ui.fonts(|f| f.row_height(&font));
                 let edit_left = chip_rect.right() + 10.0;
                 let edit_right = field_rect.right() - 12.0;
                 let input_rect = egui::Rect::from_min_max(
@@ -2966,28 +2958,42 @@ impl FallbackApp {
                     .to_string();
                 let mut rest_edit = rest.clone();
                 if self.path_editing {
-                    // Editing: the TextEdit takes over. Its internal row
-                    // centering (interact_size) shifts glyphs a bit, but
-                    // the caret must live where the user will type.
-                    let margin_top = (field_rect.center().y + ascent * 0.15
-                        - baseline_offset
-                        - input_rect.top())
-                    .round() as i8;
+                    // Editing: the TextEdit takes over. The widget draws
+                    // its galley TOP-anchored by default (the v0.6.6
+                    // margin arithmetic guessed at its baseline and sat
+                    // visibly low), so center it EXPLICITLY. The inner
+                    // row box is fonts::row_height tall — TALLER than
+                    // the single-line galley, line spacing included —
+                    // and vertical_align(CENTER) centers the glyphs in
+                    // it; the margin parks that box (row_height/2 above
+                    // center) on the resting label's visual center.
+                    let margin_top = (field_rect.center().y + 1.5 - row_h / 2.0 - input_rect.top())
+                        .round() as i8;
                     let edit_output = ui
-                        .scope_builder(egui::UiBuilder::new().max_rect(input_rect), |ui| {
-                            TextEdit::singleline(&mut rest_edit)
-                                .frame(false)
-                                .margin(egui::Margin {
-                                    left: 0,
-                                    right: 0,
-                                    top: margin_top,
-                                    bottom: 0,
-                                })
-                                .desired_width(input_rect.width())
-                                .text_color(theme.text)
-                                .font(egui::FontId::monospace(13.0))
-                                .show(ui)
-                        })
+                        .scope_builder(
+                            // An explicit TOP_DOWN layout: the row scope's
+                            // left_to_right(CENTER) would vertically center
+                            // the allocated box itself, silently adding
+                            // half the box height on top of the margin.
+                            egui::UiBuilder::new()
+                                .max_rect(input_rect)
+                                .layout(Layout::top_down(Align::LEFT)),
+                            |ui| {
+                                TextEdit::singleline(&mut rest_edit)
+                                    .frame(false)
+                                    .margin(egui::Margin {
+                                        left: 0,
+                                        right: 0,
+                                        top: margin_top,
+                                        bottom: 0,
+                                    })
+                                    .vertical_align(egui::Align::Center)
+                                    .desired_width(input_rect.width())
+                                    .text_color(theme.text)
+                                    .font(font.clone())
+                                    .show(ui)
+                            },
+                        )
                         .inner;
                     if self.path_focus_request {
                         edit_output.response.request_focus();
