@@ -178,33 +178,35 @@ impl Terminal {
         // chevron right — the web bar's three spans.
         let count = self.lines.len();
         let head = format!("{title} · {count}");
+        // Title and preview share ONE vertical center: the two fonts'
+        // metrics differ, so top-anchored draws sat on mismatched
+        // baselines (the sandbox report's 安装日志 vs preview skew).
+        let head_font = egui::FontId::proportional(12.0);
+        let preview_font = egui::FontId::monospace(11.0);
         painter.text(
-            bar_rect.left_top() + egui::vec2(0.0, 2.0),
-            egui::Align2::LEFT_TOP,
+            egui::pos2(bar_rect.left(), bar_rect.center().y),
+            egui::Align2::LEFT_CENTER,
             &head,
-            egui::FontId::proportional(12.0),
+            head_font.clone(),
             theme.text_tertiary,
         );
         let chev_w = 26.0;
         let head_w = painter
-            .layout_no_wrap(head, egui::FontId::proportional(12.0), Color32::WHITE)
+            .layout_no_wrap(head, head_font.clone(), Color32::WHITE)
             .size()
             .x;
         let preview_rect = egui::Rect::from_min_max(
-            egui::pos2(bar_rect.left() + head_w + 14.0, bar_rect.top() + 3.0),
+            egui::pos2(bar_rect.left() + head_w + 14.0, bar_rect.top()),
             egui::pos2(bar_rect.right() - chev_w - 6.0, bar_rect.bottom()),
         );
         if preview_rect.width() > 20.0 {
             // Clip the preview to its span (the web span's
             // text-overflow ellipsis analog).
-            let galley = painter.layout_no_wrap(
-                self.preview().to_owned(),
-                egui::FontId::monospace(11.0),
-                theme.text_tertiary,
-            );
-            painter.with_clip_rect(preview_rect).galley(
-                preview_rect.left_top(),
-                galley,
+            painter.text(
+                egui::pos2(preview_rect.left(), preview_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                self.preview(),
+                preview_font,
                 theme.text_tertiary,
             );
         }
@@ -279,6 +281,13 @@ impl Terminal {
                         self.lines.iter().rev().collect()
                     };
                     let total = rows.len().max(1) as f32;
+                    let stamp_font = egui::FontId::monospace(11.0);
+                    let stamp_w = ui
+                        .painter()
+                        .layout_no_wrap("00:00:00".to_owned(), stamp_font.clone(), Color32::WHITE)
+                        .size()
+                        .x;
+                    let row_h = 18.0f32;
                     for (index, line) in rows.iter().enumerate() {
                         // Distance from the fresh end drives the fade ramp.
                         let depth = index as f32 / total;
@@ -301,22 +310,27 @@ impl Terminal {
                         };
                         let stamp =
                             format!("{:02}:{:02}:{:02}", line.hms.0, line.hms.1, line.hms.2);
-                        let row = ui
-                            .horizontal(|ui| {
-                                ui.monospace(
-                                    egui::RichText::new(stamp)
-                                        .size(11.0)
-                                        .color(tint(theme.text_tertiary)),
-                                );
-                                ui.add_space(8.0);
-                                ui.monospace(
-                                    egui::RichText::new(line.text.as_str())
-                                        .size(11.0)
-                                        .color(tint(text_color)),
-                                );
-                            })
-                            .response;
-                        last = Some(row);
+                        let (row_rect, row_resp) =
+                            ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
+                        let row = ui.painter_at(row_rect);
+                        let cy = row_rect.center().y;
+                        // Stamp and text share the row's center line —
+                        // LEFT_CENTER at the same y can't skew.
+                        row.text(
+                            egui::pos2(row_rect.left(), cy),
+                            egui::Align2::LEFT_CENTER,
+                            &stamp,
+                            stamp_font.clone(),
+                            tint(theme.text_tertiary),
+                        );
+                        row.text(
+                            egui::pos2(row_rect.left() + stamp_w + 8.0, cy),
+                            egui::Align2::LEFT_CENTER,
+                            line.text.as_str(),
+                            stamp_font.clone(),
+                            tint(text_color),
+                        );
+                        last = Some(row_resp);
                     }
                     if fresh {
                         // Pin the FRESH end: the first row when newest-first,

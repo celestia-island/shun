@@ -640,6 +640,11 @@ struct Texts {
     banner_download_link: String,
     /// The install-end missing-runtime warning (done page).
     done_warn_webview2: String,
+    /// The install-step WebView2 download step row (running pane's log
+    /// and header): the percent suffix is appended by the caller.
+    runtime_download: String,
+    /// The install-step silent-install step row.
+    runtime_install: String,
     step_language: String,
     step_location: String,
     step_license: String,
@@ -1611,6 +1616,7 @@ impl FallbackApp {
         let payload = self.payload.clone();
         let config = self.config.clone();
         let attachments = self.attachments.clone();
+        let texts = self.texts.clone();
         std::thread::spawn(move || {
             // The shared driver, exactly what the webview and TUI faces
             // ride: writability gate, overwrite hygiene, the flow, the
@@ -1633,20 +1639,49 @@ impl FallbackApp {
                 // same event channel (the register-phase weighting
                 // keeps the extraction bar in place).
                 let install = install.map(|()| {
-                    crate::acquire_webview2_at_install(
-                        &core.config,
-                        &payload,
-                        &mut |so_far, total| {
-                            let percent =
-                                total.map(|total| (so_far * 100 / total.max(1)).min(100) as u8);
+                    // Localized step rows: every phase change and every
+                    // decile changes the step text, which the running
+                    // pane's apply_event both logs and shows in the strip
+                    // header — the download reports itself like the
+                    // extraction steps do.
+                    let download_label = texts.runtime_download.clone();
+                    let install_label = texts.runtime_install.clone();
+                    let mut last_step = String::new();
+                    let mut emit = |step: String, percent: Option<u8>| {
+                        if step != last_step {
+                            last_step = step.clone();
                             let _ = sender.send(WorkerMsg::Event(FlowEvent::Progress {
                                 phase: shun::flow::FlowPhase::Register,
-                                step: "WebView2 runtime".into(),
+                                step,
                                 percent,
                             }));
                             repaint.request_repaint();
-                        },
-                    );
+                        }
+                    };
+                    let percent_of = |so_far: u64, total: Option<u64>| {
+                        total.map(|total| (so_far * 100 / total.max(1)).min(100) as u8)
+                    };
+                    crate::acquire_webview2_at_install(&core.config, &payload, &mut |event| {
+                        match event {
+                            crate::RuntimeEvent::DownloadStart => {
+                                emit(download_label.clone(), Some(0));
+                            }
+                            crate::RuntimeEvent::Download(so_far, total) => {
+                                let percent = percent_of(so_far, total);
+                                if let Some(percent) = percent {
+                                    // One row per decile — enough signal
+                                    // without flooding the pane.
+                                    emit(
+                                        format!("{}… {}%", download_label, percent / 10 * 10),
+                                        Some(percent),
+                                    );
+                                }
+                            }
+                            crate::RuntimeEvent::InstallStart => {
+                                emit(install_label.clone(), None);
+                            }
+                        }
+                    });
                 });
                 // Picked non-bundled attachments stream in right after
                 // the payload (the web face's download pass, same
@@ -3534,8 +3569,11 @@ impl FallbackApp {
         // just-drawn heading, the pager row rode the border, and the
         // checkbox landed under the footer band.
         let pager_h = if total > 1 { 24.0 + 6.0 } else { 0.0 };
-        let checkbox_h = 26.0;
-        let gaps = 8.0 + 8.0 + 8.0;
+        // Open air around the agree row: 10px above (past the pager's
+        // own gap) and 16px below — the card gives these up so the row
+        // never reads squeezed against the pager or the footer band.
+        let checkbox_h = 10.0 + 26.0 + 16.0;
+        let gaps = 8.0 + 8.0;
         let card_h = (ui.available_height() - pager_h - checkbox_h - gaps).max(120.0);
         let card_rect = egui::Rect::from_min_size(
             pos2(ui.max_rect().left(), ui.cursor().top()),
@@ -3645,7 +3683,7 @@ impl FallbackApp {
                 });
             });
         }
-        ui.add_space(8.0);
+        ui.add_space(10.0);
         Self::circle_checkbox(
             ui,
             self.theme,

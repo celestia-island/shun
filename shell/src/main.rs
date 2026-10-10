@@ -874,26 +874,34 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     // usual "install complete", the runtime stays missing.
     let mut last_tenth = 0u64;
     let mut last_mark = 0u64;
-    acquire_webview2_at_install(config, payload, &mut |so_far, total| {
+    acquire_webview2_at_install(config, payload, &mut |event| {
         // A silent install must stay chatty enough for CI logs without
         // flooding them: one line per decile when the size is known,
         // one per 4 MiB otherwise.
-        match total {
-            Some(total) => {
-                let tenth = so_far * 10 / total.max(1);
-                if tenth > last_tenth {
-                    last_tenth = tenth;
-                    println!("shun: downloading the WebView2 runtime… {}%", tenth * 10);
-                }
+        match event {
+            crate::RuntimeEvent::DownloadStart => {
+                println!("shun: no WebView2 runtime — downloading the Evergreen installer")
             }
-            None => {
-                if so_far - last_mark >= 4 * 1024 * 1024 {
-                    last_mark = so_far;
-                    println!(
-                        "shun: downloading the WebView2 runtime… {}",
-                        format_bytes(so_far)
-                    );
+            crate::RuntimeEvent::Download(so_far, total) => match total {
+                Some(total) => {
+                    let tenth = so_far * 10 / total.max(1);
+                    if tenth > last_tenth {
+                        last_tenth = tenth;
+                        println!("shun: downloading the WebView2 runtime… {}%", tenth * 10);
+                    }
                 }
+                None => {
+                    if so_far - last_mark >= 4 * 1024 * 1024 {
+                        last_mark = so_far;
+                        println!(
+                            "shun: downloading the WebView2 runtime… {}",
+                            format_bytes(so_far)
+                        );
+                    }
+                }
+            },
+            crate::RuntimeEvent::InstallStart => {
+                println!("shun: running the downloaded Evergreen installer silently")
             }
         }
     });
@@ -1381,11 +1389,28 @@ fn bootstrap_evergreen_webview2(config: &ShunConfig, payload: &ArchivePayload) {
 /// Best-effort like its twin: failure leaves the runtime missing and
 /// the done page's `warn-missing` warning tells the story — the install
 /// itself is already complete and must not fail.
+/// What the install-step runtime acquire is doing — the localized-step
+/// source for the faces' progress surfaces (the egui log pane's step
+/// rows, the headless console's lines).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Non-Windows never constructs (the acquire stub swallows the stream)
+// — the enum exists on both sides so the faces' callbacks compile
+// unconditionally.
+#[allow(dead_code)]
+pub(crate) enum RuntimeEvent {
+    /// The download is starting (zero bytes in).
+    DownloadStart,
+    /// Download progress: `(bytes_so_far, total_when_known)`.
+    Download(u64, Option<u64>),
+    /// The downloaded installer is running silently.
+    InstallStart,
+}
+
 #[cfg(windows)]
 pub(crate) fn acquire_webview2_at_install(
     config: &ShunConfig,
     payload: &ArchivePayload,
-    on_download: &mut dyn FnMut(u64, Option<u64>),
+    on_event: &mut dyn FnMut(RuntimeEvent),
 ) {
     if webview2_loader_ready() {
         return;
@@ -1398,8 +1423,10 @@ pub(crate) fn acquire_webview2_at_install(
         eprintln!("shun: no LOCALAPPDATA to download the Evergreen installer into");
         return;
     };
-    println!("shun: no WebView2 runtime — downloading the Evergreen installer");
-    let downloaded = download_evergreen(&url, &cache, on_download);
+    on_event(RuntimeEvent::DownloadStart);
+    let downloaded = download_evergreen(&url, &cache, &mut |so_far, total| {
+        on_event(RuntimeEvent::Download(so_far, total));
+    });
     let installer = match downloaded {
         Ok(path) => path,
         Err(err) => {
@@ -1407,7 +1434,7 @@ pub(crate) fn acquire_webview2_at_install(
             return;
         }
     };
-    println!("shun: running the downloaded Evergreen installer silently");
+    on_event(RuntimeEvent::InstallStart);
     if let Err(err) = shun::webview2::run_evergreen_silent(&installer) {
         eprintln!("shun: running the Evergreen installer failed ({err}); skipping");
     }
@@ -1489,7 +1516,7 @@ fn format_bytes(bytes: u64) -> String {
 pub(crate) fn acquire_webview2_at_install(
     _config: &ShunConfig,
     _payload: &ArchivePayload,
-    _on_download: &mut dyn FnMut(u64, Option<u64>),
+    _on_event: &mut dyn FnMut(RuntimeEvent),
 ) {
 }
 
