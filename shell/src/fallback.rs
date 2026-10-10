@@ -840,61 +840,86 @@ fn install_system_fonts(ctx: &Context) -> bool {
         (r"C:\Windows\Fonts\malgun.ttf", 0, "malgun-gothic"),
         (r"C:\Windows\Fonts\consola.ttf", 0, "consolas"),
     ];
-    let mut loaded = std::collections::BTreeSet::new();
+    // The face bytes load once and are LEAKED: every family-scoped
+    // clone below borrows the same buffer (FontData's Cow would
+    // otherwise copy ~19 MB per clone for the YaHei collection).
+    let mut faces: std::collections::BTreeMap<&'static str, (&'static [u8], u32)> =
+        std::collections::BTreeMap::new();
     for (path, index, name) in FACES {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-        // The CJK faces carry a baseline tweak: egui positions each
-        // fallback font's glyphs by that font's own ascent, and
-        // YaHei/Malgun's ascent towers over Segoe UI's — every mixed
-        // CJK+Latin line drew the Latin fragments floating a couple of
-        // pixels above the Han glyphs (the sandbox report). A negative
-        // y_offset lifts the CJK rasters onto the Latin baseline; the
-        // layout metrics stay untouched.
-        let tweak = if name == "ms-yahei" || name == "malgun-gothic" {
-            egui::FontTweak {
-                y_offset_factor: 0.0,
-                y_offset: -1.8,
-                ..Default::default()
-            }
-        } else {
-            Default::default()
-        };
-        fonts.font_data.insert(
-            name.to_string(),
-            egui::FontData {
-                font: bytes.into(),
-                index,
-                tweak,
-            }
-            .into(),
-        );
-        loaded.insert(name);
+        if let Ok(bytes) = std::fs::read(path) {
+            faces.insert(name, (Box::leak(bytes.into_boxed_slice()), index));
+        }
     }
 
     // Family chains: [Segoe UI, Microsoft YaHei, ..egui defaults] for
     // proportional text, [Consolas, Microsoft YaHei, ..] for mono —
-    // the browser's fallback dance, one layer at a time.
-    let chain = |fonts: &mut FontDefinitions, family: FontFamily, names: &[&str]| {
-        let list = fonts.families.entry(family).or_default();
-        for (position, name) in names.iter().enumerate() {
-            if loaded.contains(name) {
-                list.insert(position, name.to_string());
-            }
+    // the browser's fallback dance, one layer at a time. Every
+    // FALLBACK is registered under a family-scoped name (ms-yahei/prop,
+    // ms-yahei/mono, ...): egui's row layout vertically centers each
+    // fallback's height box on the primary's instead of aligning
+    // baselines, so the compensating tweak differs per family and one
+    // shared FontData cannot serve both chains.
+    // (family, primary face, chain tag, fallback faces + probe glyph)
+    type FamilyPlan = (
+        FontFamily,
+        &'static str,
+        &'static str,
+        &'static [(&'static str, char)],
+    );
+    let families: [FamilyPlan; 2] = [
+        (
+            FontFamily::Proportional,
+            "segoe-ui",
+            "prop",
+            &[("ms-yahei", '\u{4e2d}'), ("malgun-gothic", '\u{d55c}')],
+        ),
+        (
+            FontFamily::Monospace,
+            "consolas",
+            "mono",
+            &[("ms-yahei", '\u{4e2d}'), ("malgun-gothic", '\u{d55c}')],
+        ),
+    ];
+    let insert_face =
+        |fonts: &mut FontDefinitions, name: &str, base: &str, tweak: egui::FontTweak| {
+            let Some((bytes, index)) = faces.get(base) else {
+                return;
+            };
+            fonts.font_data.insert(
+                name.to_string(),
+                egui::FontData {
+                    font: std::borrow::Cow::Borrowed(bytes),
+                    index: *index,
+                    tweak,
+                }
+                .into(),
+            );
+        };
+    let mut calibrated: Vec<(FontFamily, String, String, char)> = Vec::new();
+    for (family, primary, tag, fallbacks) in families {
+        // Collect the chain first, then splice it in — the entry borrow
+        // must not span the insert_face calls.
+        let mut chain: Vec<String> = Vec::new();
+        if faces.contains_key(primary) {
+            insert_face(&mut fonts, primary, primary, Default::default());
+            chain.push(primary.to_string());
         }
-    };
-    chain(
-        &mut fonts,
-        FontFamily::Proportional,
-        &["segoe-ui", "ms-yahei", "malgun-gothic"],
-    );
-    chain(
-        &mut fonts,
-        FontFamily::Monospace,
-        &["consolas", "ms-yahei", "malgun-gothic"],
-    );
-    let system_cjk = loaded.contains("ms-yahei");
+        for (base, marker) in fallbacks {
+            if !faces.contains_key(base) {
+                continue;
+            }
+            let scoped = format!("{base}/{tag}");
+            insert_face(&mut fonts, &scoped, base, Default::default());
+            chain.push(scoped.clone());
+            calibrated.push((family.clone(), scoped, base.to_string(), *marker));
+        }
+        let list = fonts.families.entry(family).or_default();
+        for (position, name) in chain.iter().enumerate() {
+            list.insert(position, name.clone());
+        }
+    }
+    calibrate_fallback_baselines(&mut fonts, &calibrated, &faces);
+    let system_cjk = faces.contains_key("ms-yahei");
 
     if system_cjk {
         ctx.set_fonts(fonts);
@@ -923,6 +948,137 @@ fn install_system_fonts(ctx: &Context) -> bool {
         return true;
     }
     false
+}
+
+/// Measures and cancels every fallback font's baseline drift against
+/// its family's primary — the SYSTEMATIC fix for mixed-script rows.
+///
+/// egui's row placement vertically CENTERS each fallback font's height
+/// box on the primary's (`0.5 * (font_height - font_impl_height)` in
+/// epaint's layout) instead of aligning baselines, so any mixed
+/// CJK+Latin line draws the two scripts on different baselines — the
+/// Latin fragments float. The drift is not guessable from names or
+/// hardcoded offsets: it is MEASURED with the layout engine itself. A
+/// scratch context lays out the exact mixed probe row ("M" + the
+/// fallback's marker glyph) against a minimal two-font chain, and the
+/// two glyphs' `pos.y` difference IS the drift, every internal
+/// rounding included. The compensating `y_offset_factor`
+/// (font-size-proportional, so it holds at every size and DPI) shifts
+/// only the raster; the layout metrics stay the primary's. A sanity
+/// band rejects wild measurements (a marker glyph that fell through
+/// to another font) rather than blindly shifting.
+fn calibrate_fallback_baselines(
+    fonts: &mut FontDefinitions,
+    pairs: &[(FontFamily, String, String, char)],
+    faces: &std::collections::BTreeMap<&'static str, (&'static [u8], u32)>,
+) {
+    const REF_SIZE: f32 = 24.0;
+    for (family, scoped, base, marker) in pairs {
+        let Some(primary_name) = fonts
+            .families
+            .get(&family.clone())
+            .and_then(|list| list.first().cloned())
+        else {
+            continue;
+        };
+        let Some(primary_base) = strip_scope(&primary_name, faces) else {
+            // The primary is one of egui's bundled fonts (the legacy
+            // path) — its bytes are not ours to chain; skip rather
+            // than mis-measure.
+            continue;
+        };
+        let (primary_bytes, primary_index) = primary_base;
+        let Some((fallback_bytes, fallback_index)) = faces
+            .get(base.as_str())
+            .map(|(bytes, index)| (*bytes, *index))
+        else {
+            continue;
+        };
+        // A minimal two-font chain GUARANTEES resolution: the marker
+        // cannot fall through to some other fallback and measure the
+        // wrong font.
+        let mut probe_defs = FontDefinitions::default();
+        for (name, bytes, index) in [
+            ("__primary", primary_bytes, primary_index),
+            ("__fallback", fallback_bytes, fallback_index),
+        ] {
+            probe_defs.font_data.insert(
+                name.to_string(),
+                egui::FontData {
+                    font: std::borrow::Cow::Borrowed(bytes),
+                    index,
+                    tweak: Default::default(),
+                }
+                .into(),
+            );
+        }
+        probe_defs
+            .families
+            .entry(family.clone())
+            .or_default()
+            .splice(0..0, ["__primary".into(), "__fallback".into()]);
+        let probe_ctx = Context::default();
+        probe_ctx.set_fonts(probe_defs);
+        let text: String = ['M', *marker].iter().collect();
+        let mut galley = None;
+        let _ = probe_ctx.run(egui::RawInput::default(), |ctx| {
+            galley = Some(ctx.fonts(|f| {
+                f.layout_no_wrap(
+                    text.clone(),
+                    egui::FontId::new(REF_SIZE, family.clone()),
+                    Color32::WHITE,
+                )
+            }));
+        });
+        let Some(galley) = galley else { continue };
+        let Some(row) = galley.rows.first() else {
+            continue;
+        };
+        let mut latin_y = None;
+        let mut fallback_y = None;
+        for glyph in &row.glyphs {
+            if glyph.chr == 'M' {
+                latin_y = Some(glyph.pos.y);
+            } else if glyph.chr == *marker {
+                fallback_y = Some(glyph.pos.y);
+            }
+        }
+        if let (Some(latin), Some(fallback)) = (latin_y, fallback_y) {
+            let drift = fallback - latin;
+            if (0.02 * REF_SIZE..0.4 * REF_SIZE).contains(&drift.abs()) {
+                if let Some(data) = fonts.font_data.get(scoped.as_str()) {
+                    let index = data.index;
+                    let tweak = egui::FontTweak {
+                        y_offset_factor: -drift / REF_SIZE,
+                        ..Default::default()
+                    };
+                    crate::diag!(
+                        "shun: font {scoped} baseline drift {drift:+.2}pt at {REF_SIZE}pt — calibrated"
+                    );
+                    fonts.font_data.insert(
+                        scoped.clone(),
+                        egui::FontData {
+                            font: std::borrow::Cow::Borrowed(fallback_bytes),
+                            index,
+                            tweak,
+                        }
+                        .into(),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Resolves a family chain's first entry back to its face bytes:
+/// family-scoped names ("ms-yahei/prop") strip to their base, plain
+/// names map directly. `None` for egui's bundled fonts.
+fn strip_scope(
+    name: &str,
+    faces: &std::collections::BTreeMap<&'static str, (&'static [u8], u32)>,
+) -> Option<(&'static [u8], u32)> {
+    let base = name.split('/').next().unwrap_or(name);
+    faces.get(base).map(|(bytes, index)| (*bytes, *index))
 }
 
 // The embedded product logo, decoded to an egui texture (like the
@@ -1780,21 +1936,26 @@ impl FallbackApp {
                                     texts.runtime_elevate.clone(),
                                 ));
                             }
-                            crate::RuntimeEvent::Done(ready) => {
+                            crate::RuntimeEvent::Done(ready, code) => {
                                 // The loader's verdict, straight into the
                                 // pane: an error row force-opens the
-                                // drawer, so a failed install can't hide.
+                                // drawer, so a failed install can't hide,
+                                // and the installer's exit code rides
+                                // along for the diagnosis.
+                                let text = if ready {
+                                    texts.runtime_ready.clone()
+                                } else {
+                                    let code =
+                                        code.map(|c| format!(" (exit {c})")).unwrap_or_default();
+                                    format!("{}{code}", texts.runtime_failed)
+                                };
                                 send(WorkerMsg::LogLine(
                                     if ready {
                                         crate::terminal::LineKind::Ok
                                     } else {
                                         crate::terminal::LineKind::Error
                                     },
-                                    if ready {
-                                        texts.runtime_ready.clone()
-                                    } else {
-                                        texts.runtime_failed.clone()
-                                    },
+                                    text,
                                 ));
                             }
                         }
