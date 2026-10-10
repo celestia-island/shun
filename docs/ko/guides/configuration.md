@@ -41,6 +41,8 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version 전용: 압축 해제된 런타임 폴더
 # silent-install = true                    # evergreen-installer: 런타임 없는 컴퓨터에서 동봉된
                                            #   설치 관리자를 자동 설치(기본 켜짐)
+# download-url = "https://…"               # evergreen-installer: 미포함 시 설치 중 Evergreen 설치
+                                           #   관리자를 내려받아 조용히 실행(동일 스위치)
 # warn-missing = true                      # skip / evergreen-installer: egui 대체 화면이 시작과
                                            #   끝에 경고하고 Microsoft 공식 다운로드 페이지 링크
                                            #   제공(기본 켜짐)

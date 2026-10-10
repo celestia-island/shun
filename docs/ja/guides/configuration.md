@@ -41,6 +41,8 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version 専用：展開済みランタイムフォルダー
 # silent-install = true                    # evergreen-installer：ランタイム未導入の環境で同梱
                                            #   インストーラーをサイレント実行（既定はオン）
+# download-url = "https://…"               # evergreen-installer：同梱しない場合、インストール時に
+                                           #   Evergreen インストーラーを取得しサイレント実行（同一スイッチ）
 # warn-missing = true                      # skip / evergreen-installer：egui 代替画面が開始時と
                                            #   終了時に警告し Microsoft 公式ダウンロードページ
                                            #   へのリンクを表示（既定はオン）

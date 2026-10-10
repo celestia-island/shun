@@ -50,6 +50,8 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version 专用：解压后的运行时目录
 # silent-install = true                    # evergreen-installer：无运行时的机器上静默执行
                                            #   自带的安装器（默认开启）
+# download-url = "https://…"               # evergreen-installer：不携带安装器时，安装期联网获取
+                                           #   Evergreen 安装器并静默执行（与 silent-install 同一开关）
 # warn-missing = true                      # skip / evergreen-installer：egui 降级界面在
                                            #   开始与结束时警告并附微软官方下载页链接
                                            #   （默认开启）
@@ -127,6 +129,10 @@ require-removable = true                   # 拒绝非可移动设备
   （按 payload 的 `webview2/` 前缀发现）会先暂存到用户级缓存并以
   `/silent /install` 静默执行（安装器要求提权时走 UAC）。执行成功即原地
   升级机器，webview 面继续可用。
+- 不携带安装器但声明了 `download-url`（且 `silent-install` 保持开启）
+  的构建，会在安装步骤中从该地址联网获取 Evergreen 安装器并走同一条静默
+  安装路径——lite 版通过网络而非自带 payload 升级机器。慢网或断网永远不会
+  阻塞首个界面：获取发生在安装流程内，降级横幅也会说明运行时正在到来。
 - 无论结果如何，机器仍无运行时则落到 egui 面。`warn-missing`（默认
   `true`）且未携带安装器时，该面在向导开始与结束处各警告一次，并内嵌
   跳转到微软官方 WebView2 下载页的链接。两个开关均可按产品关闭：

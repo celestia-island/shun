@@ -18,17 +18,32 @@
 //!     MicrosoftEdgeWebView2RuntimeInstallerX64.exe
 //! ```
 //!
-//! The download itself is NOT automated — `shun build` packs whatever
-//! the declared payload directory carries. Fetch the installer from
+//! The download is only automated for the networked source (below) —
+//! `shun build` packs whatever the declared payload directory carries.
+//! Fetch a carried installer from
 //! <https://developer.microsoft.com/microsoft-edge/webview2/> (or the
 //! Evergreen fwlink) into the payload before building. The prefix is
 //! matched case-sensitively (`webview2/`, lowercase — the same
 //! `starts_with` the staging `extract_prefix` rides, so discovery and
 //! extraction can never diverge); packagers naming the directory
 //! `WebView2/` silently opt out of the whole feature.
+//!
+//! # The networked source
+//!
+//! A manifest whose `evergreen-installer` declares `download-url` and
+//! whose payload carries no installer resolves to
+//! [`EvergreenSource::Download`]: the runtime shell (which owns the
+//! HTTP fetch — this crate stays offline-safe) downloads Microsoft's
+//! Evergreen installer from that URL at install time and runs it
+//! through the same silent path as a carried one. The
+//! `silent-install` knob gates carried and downloaded alike, so
+//! disabling it opts out of both. The intended value is a permanent
+//! permalink (the Evergreen bootstrapper's fwlink) — a few MB that
+//! fetches the actual runtime itself.
 
 use std::path::Path;
 
+use crate::config::ShunConfig;
 use crate::payload::ArchivePayload;
 
 /// Payload-relative directory carrying the Evergreen offline installer.
@@ -94,6 +109,45 @@ pub fn stage_evergreen(payload: &ArchivePayload, cache: &Path) -> Option<std::pa
     }
     let staged = cache.join(&entry);
     staged.is_file().then_some(staged)
+}
+
+/// Where the install step can get an Evergreen installer on a
+/// runtime-less machine — the ONE decision every caller (startup
+/// bootstrap, install-step acquire, fallback banner copy) renders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EvergreenSource {
+    /// The payload carries an installer under the `webview2/` prefix;
+    /// the boxed path is its archive-relative entry. Handled before the
+    /// face ladder (startup bootstrap) — never re-attempted at install
+    /// time, a second UAC prompt on a declined run would read as a bug.
+    Carried(std::path::PathBuf),
+
+    /// Nothing carried, but the manifest declares `download-url` and the
+    /// `silent-install` knob is on: fetch the installer from this URL at
+    /// install time and run it silently.
+    Download(String),
+
+    /// Nothing to install from — the missing-runtime warnings and the
+    /// Microsoft download page are the only story.
+    None,
+}
+
+/// Resolves the install-step runtime source for `config` against
+/// `payload`. The carried installer always wins (offline first); the
+/// networked source answers only when the strategy is
+/// `evergreen-installer`, the payload carries nothing, `download-url`
+/// is set AND `silent-install` is on — one knob, both sources, so a
+/// product disabling silent installs opts out of networked ones too.
+pub fn evergreen_source(config: &ShunConfig, payload: &ArchivePayload) -> EvergreenSource {
+    if let Some(entry) = evergreen_entry(payload) {
+        return EvergreenSource::Carried(entry);
+    }
+    if config.webview2_silent_install() {
+        if let Some(url) = config.webview2_download_url() {
+            return EvergreenSource::Download(url.to_string());
+        }
+    }
+    EvergreenSource::None
 }
 
 /// Runs the Evergreen offline installer silently. The installer's
@@ -263,5 +317,86 @@ mod tests {
             std::env::temp_dir().join(format!("shun-wv2-bare-cache-{}", std::process::id()));
         assert_eq!(stage_evergreen(&payload, &cache), None);
         assert!(!cache.join(EVERGREEN_PREFIX).exists());
+    }
+
+    /// A minimal evergreen config, the way the manifest spells it.
+    fn evergreen_config(download_url: Option<&str>, silent_install: bool) -> ShunConfig {
+        ShunConfig {
+            script: None,
+            variants: None,
+            product: crate::config::ProductIdentity {
+                name: "ShunDemo".into(),
+                version: "0.1.0".into(),
+                publisher: None,
+                logo: None,
+            },
+            payload: None,
+            webview2: Some(crate::config::Webview2Strategy::EvergreenInstaller {
+                silent_install: Some(silent_install),
+                warn_missing: None,
+                download_url: download_url.map(str::to_string),
+            }),
+            targets: Vec::new(),
+            shell: None,
+            source: None,
+            update: None,
+            attachments: Vec::new(),
+            license_sysl: None,
+            license: None,
+            license_locales: Default::default(),
+            licenses: Vec::new(),
+            custom_steps: Vec::new(),
+            steps: None,
+            signing: None,
+            msix: None,
+        }
+    }
+
+    #[test]
+    fn carried_runtime_wins_over_the_download_url() {
+        let dir = std::env::temp_dir().join(format!("shun-wv2-src-carried-{}", std::process::id()));
+        let inner = dir.join(EVERGREEN_PREFIX);
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(
+            inner.join("MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
+            b"MZ",
+        )
+        .unwrap();
+        let payload = packed(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = evergreen_config(
+            Some("https://go.microsoft.com/fwlink/?linkid=2124701"),
+            true,
+        );
+
+        assert_eq!(
+            evergreen_source(&config, &payload),
+            EvergreenSource::Carried(
+                Path::new("webview2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe").to_path_buf()
+            )
+        );
+    }
+
+    #[test]
+    fn download_source_needs_url_and_the_silent_knob() {
+        let dir = std::env::temp_dir().join(format!("shun-wv2-src-dl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.exe"), b"MZ").unwrap();
+        let payload = packed(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        let url = "https://go.microsoft.com/fwlink/?linkid=2124701";
+
+        // Both armed → the download source.
+        let config = evergreen_config(Some(url), true);
+        assert_eq!(
+            evergreen_source(&config, &payload),
+            EvergreenSource::Download(url.to_string())
+        );
+        // The shared knob OFF opts out of the networked source too.
+        let declined = evergreen_config(Some(url), false);
+        assert_eq!(evergreen_source(&declined, &payload), EvergreenSource::None);
+        // No URL → nothing to install from, whatever the knob says.
+        let offline = evergreen_config(None, true);
+        assert_eq!(evergreen_source(&offline, &payload), EvergreenSource::None);
     }
 }

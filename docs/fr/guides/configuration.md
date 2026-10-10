@@ -41,6 +41,9 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # path = "WebView2Runtime"                 # fixed-version : dossier runtime extrait
 # silent-install = true                    # evergreen-installer : exécute en silence
                                            #   l'installateur embarqué sans runtime (défaut)
+# download-url = "https://…"               # evergreen-installer : sans installateur embarqué, récupère
+                                           #   l'installateur Evergreen à l'installation et l'exécute en
+                                           #   silence (même option que silent-install)
 # warn-missing = true                      # skip / evergreen-installer : le repli egui avertit
                                            #   au début et à la fin, avec le lien officiel
                                            #   Microsoft (défaut)
