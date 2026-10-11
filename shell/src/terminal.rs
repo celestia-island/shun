@@ -178,20 +178,16 @@ impl Terminal {
         // chevron right — the web bar's three spans.
         let count = self.lines.len();
         let head = format!("{title} · {count}");
-        // Baseline-true pair: the proportional title defines the line
-        // (box-centered), and the monospace preview PINS to the title's
-        // measured baseline. Box-centering both still skews — Segoe and
-        // Consolas seat their glyphs at different heights inside their
-        // boxes, so same-center ≠ same-line across families.
+        // Cross-family pair on CHAIN VISUAL baselines: egui computes
+        // every glyph's pen from its own font's metrics (no shared
+        // baseline), so pens, boxes, and centers each misalign across
+        // families. Both runs anchor on their chain's LATIN seat —
+        // the primary face's pen, the one every fallback's calibration
+        // was measured against.
         let head_font = egui::FontId::proportional(12.0);
         let preview_font = egui::FontId::monospace(11.0);
         let title_galley = painter.layout_no_wrap(head, head_font, theme.text_tertiary);
-        let title_baseline = title_galley
-            .rows
-            .first()
-            .and_then(|row| row.glyphs.first())
-            .map(|g| g.pos.y)
-            .unwrap_or(title_galley.size().y * 0.8);
+        let title_visual = crate::fallback::chain_visual_baseline(&title_galley, 12.0, false);
         let title_top = bar_rect.center().y - title_galley.size().y / 2.0;
         let head_w = title_galley.size().x;
         painter.galley(
@@ -199,6 +195,7 @@ impl Terminal {
             title_galley,
             theme.text_tertiary,
         );
+        let baseline_y = title_top + title_visual;
         let chev_w = 26.0;
         let preview_rect = egui::Rect::from_min_max(
             egui::pos2(bar_rect.left() + head_w + 14.0, bar_rect.top()),
@@ -206,12 +203,12 @@ impl Terminal {
         );
         if preview_rect.width() > 20.0 {
             // Clip the preview to its span (the web span's
-            // text-overflow ellipsis analog) while pinning its baseline
-            // to the title's.
-            crate::fallback::paint_on_baseline(
+            // text-overflow ellipsis analog) while pinning its chain
+            // baseline to the title's.
+            crate::fallback::paint_on_chain_baseline(
                 &painter.with_clip_rect(preview_rect),
                 preview_rect.left(),
-                title_top + title_baseline,
+                baseline_y,
                 self.preview(),
                 preview_font,
                 theme.text_tertiary,
