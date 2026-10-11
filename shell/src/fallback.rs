@@ -749,6 +749,15 @@ pub(crate) fn splash_strings() -> (String, String) {
     (texts.splash_message.clone(), texts.splash_abort.clone())
 }
 
+/// The splash title bar's role word ("安装器"), system-locale resolved
+/// like the splash copy.
+pub(crate) fn titlebar_installer_string() -> String {
+    let strings = wizard_strings();
+    let tag = system_locale_tag().unwrap_or_default();
+    let texts = strings.texts(&strings.resolve_system_locale(&tag));
+    texts.titlebar_installer.clone()
+}
+
 fn wizard_strings() -> &'static WizardStrings {
     static WIZARD_STRINGS: std::sync::OnceLock<WizardStrings> = std::sync::OnceLock::new();
     WIZARD_STRINGS.get_or_init(|| {
@@ -1205,7 +1214,7 @@ fn render_svg(svg: &str, px: f32) -> Option<egui::ColorImage> {
     ))
 }
 
-fn load_logo(ctx: &Context, kind: &str, bytes: &[u8]) -> Option<TextureHandle> {
+pub(crate) fn load_logo(ctx: &Context, kind: &str, bytes: &[u8]) -> Option<TextureHandle> {
     if kind == "none" || bytes.is_empty() {
         return None;
     }
@@ -5009,7 +5018,7 @@ impl eframe::App for FallbackApp {
 /// window: the caption title is shared by every face instance, so a
 /// title lookup would round a neighbor.
 #[cfg(windows)]
-fn apply_dwm_rounding(frame: &eframe::Frame) {
+pub(crate) fn apply_dwm_rounding(frame: &eframe::Frame) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let Ok(handle) = frame.window_handle() else {
         return;
