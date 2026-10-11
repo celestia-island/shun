@@ -875,7 +875,8 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     // usual "install complete", the runtime stays missing.
     let mut last_tenth = 0u64;
     let mut last_mark = 0u64;
-    acquire_webview2_at_install(config, payload, true, &mut |event| {
+    let runtime_allowed = config.webview2_silent_install();
+    acquire_webview2_at_install(config, payload, true, runtime_allowed, &mut |event| {
         // A silent install must stay chatty enough for CI logs without
         // flooding them: one line per decile when the size is known,
         // one per 4 MiB otherwise.
@@ -1234,7 +1235,6 @@ fn main() {
         let init_rx = splash::spawn_init(
             EMBEDDED_PAYLOAD,
             config.clone(),
-            webview_face_candidate,
             tauri_possible,
             cli.uninstall,
         );
@@ -1311,13 +1311,10 @@ fn main() {
     }
 
     // Non-GUI tracks: a console is already speaking — inline decode,
-    // then the ladder (the bootstraps may have upgraded the machine;
-    // the re-probe lets the webview face win exactly when it should —
-    // moot for these tracks, kept for parity).
+    // then the ladder. Nothing installs the runtime here either: the
+    // runtime install lives in the install step (the headless track
+    // under its manifest knob, the wizard behind a consent ask).
     let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
-    if webview_face_candidate {
-        bootstrap_evergreen_webview2(&config, &payload);
-    }
     let caps = refine_caps_with_loader(UiCapabilities::probe());
     let face = resolve_face(&cli, &caps, &faces);
 
@@ -1427,84 +1424,6 @@ fn refine_caps_with_loader(mut caps: UiCapabilities) -> UiCapabilities {
     caps
 }
 
-/// Stages and silently runs the carried Evergreen installer when the
-/// machine reports no runtime — the `evergreen-installer` strategy's
-/// `silent-install` knob (default on). Best-effort by design: a failed
-/// or declined run leaves the runtime missing, and the refined probe
-/// degrades to the egui face (which warns per `warn-missing`).
-///
-/// Carried-only by intent: a build resolving to
-/// [`shun::webview2::EvergreenSource::Download`] must not stall the
-/// face ladder on the network — its runtime lands during the install
-/// step instead (see [`acquire_webview2_at_install`]).
-fn bootstrap_evergreen_webview2(config: &ShunConfig, payload: &ArchivePayload) {
-    bootstrap_evergreen_webview2_with_progress(config, payload, &mut |_| {});
-}
-
-/// The reporting twin of [`bootstrap_evergreen_webview2`]:
-/// `on_percent` receives the staging extraction's own 0-100 (the
-/// silent-install run itself is opaque and holds the last percent).
-pub(crate) fn bootstrap_evergreen_webview2_with_progress(
-    config: &ShunConfig,
-    payload: &ArchivePayload,
-    on_percent: &mut dyn FnMut(u8),
-) {
-    crate::diag!(
-        "shun: evergreen bootstrap: silent_install={} loader_ready={} carried={}",
-        config.webview2_silent_install(),
-        webview2_loader_ready(),
-        shun::webview2::evergreen_carried(payload)
-    );
-    if !config.webview2_silent_install() || webview2_loader_ready() {
-        return;
-    }
-    if !shun::webview2::evergreen_carried(payload) {
-        return;
-    }
-    let Some(cache) = shun::webview2::evergreen_cache(&config.product.name) else {
-        crate::diag!("shun: evergreen bootstrap: no LOCALAPPDATA to stage the installer in");
-        return;
-    };
-    let Some(installer) =
-        shun::webview2::stage_evergreen_with_progress(payload, &cache, on_percent)
-    else {
-        crate::diag!("shun: evergreen bootstrap: staging the installer failed; degrading");
-        return;
-    };
-    crate::diag!(
-        "shun: evergreen bootstrap: no WebView2 runtime — running the carried installer /install (visible)"
-    );
-    // The offline installer's manifest requires elevation: an
-    // unelevated spawn dies on os error 740 (or a non-zero exit) —
-    // retry through the UAC consent exactly like the install-step
-    // acquire, or the machine silently stays runtime-less.
-    // The mutable binding exists only where the Windows retry rebinds.
-    #[cfg(windows)]
-    let mut status = shun::webview2::run_evergreen(&installer, false);
-    #[cfg(not(windows))]
-    let status = shun::webview2::run_evergreen(&installer, false);
-    // The elevation retry is a Windows affordance (the elevated
-    // runner exists only there).
-    #[cfg(windows)]
-    if (status
-        .as_ref()
-        .err()
-        .is_some_and(|err| err.raw_os_error() == Some(740))
-        || matches!(&status, Ok(status) if !status.success()))
-        && !shun::targets::elevate::is_elevated()
-    {
-        crate::diag!(
-            "shun: evergreen bootstrap: installer failed unelevated — retrying through UAC (consent may be pending)"
-        );
-        status = shun::webview2::run_evergreen_elevated(&installer, false);
-    }
-    if let Err(err) = &status {
-        crate::diag!("shun: evergreen bootstrap: running the installer failed ({err}); degrading");
-    }
-    // Success or not, the refined probe that called us re-reads the
-    // loader and decides the face.
-}
-
 /// The install-step runtime acquire for builds that carry no Evergreen
 /// installer: when the machine still has no runtime and the manifest
 /// declares `download-url` (with the shared `silent-install` knob on),
@@ -1550,36 +1469,67 @@ pub(crate) fn acquire_webview2_at_install(
     config: &ShunConfig,
     payload: &ArchivePayload,
     silent: bool,
+    allowed: bool,
     on_event: &mut dyn FnMut(RuntimeEvent),
 ) {
-    if webview2_loader_ready() {
+    if webview2_loader_ready() || !allowed {
+        crate::diag!(
+            "shun: runtime acquire: skipped (loader_ready={} allowed={allowed})",
+            webview2_loader_ready()
+        );
         return;
     }
     let source = shun::webview2::evergreen_source(config, payload);
-    crate::diag!(
-        "shun: runtime acquire: source={source:?} loader_ready={}",
-        webview2_loader_ready()
-    );
-    let url = match source {
-        shun::webview2::EvergreenSource::Download(url) => url,
-        _ => return,
-    };
-    let Some(cache) = shun::webview2::evergreen_cache(&config.product.name) else {
-        crate::diag!("shun: runtime acquire: no LOCALAPPDATA to download the installer into");
-        return;
-    };
-    on_event(RuntimeEvent::DownloadStart);
-    let downloaded = download_evergreen(&url, &cache, &mut |so_far, total| {
-        on_event(RuntimeEvent::Download(so_far, total));
-    });
-    let installer = match downloaded {
-        Ok(path) => path,
-        Err(err) => {
-            crate::diag!("shun: runtime acquire: download failed ({err}); skipping");
-            on_event(RuntimeEvent::Done(false, None));
-            return;
+    crate::diag!("shun: runtime acquire: source={source:?} loader_ready=false, silent={silent}");
+    let (installer, stage_pct) = match source {
+        // The carried offline installer: stage it out of the payload
+        // (the extraction reports its own percent), then run it — the
+        // same install-step path the downloaded bootstrapper takes.
+        shun::webview2::EvergreenSource::Carried(entry) => {
+            let Some(cache) = shun::webview2::evergreen_cache(&config.product.name) else {
+                crate::diag!(
+                    "shun: runtime acquire: no LOCALAPPDATA to stage the carried installer in"
+                );
+                return;
+            };
+            on_event(RuntimeEvent::DownloadStart);
+            let Some(staged) =
+                shun::webview2::stage_evergreen_with_progress(payload, &cache, &mut |p| {
+                    on_event(RuntimeEvent::Download(u64::from(p), Some(100)));
+                })
+            else {
+                crate::diag!(
+                    "shun: runtime acquire: staging the carried installer failed; skipping"
+                );
+                on_event(RuntimeEvent::Done(false, None));
+                return;
+            };
+            let _ = entry;
+            (staged, true)
         }
+        shun::webview2::EvergreenSource::Download(url) => {
+            let Some(cache) = shun::webview2::evergreen_cache(&config.product.name) else {
+                crate::diag!(
+                    "shun: runtime acquire: no LOCALAPPDATA to download the installer into"
+                );
+                return;
+            };
+            on_event(RuntimeEvent::DownloadStart);
+            let downloaded = download_evergreen(&url, &cache, &mut |so_far, total| {
+                on_event(RuntimeEvent::Download(so_far, total));
+            });
+            match downloaded {
+                Ok(path) => (path, false),
+                Err(err) => {
+                    crate::diag!("shun: runtime acquire: download failed ({err}); skipping");
+                    on_event(RuntimeEvent::Done(false, None));
+                    return;
+                }
+            }
+        }
+        shun::webview2::EvergreenSource::None => return,
     };
+    let _ = stage_pct;
     on_event(RuntimeEvent::InstallStart);
     crate::diag!(
         "shun: runtime acquire: running the downloaded installer ({}){}",
@@ -1700,6 +1650,7 @@ pub(crate) fn acquire_webview2_at_install(
     _config: &ShunConfig,
     _payload: &ArchivePayload,
     _silent: bool,
+    _allowed: bool,
     _on_event: &mut dyn FnMut(RuntimeEvent),
 ) {
 }
