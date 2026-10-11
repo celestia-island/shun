@@ -75,8 +75,42 @@ impl Page {
 }
 
 /// Wizard stage — the step rail and the content area follow it.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// The splash phase's live state. PartialEq compares the payload
+/// percent only — the receiver has no traits worth deriving.
+struct SplashPhase {
+    receiver: crate::splash::InitMsgReceiver,
+    percent: u8,
+}
+
+impl PartialEq for SplashPhase {
+    fn eq(&self, other: &Self) -> bool {
+        self.percent == other.percent
+    }
+}
+
+impl Eq for SplashPhase {}
+
+impl std::fmt::Debug for SplashPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SplashPhase")
+            .field("percent", &self.percent)
+            .finish()
+    }
+}
+
+/// The splash phase's outcome handed back to `main` when the face
+/// ladder re-resolves to the webview face mid-run.
+pub(crate) struct GuiHandoff {
+    pub payload: ArchivePayload,
+    pub fixed_runtime: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum Stage {
+    /// The startup splash phase: the init worker is decoding the
+    /// payload under this same window/event loop (a SECOND winit loop
+    /// in one process dies on the handover — verified in the field).
+    Splash(SplashPhase),
     /// Mode + directory selection.
     Configure,
     /// A flow is running (install or uninstall).
@@ -640,6 +674,8 @@ struct Texts {
     /// picked before the wizard language is chosen).
     splash_message: String,
     splash_abort: String,
+    /// The fatal-init box's body (system-locale).
+    fatal_init: String,
     /// The banner variant for builds whose manifest declares
     /// `download-url` (nothing carried, runtime fetched at install
     /// time): says the runtime is coming, instead of only warning.
@@ -749,13 +785,12 @@ pub(crate) fn splash_strings() -> (String, String) {
     (texts.splash_message.clone(), texts.splash_abort.clone())
 }
 
-/// The splash title bar's role word ("安装器"), system-locale resolved
-/// like the splash copy.
-pub(crate) fn titlebar_installer_string() -> String {
+/// The fatal-init message box body, system-locale resolved.
+pub(crate) fn fatal_init_string() -> String {
     let strings = wizard_strings();
     let tag = system_locale_tag().unwrap_or_default();
     let texts = strings.texts(&strings.resolve_system_locale(&tag));
-    texts.titlebar_installer.clone()
+    texts.fatal_init.clone()
 }
 
 fn wizard_strings() -> &'static WizardStrings {
@@ -1470,6 +1505,16 @@ struct FallbackApp {
     phase_active: Option<FlowPhase>,
     /// What the running worker is doing; `true` = uninstalling.
     uninstalling: Option<bool>,
+    /// The splash phase's copy (system locale; the wizard phase's own
+    /// language choice lands later).
+    splash_copy: (String, String),
+    /// Where the webview-face handoff lands when the ladder re-resolves
+    /// mid-splash (None on the plain, payload-fed runs).
+    handoff: Option<std::sync::Arc<std::sync::Mutex<Option<GuiHandoff>>>>,
+    /// Re-resolves the face after the init settles — `true` means the
+    /// webview face became reachable and `main` should run the tauri
+    /// loop with the handoff.
+    go_tauri: Option<Box<dyn FnOnce() -> bool>>,
     /// The WebView2 runtime download's smoothed speed (MiB/s) and the
     /// moment it last moved — the step-text row renders a labeled chip
     /// beside the percent while the value is fresh, and drops it once
@@ -1510,6 +1555,120 @@ const TITLEBAR_H: f32 = 32.0;
 const COMBO_W: f32 = 380.0;
 
 impl FallbackApp {
+    /// The splash phase's frame: the wizard's own title bar (its close
+    /// plate IS the abort), the system-locale message, the percent
+    /// text + bar, and the abort seat. On the worker's Done the phase
+    /// either transitions to the wizard (resize + recenter) or hands
+    /// the outcome to `main` for the tauri loop.
+    fn splash_update(&mut self, ctx: &Context) {
+        let mut done = None;
+        if let Stage::Splash(phase) = &mut self.stage {
+            while let Ok(msg) = phase.receiver.try_recv() {
+                match msg {
+                    crate::splash::InitMsg::Percent(value) => {
+                        phase.percent = phase.percent.max(value)
+                    }
+                    crate::splash::InitMsg::Done(outcome) => done = Some(outcome),
+                }
+            }
+        }
+        // Debug freeze (SHUN_DEBUG_SPLASH=1): park at a sample percent
+        // so the by-title capture can catch this phase.
+        let frozen = std::env::var("SHUN_DEBUG_SPLASH").is_ok_and(|v| v == "1");
+        if frozen {
+            if let Stage::Splash(phase) = &mut self.stage {
+                phase.percent = 37;
+            }
+            done = None;
+        }
+
+        let theme = self.theme;
+        let (message, abort) = self.splash_copy.clone();
+        let percent = match &self.stage {
+            Stage::Splash(phase) => phase.percent,
+            _ => 100,
+        };
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().fill(theme.background))
+            .show(ctx, |ui| {
+                self.title_bar(ui);
+                ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                    ui.add_space(38.0);
+                    ui.label(RichText::new(message).strong().size(16.0).color(theme.text));
+                    ui.add_space(20.0);
+                    ui.label(
+                        RichText::new(format!("{percent}%"))
+                            .size(12.0)
+                            .color(theme.text_tertiary),
+                    );
+                    ui.add_space(8.0);
+                    let (bar, _) = ui.allocate_exact_size(Vec2::new(300.0, 6.0), Sense::hover());
+                    let painter = ui.painter_at(bar);
+                    painter.rect_filled(bar, CornerRadius::same(3), theme.surface);
+                    let fill = (bar.width() * f32::from(percent) / 100.0).max(4.0);
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(bar.min, Vec2::new(fill, 6.0)),
+                        CornerRadius::same(3),
+                        theme.primary,
+                    );
+                });
+                ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
+                    ui.add_space(20.0);
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(abort).size(13.0).color(theme.text_secondary),
+                            )
+                            .fill(theme.surface)
+                            .stroke(Stroke::new(1.0f32, theme.border))
+                            .corner_radius(CornerRadius::same(6))
+                            .min_size(Vec2::new(120.0, 28.0)),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        // Nothing is installed at this stage — a clean
+                        // exit is a safe abort.
+                        std::process::exit(0);
+                    }
+                });
+            });
+
+        if let Some(outcome) = done {
+            self.payload = outcome.payload;
+            let go_tauri = self.go_tauri.take();
+            let take_handoff = go_tauri.is_some_and(|check| check());
+            if take_handoff {
+                if let Some(slot) = &self.handoff {
+                    *slot
+                        .lock()
+                        .expect("the splash phase owns the slot during handoff") =
+                        Some(GuiHandoff {
+                            payload: self.payload.clone(),
+                            fixed_runtime: outcome.fixed_runtime,
+                        });
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            // The wizard takes over THIS window: grow it to the wizard
+            // size, unlock resizing, and recenter on the primary.
+            self.stage = Stage::Configure;
+            for command in [
+                egui::ViewportCommand::InnerSize(Vec2::new(800.0, 600.0)),
+                egui::ViewportCommand::MinInnerSize(Vec2::new(640.0, 560.0)),
+                egui::ViewportCommand::Resizable(true),
+                egui::ViewportCommand::OuterPosition(crate::splash::center_on_primary(
+                    800.0, 600.0,
+                )),
+            ] {
+                ctx.send_viewport_cmd(command);
+            }
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(80));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         config: ShunConfig,
@@ -1584,6 +1743,9 @@ impl FallbackApp {
             dark_theme: resolved_dark,
             mode_pinned: false,
             dwm_rounded: false,
+            splash_copy: splash_strings(),
+            handoff: None,
+            go_tauri: None,
             candidates: probed
                 .into_iter()
                 .map(|c| (c.kind.to_string(), c.writable, c.path))
@@ -2295,81 +2457,20 @@ pub fn run(
         &title,
         options,
         Box::new(move |cc| {
-            let theme = resolve_theme(&config);
-            // The installer paints its own dark token set — following the
-            // system theme would re-apply light visuals after the
-            // set_visuals below, leaving native widgets (the path
-            // TextEdit) white with light text on the dark pane.
-            cc.egui_ctx.set_theme(egui::Theme::Dark);
-            cc.egui_ctx
-                .options_mut(|o| o.theme_preference = egui::ThemePreference::Dark);
-            let mut visuals = egui::Visuals::dark();
-            visuals.panel_fill = theme.background;
-            visuals.window_fill = theme.background;
-            visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0f32, theme.border);
-            cc.egui_ctx.set_visuals(visuals);
-            // A CJK font is the egui renderer's proxy for "the machine
-            // can render the Zh table" (the historical `zh = font_found`).
-            let _font_found = install_system_fonts(&cc.egui_ctx);
-            // Chrome copy is not content: dragging across headings and
-            // labels must not paint selection bands (the path input
-            // keeps its selection — only LABELS are gated here).
-            cc.egui_ctx
-                .style_mut(|style| style.interaction.selectable_labels = false);
-            // Uniform control height across all egui widgets (combo,
-            // buttons, text fields) — matches the web face's proportions.
-            let mut style = (*cc.egui_ctx.style()).clone();
-            style.spacing.interact_size.y = 36.0;
-            style.spacing.button_padding = egui::vec2(12.0, 8.0);
-            cc.egui_ctx.set_style(style);
-            // Language: the remembered preference wins (the same
-            // `installer-prefs.json` the web shell writes), then
-            // `shell.language`, then the system locale — every one
-            // validated against the authored locale list (now the web
-            // face's full ten: the OS font stack covers them all).
-            let strings = wizard_strings();
-            let known = |code: &str| strings.is_known(code);
-            let language = crate::load_prefs(&crate::local_appdata(), &config.product.name)
-                .language
-                .as_deref()
-                .filter(|code| known(code))
-                .or_else(|| {
-                    config
-                        .shell
-                        .as_ref()
-                        .and_then(|s| s.language.as_deref())
-                        .filter(|pin| *pin != "auto" && known(pin))
-                })
-                .map(String::from)
-                .unwrap_or_else(|| match system_locale_tag() {
-                    Some(tag) => strings.resolve_system_locale(&tag),
-                    None => strings.default.clone(),
-                });
-            let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
-            let (_sender, receiver) = channel::<WorkerMsg>();
-            let wallpaper_rx = spawn_wallpaper_fetcher(&config);
-            let caption_icons = CaptionIcons::load(&cc.egui_ctx);
-            let app = FallbackApp::new(
-                config,
+            let mut app = build_app(
+                cc,
+                &config,
                 payload,
                 reason,
                 uninstall,
-                language,
-                receiver,
-                logo,
+                logo_kind,
+                logo_bytes,
                 license_docs,
-                wallpaper_rx,
-                caption_icons,
-                SHUN_FLAVOR.trim().to_string(),
             );
             // The debug-only stage override rebinds mutably; a release
             // build never touches it (an unconditional `mut` warns there).
             #[cfg(debug_assertions)]
-            let app = {
-                let mut app = app;
-                app.debug_force_stage();
-                app
-            };
+            app.debug_force_stage();
             Ok(Box::new(app))
         }),
     );
@@ -2378,6 +2479,154 @@ pub fn run(
         // UI left to report through; the exit code says it.
         crate::diag!("shun: fallback UI failed: {err}");
         std::process::exit(1);
+    }
+}
+
+/// The GUI track's entry with the splash phase: the SAME window opens
+/// small and centered in its splash act, the init worker decodes under
+/// it, and the app phase-transitions (or hands off to `main` for the
+/// tauri loop when the face ladder upgrades mid-run). One event loop
+/// per process is the hard rule this exists to honor.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_gui(
+    config: ShunConfig,
+    init_rx: crate::splash::InitMsgReceiver,
+    handoff: std::sync::Arc<std::sync::Mutex<Option<GuiHandoff>>>,
+    go_tauri: Box<dyn FnOnce() -> bool>,
+    reason: FallbackReason,
+    uninstall: bool,
+    logo_kind: &str,
+    logo_bytes: &[u8],
+    license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
+) {
+    let box_config = config.clone();
+    let title = window_title(&config, uninstall);
+    let options = eframe::NativeOptions {
+        viewport: icon_viewport_builder(logo_kind, logo_bytes)
+            .with_decorations(false)
+            .with_inner_size([400.0, 252.0])
+            .with_min_inner_size([400.0, 252.0])
+            .with_resizable(false)
+            .with_position(crate::splash::center_on_primary(400.0, 252.0)),
+        ..Default::default()
+    };
+    let result = eframe::run_native(
+        &title,
+        options,
+        Box::new(move |cc| {
+            let mut app = build_app(
+                cc,
+                &config,
+                // The splash phase holds the empty placeholder; the
+                // worker's Done delivers the real one.
+                ArchivePayload::empty(),
+                reason,
+                uninstall,
+                logo_kind,
+                logo_bytes,
+                license_docs,
+            );
+            app.stage = Stage::Splash(SplashPhase {
+                receiver: init_rx,
+                percent: 0,
+            });
+            app.handoff = Some(handoff);
+            app.go_tauri = Some(go_tauri);
+            Ok(Box::new(app))
+        }),
+    );
+    if let Err(err) = result {
+        crate::diag!("shun: fallback UI failed: {err}");
+        crate::native_fatal_box(
+            &box_config.product.name,
+            &format!("{}\n\n{err}", fatal_init_string()),
+        );
+        std::process::exit(1);
+    }
+}
+
+/// The shared app constructor: everything both entries' windows need
+/// on day one (fonts, theme, icons, license docs, prefs).
+#[allow(clippy::too_many_arguments)]
+fn build_app(
+    cc: &eframe::CreationContext<'_>,
+    config: &ShunConfig,
+    payload: ArchivePayload,
+    reason: FallbackReason,
+    uninstall: bool,
+    logo_kind: &str,
+    logo_bytes: &[u8],
+    license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
+) -> FallbackApp {
+    let config = config.clone();
+    {
+        let theme = resolve_theme(&config);
+        // The installer paints its own dark token set — following the
+        // system theme would re-apply light visuals after the
+        // set_visuals below, leaving native widgets (the path
+        // TextEdit) white with light text on the dark pane.
+        cc.egui_ctx.set_theme(egui::Theme::Dark);
+        cc.egui_ctx
+            .options_mut(|o| o.theme_preference = egui::ThemePreference::Dark);
+        let mut visuals = egui::Visuals::dark();
+        visuals.panel_fill = theme.background;
+        visuals.window_fill = theme.background;
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0f32, theme.border);
+        cc.egui_ctx.set_visuals(visuals);
+        // A CJK font is the egui renderer's proxy for "the machine
+        // can render the Zh table" (the historical `zh = font_found`).
+        let _font_found = install_system_fonts(&cc.egui_ctx);
+        // Chrome copy is not content: dragging across headings and
+        // labels must not paint selection bands (the path input
+        // keeps its selection — only LABELS are gated here).
+        cc.egui_ctx
+            .style_mut(|style| style.interaction.selectable_labels = false);
+        // Uniform control height across all egui widgets (combo,
+        // buttons, text fields) — matches the web face's proportions.
+        let mut style = (*cc.egui_ctx.style()).clone();
+        style.spacing.interact_size.y = 36.0;
+        style.spacing.button_padding = egui::vec2(12.0, 8.0);
+        cc.egui_ctx.set_style(style);
+        // Language: the remembered preference wins (the same
+        // `installer-prefs.json` the web shell writes), then
+        // `shell.language`, then the system locale — every one
+        // validated against the authored locale list (now the web
+        // face's full ten: the OS font stack covers them all).
+        let strings = wizard_strings();
+        let known = |code: &str| strings.is_known(code);
+        let language = crate::load_prefs(&crate::local_appdata(), &config.product.name)
+            .language
+            .as_deref()
+            .filter(|code| known(code))
+            .or_else(|| {
+                config
+                    .shell
+                    .as_ref()
+                    .and_then(|s| s.language.as_deref())
+                    .filter(|pin| *pin != "auto" && known(pin))
+            })
+            .map(String::from)
+            .unwrap_or_else(|| match system_locale_tag() {
+                Some(tag) => strings.resolve_system_locale(&tag),
+                None => strings.default.clone(),
+            });
+        let logo = load_logo(&cc.egui_ctx, logo_kind, logo_bytes);
+        let (_sender, receiver) = channel::<WorkerMsg>();
+        let wallpaper_rx = spawn_wallpaper_fetcher(&config);
+        let caption_icons = CaptionIcons::load(&cc.egui_ctx);
+        FallbackApp::new(
+            config,
+            payload,
+            reason,
+            uninstall,
+            language,
+            receiver,
+            logo,
+            license_docs,
+            wallpaper_rx,
+            caption_icons,
+            SHUN_FLAVOR.trim().to_string(),
+        )
     }
 }
 
@@ -2590,9 +2839,17 @@ impl FallbackApp {
     fn timeline(&self, ui: &mut egui::Ui, vertical: bool) {
         let theme = &self.theme;
         // A failed run sends the user back to configure.
-        let current = match (&self.stage, self.outcome.as_ref()) {
-            (Stage::Finished, Some(Outcome::Failed(_))) => Stage::Configure,
-            (stage, _) => *stage,
+        let current = match &self.stage {
+            Stage::Finished if matches!(self.outcome.as_ref(), Some(Outcome::Failed(_))) => {
+                Stage::Configure
+            }
+            Stage::Splash(_) => Stage::Configure,
+            stage => match stage {
+                Stage::Configure => Stage::Configure,
+                Stage::Running => Stage::Running,
+                Stage::Finished => Stage::Finished,
+                Stage::Splash(_) => unreachable!(),
+            },
         };
         // The fixed five steps, webview-face parity: done steps carry a
         // check in a filled circle, the active step its number in a
@@ -2614,6 +2871,7 @@ impl FallbackApp {
             _ => None,
         };
         let order_current = match current {
+            Stage::Splash(_) => 0,
             Stage::Configure => self.step.min(labels.len() - 1),
             Stage::Running => labels.len() - 2,
             Stage::Finished => labels.len() - 1,
@@ -4480,6 +4738,9 @@ impl FallbackApp {
         };
 
         match self.stage {
+            // The splash phase never reaches the uninstall page (the
+            // phase returns before any wizard content renders).
+            Stage::Splash(_) => {}
             // Confirm: heading + sub, then the action row.
             Stage::Configure => {
                 ui.label(
@@ -4634,6 +4895,7 @@ impl FallbackApp {
                         .request_repaint_after(std::time::Duration::from_millis(200));
                 }
                 let (label, enabled) = match self.stage {
+                    Stage::Splash(_) => (String::new(), false),
                     Stage::Configure if !on_last_step => (self.texts.next.clone(), !step_blocked),
                     Stage::Configure => (
                         if countdown > 0 {
@@ -4657,7 +4919,8 @@ impl FallbackApp {
                         _ => (self.texts.finish.clone(), true),
                     },
                 };
-                let action = match (self.stage, self.outcome.as_ref()) {
+                let action = match (&self.stage, self.outcome.as_ref()) {
+                    (Stage::Splash(_), _) => None,
                     (Stage::Configure, _) => Some((false, false)),
                     (Stage::Running, _) => None,
                     (Stage::Finished, Some(Outcome::Failed(_))) => Some((false, true)),
@@ -4856,6 +5119,12 @@ impl eframe::App for FallbackApp {
             #[cfg(not(windows))]
             let _ = frame;
         }
+        // The splash phase: the same window's first act, before the
+        // wizard content exists (the payload is still decoding).
+        if matches!(self.stage, Stage::Splash(_)) {
+            self.splash_update(ctx);
+            return;
+        }
         let theme = self.theme;
 
         // The wallpaper backdrop (first IMAGE source): painted cover-
@@ -4984,6 +5253,7 @@ impl eframe::App for FallbackApp {
                             return;
                         }
                         match self.stage {
+                            Stage::Splash(_) => {}
                             Stage::Configure => self.configure_view(ui),
                             Stage::Running => self.running_view(ui),
                             Stage::Finished => self.finished_view(ui),

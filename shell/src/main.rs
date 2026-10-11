@@ -104,7 +104,7 @@ fn wizard_license_docs() -> BTreeMap<String, Vec<shun::wizard::LicenseDoc>> {
 /// egui GUI. Without any of these the shell prefers the tauri2 webview
 /// GUI and degrades automatically (webview2 missing → egui; no desktop
 /// at all → TUI when a TTY exists, else the help text).
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(
     name = "shun-installer",
     about = "shun delivery wizard — install, uninstall, repair",
@@ -1220,44 +1220,104 @@ fn main() {
     let face = resolve_face(&cli, &caps, &faces);
     let gui_track = matches!(face, Face::Egui | Face::Tauri);
 
-    let tauri_possible = webview_face_candidate && faces.contains(&shun::config::UiFace::Webview);
-    let init = if gui_track {
-        let debug_screenshot = cli
-            .screenshot
-            .clone()
-            .map(|path| (path, cli.screenshot_delay.unwrap_or(4000)));
-        match splash::run_splash(
-            &config,
+    if gui_track {
+        // ONE egui event loop covers the whole GUI run: the wizard's
+        // window opens in its splash phase (small, centered, the init
+        // worker decoding under it) and phase-transitions in place. A
+        // second winit loop in one process dies on the handover — the
+        // field-verified crash this shape exists to avoid. Only the
+        // WEBVIEW face's tauri loop may follow (a different loop
+        // library), and only when the ladder re-resolves after the
+        // bootstraps settle.
+        let tauri_possible =
+            webview_face_candidate && faces.contains(&shun::config::UiFace::Webview);
+        let init_rx = splash::spawn_init(
             EMBEDDED_PAYLOAD,
+            config.clone(),
             webview_face_candidate,
             tauri_possible,
             cli.uninstall,
-            debug_screenshot,
-        ) {
-            Ok(init) => init,
-            // Abort (button or window close) or a splash that could
-            // not start — nothing is installed; a silent exit honors
-            // the choice.
-            Err(()) => std::process::exit(0),
+        );
+        let reason = if cli.no_webview || cli.fallback || cli.egui {
+            fallback::FallbackReason::ManualOverride
+        } else {
+            fallback::FallbackReason::MissingWebview2
+        };
+        // The by-title capture (shared by every window this run may
+        // show) fires once, early enough for the frozen-splash debug
+        // lane too.
+        #[cfg(windows)]
+        if let Some(path) = &cli.screenshot {
+            let title = fallback::window_title(&config, cli.uninstall);
+            screenshot::schedule_by_title(
+                title,
+                path.clone(),
+                cli.screenshot_delay.unwrap_or(4000),
+            );
         }
-    } else {
-        let payload =
-            ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
-        if webview_face_candidate {
-            bootstrap_evergreen_webview2(&config, &payload);
+        #[cfg(not(windows))]
+        let _ = (&cli.screenshot, cli.screenshot_delay);
+        let handoff = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let go_tauri = {
+            let cli = cli.clone();
+            let faces = faces.clone();
+            move || {
+                let caps = refine_caps_with_loader(UiCapabilities::probe());
+                matches!(resolve_face(&cli, &caps, &faces), Face::Tauri)
+            }
+        };
+        fallback::run_gui(
+            config.clone(),
+            init_rx,
+            handoff.clone(),
+            Box::new(go_tauri),
+            reason,
+            cli.uninstall,
+            LOGO_KIND.trim(),
+            LOGO_BYTES,
+            license_docs(),
+        );
+        // Either the wizard ran to completion (no handoff) or the
+        // ladder upgraded to the webview face under the splash.
+        if let Some(h) = handoff.lock().ok().and_then(|mut slot| slot.take()) {
+            let uninstall = cli.uninstall;
+            let screenshot = cli.screenshot.clone();
+            let screenshot_delay = cli.screenshot_delay;
+            if let Err(err) = run_tauri(cli, config, h.payload, uninstall, h.fixed_runtime) {
+                // The refined probe and tauri's own gate read the same
+                // loader verdict, so a webview-runtime failure here
+                // should be unreachable — but if one still slips through
+                // (the English runtime box may already have shown),
+                // degrade to the egui face instead of dying. Any other
+                // failure is real: report and exit.
+                if !webview2_loader_ready() && faces.contains(&UiFace::Egui) {
+                    crate::diag!("shun: webview face failed ({err}); degrading to egui");
+                    let (config, payload) = embedded_pair();
+                    run_egui_face(
+                        config,
+                        payload,
+                        fallback::FallbackReason::MissingWebview2,
+                        uninstall,
+                        screenshot,
+                        screenshot_delay,
+                    );
+                } else {
+                    crate::diag!("shun: {err}");
+                    std::process::exit(1);
+                }
+            }
         }
-        // The non-GUI tracks never reach run_tauri — no fixed staging
-        // to prepare for it.
-        splash::InitOutcome {
-            payload,
-            fixed_runtime: None,
-        }
-    };
-    let payload = init.payload;
+        return;
+    }
 
-    // The worker's bootstraps may have upgraded the machine (the
-    // carried Evergreen install): re-probe and re-resolve so the
-    // webview face becomes reachable exactly when it should.
+    // Non-GUI tracks: a console is already speaking — inline decode,
+    // then the ladder (the bootstraps may have upgraded the machine;
+    // the re-probe lets the webview face win exactly when it should —
+    // moot for these tracks, kept for parity).
+    let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
+    if webview_face_candidate {
+        bootstrap_evergreen_webview2(&config, &payload);
+    }
     let caps = refine_caps_with_loader(UiCapabilities::probe());
     let face = resolve_face(&cli, &caps, &faces);
 
@@ -1280,55 +1340,7 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Face::Egui => {
-            let reason = if cli.no_webview || cli.fallback || cli.egui {
-                fallback::FallbackReason::ManualOverride
-            } else {
-                fallback::FallbackReason::MissingWebview2
-            };
-            // The uninstaller degrades too: `/uninstall` without
-            // `--silent` renders the egui uninstall page (never the
-            // install wizard) when WebView2 is missing — the same face
-            // ladder every other run takes.
-            let uninstall = cli.uninstall;
-            run_egui_face(
-                config,
-                payload,
-                reason,
-                uninstall,
-                cli.screenshot.clone(),
-                cli.screenshot_delay,
-            );
-        }
-        Face::Tauri => {
-            let uninstall = cli.uninstall;
-            let screenshot = cli.screenshot.clone();
-            let screenshot_delay = cli.screenshot_delay;
-            let fixed_runtime = init.fixed_runtime;
-            if let Err(err) = run_tauri(cli, config, payload, uninstall, fixed_runtime) {
-                // The refined probe and tauri's own gate read the same
-                // loader verdict, so a webview-runtime failure here
-                // should be unreachable — but if one still slips through
-                // (the English runtime box may already have shown),
-                // degrade to the egui face instead of dying. Any other
-                // failure is real: report and exit.
-                if !webview2_loader_ready() && faces.contains(&UiFace::Egui) {
-                    crate::diag!("shun: webview face failed ({err}); degrading to egui");
-                    let (config, payload) = embedded_pair();
-                    run_egui_face(
-                        config,
-                        payload,
-                        fallback::FallbackReason::MissingWebview2,
-                        uninstall,
-                        screenshot,
-                        screenshot_delay,
-                    );
-                } else {
-                    crate::diag!("shun: webview face failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-        }
+        _ => unreachable!("the GUI tracks returned before the ladder dispatch"),
     }
 }
 

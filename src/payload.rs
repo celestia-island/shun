@@ -193,6 +193,15 @@ impl std::io::Read for CountingReader<'_> {
 }
 
 impl ArchivePayload {
+    /// An empty archive — the placeholder a UI holds before its init
+    /// worker delivers the decoded one (the splash phase).
+    pub fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
+            files: HashMap::new(),
+        }
+    }
+
     /// Decodes archive bytes produced by [`pack_directory`].
     pub fn from_bytes(archive: &[u8]) -> Result<Self, ShunError> {
         Self::from_bytes_with_progress(archive, &mut |_| {})
