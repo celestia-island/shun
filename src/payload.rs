@@ -171,11 +171,51 @@ pub struct ArchivePayload {
     files: HashMap<PathBuf, Vec<u8>>,
 }
 
+/// A read-only cursor over the archive that reports consumption as a
+/// 0..1 fraction — the decode-progress feed of
+/// [`ArchivePayload::from_bytes_with_progress`].
+struct CountingReader<'a> {
+    buf: &'a [u8],
+    pos: u64,
+    total: u64,
+    on_progress: &'a mut dyn FnMut(f32),
+}
+
+impl std::io::Read for CountingReader<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let n = std::cmp::min(out.len(), self.buf.len());
+        out[..n].copy_from_slice(&self.buf[..n]);
+        self.buf = &self.buf[n..];
+        self.pos += n as u64;
+        (self.on_progress)((self.pos as f32 / self.total.max(1) as f32).min(1.0));
+        Ok(n)
+    }
+}
+
 impl ArchivePayload {
     /// Decodes archive bytes produced by [`pack_directory`].
     pub fn from_bytes(archive: &[u8]) -> Result<Self, ShunError> {
-        let tar_bytes = zstd::stream::decode_all(archive)?;
-        let mut archive_reader = tar::Archive::new(&tar_bytes[..]);
+        Self::from_bytes_with_progress(archive, &mut |_| {})
+    }
+
+    /// The streaming twin of [`from_bytes`]: the zstd stage runs over a
+    /// counting reader, so `on_progress` receives the 0..1 fraction of
+    /// COMPRESSED bytes consumed as the decode crawls — the feed a
+    /// startup splash renders while a multi-hundred-MB payload unfolds
+    /// (the buffered `decode_all` twin is opaque and peak-RAM twice
+    /// over). The tar pass after it is fast and unreported.
+    pub fn from_bytes_with_progress(
+        archive: &[u8],
+        on_progress: &mut dyn FnMut(f32),
+    ) -> Result<Self, ShunError> {
+        let reader = CountingReader {
+            buf: archive,
+            pos: 0,
+            total: archive.len() as u64,
+            on_progress,
+        };
+        let decoder = zstd::stream::read::Decoder::new(reader)?;
+        let mut archive_reader = tar::Archive::new(decoder);
 
         let mut manifest: Option<Vec<PayloadEntry>> = None;
         let mut files: HashMap<PathBuf, Vec<u8>> = HashMap::new();
