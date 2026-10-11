@@ -449,6 +449,34 @@ pub(crate) fn hairline_box(
     painter.rect_filled(inner, CornerRadius::same(radius.saturating_sub(1)), fill);
 }
 
+/// Draws one text run with its FIRST ROW'S BASELINE pinned to
+/// `baseline_y`, returning the consumed width — the alignment rule
+/// for rows that mix font FAMILIES (a proportional label beside a
+/// monospace value): egui's Align2 centering aligns font BOXES, and
+/// different families seat their glyphs at different heights inside
+/// those boxes, so any mixed pair skews (the log strip's title vs
+/// preview, the speed chip's label vs value). Returns the width so
+/// callers can chain runs on the same line.
+pub(crate) fn paint_on_baseline(
+    painter: &egui::Painter,
+    left: f32,
+    baseline_y: f32,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+) -> f32 {
+    let galley = painter.layout_no_wrap(text.to_owned(), font, color);
+    let row_baseline = galley
+        .rows
+        .first()
+        .and_then(|row| row.glyphs.first())
+        .map(|g| g.pos.y)
+        .unwrap_or(galley.size().y * 0.8);
+    let width = galley.size().x;
+    painter.galley(egui::pos2(left, baseline_y - row_baseline), galley, color);
+    width
+}
+
 /// Alpha-blends `over` onto `base`.
 pub(crate) fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
     let channel = |b: u8, o: u8| {
@@ -2532,6 +2560,24 @@ pub(crate) fn run_gui(
             });
             app.handoff = Some(handoff);
             app.go_tauri = Some(go_tauri);
+            // The visual-debug hooks (stage/step/log fill) outrank the
+            // splash phase — they force states this run may never reach
+            // on their own; a forced stage also needs the wizard-sized
+            // window the real transition would have requested.
+            #[cfg(debug_assertions)]
+            {
+                app.debug_force_stage();
+                if !matches!(app.stage, Stage::Splash(_)) {
+                    let ctx = cc.egui_ctx.clone();
+                    for command in [
+                        egui::ViewportCommand::InnerSize(Vec2::new(800.0, 600.0)),
+                        egui::ViewportCommand::MinInnerSize(Vec2::new(640.0, 560.0)),
+                        egui::ViewportCommand::Resizable(true),
+                    ] {
+                        ctx.send_viewport_cmd(command);
+                    }
+                }
+            }
             Ok(Box::new(app))
         }),
     );
@@ -4370,17 +4416,49 @@ impl FallbackApp {
                         } else {
                             format!("{:.0} KB/s", mibs * 1024.0)
                         };
+                        // Baseline-true pair: the proportional label
+                        // defines the line, the monospace value pins to
+                        // its baseline (box-centering the two families
+                        // skews — Segoe and Consolas seat glyphs
+                        // differently).
+                        let label = self.texts.download_speed.clone();
+                        let label_font = egui::FontId::proportional(12.0);
+                        let value_font = egui::FontId::monospace(11.0);
+                        let pair_painter = ui.painter();
+                        let label_w = pair_painter
+                            .layout_no_wrap(label.clone(), label_font.clone(), Color32::WHITE)
+                            .size()
+                            .x;
+                        let value_w = pair_painter
+                            .layout_no_wrap(speed_text.clone(), value_font.clone(), Color32::WHITE)
+                            .size()
+                            .x;
+                        let pair_w = label_w + 6.0 + value_w;
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(speed_text)
-                                    .font(egui::FontId::monospace(11.0))
-                                    .color(theme.text_secondary),
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::new(pair_w, 24.0), Sense::hover());
+                            let painter = ui.painter_at(rect);
+                            let galley =
+                                painter.layout_no_wrap(label, label_font, theme.text_tertiary);
+                            let row_baseline = galley
+                                .rows
+                                .first()
+                                .and_then(|row| row.glyphs.first())
+                                .map(|g| g.pos.y)
+                                .unwrap_or(galley.size().y * 0.8);
+                            let top = rect.center().y - galley.size().y / 2.0;
+                            painter.galley(
+                                egui::pos2(rect.left(), top),
+                                galley,
+                                theme.text_tertiary,
                             );
-                            ui.add_space(6.0);
-                            ui.label(
-                                RichText::new(self.texts.download_speed.as_str())
-                                    .size(12.0)
-                                    .color(theme.text_tertiary),
+                            paint_on_baseline(
+                                &painter,
+                                rect.left() + label_w + 6.0,
+                                top + row_baseline,
+                                &speed_text,
+                                value_font,
+                                theme.text_secondary,
                             );
                         });
                     }

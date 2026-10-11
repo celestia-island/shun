@@ -1449,6 +1449,12 @@ pub(crate) fn bootstrap_evergreen_webview2_with_progress(
     payload: &ArchivePayload,
     on_percent: &mut dyn FnMut(u8),
 ) {
+    crate::diag!(
+        "shun: evergreen bootstrap: silent_install={} loader_ready={} carried={}",
+        config.webview2_silent_install(),
+        webview2_loader_ready(),
+        shun::webview2::evergreen_carried(payload)
+    );
     if !config.webview2_silent_install() || webview2_loader_ready() {
         return;
     }
@@ -1456,16 +1462,18 @@ pub(crate) fn bootstrap_evergreen_webview2_with_progress(
         return;
     }
     let Some(cache) = shun::webview2::evergreen_cache(&config.product.name) else {
-        eprintln!("shun: no LOCALAPPDATA to stage the Evergreen installer in");
+        crate::diag!("shun: evergreen bootstrap: no LOCALAPPDATA to stage the installer in");
         return;
     };
     let Some(installer) =
         shun::webview2::stage_evergreen_with_progress(payload, &cache, on_percent)
     else {
-        eprintln!("shun: staging the Evergreen installer failed; degrading");
+        crate::diag!("shun: evergreen bootstrap: staging the installer failed; degrading");
         return;
     };
-    println!("shun: no WebView2 runtime — running the carried Evergreen installer silently");
+    crate::diag!(
+        "shun: evergreen bootstrap: no WebView2 runtime — running the carried installer (/silent /install)"
+    );
     // The offline installer's manifest requires elevation: an
     // unelevated spawn dies on os error 740 (or a non-zero exit) —
     // retry through the UAC consent exactly like the install-step
@@ -1485,11 +1493,13 @@ pub(crate) fn bootstrap_evergreen_webview2_with_progress(
         || matches!(&status, Ok(status) if !status.success()))
         && !shun::targets::elevate::is_elevated()
     {
-        eprintln!("shun: the Evergreen installer failed unelevated; retrying through UAC");
+        crate::diag!(
+            "shun: evergreen bootstrap: installer failed unelevated — retrying through UAC (consent may be pending)"
+        );
         status = shun::webview2::run_evergreen_elevated(&installer);
     }
     if let Err(err) = &status {
-        eprintln!("shun: running the Evergreen installer failed ({err}); degrading");
+        crate::diag!("shun: evergreen bootstrap: running the installer failed ({err}); degrading");
     }
     // Success or not, the refined probe that called us re-reads the
     // loader and decides the face.
@@ -1544,12 +1554,17 @@ pub(crate) fn acquire_webview2_at_install(
     if webview2_loader_ready() {
         return;
     }
-    let url = match shun::webview2::evergreen_source(config, payload) {
+    let source = shun::webview2::evergreen_source(config, payload);
+    crate::diag!(
+        "shun: runtime acquire: source={source:?} loader_ready={}",
+        webview2_loader_ready()
+    );
+    let url = match source {
         shun::webview2::EvergreenSource::Download(url) => url,
         _ => return,
     };
     let Some(cache) = shun::webview2::evergreen_cache(&config.product.name) else {
-        eprintln!("shun: no LOCALAPPDATA to download the Evergreen installer into");
+        crate::diag!("shun: runtime acquire: no LOCALAPPDATA to download the installer into");
         return;
     };
     on_event(RuntimeEvent::DownloadStart);
@@ -1559,26 +1574,32 @@ pub(crate) fn acquire_webview2_at_install(
     let installer = match downloaded {
         Ok(path) => path,
         Err(err) => {
-            eprintln!("shun: fetching the Evergreen installer failed ({err}); skipping");
+            crate::diag!("shun: runtime acquire: download failed ({err}); skipping");
             on_event(RuntimeEvent::Done(false, None));
             return;
         }
     };
     on_event(RuntimeEvent::InstallStart);
+    crate::diag!(
+        "shun: runtime acquire: running the downloaded installer ({}) /silent /install",
+        installer.display()
+    );
     let mut status = shun::webview2::run_evergreen_silent(&installer);
     // The downloaded BOOTSTRAPPER runs asInvoker: unelevated it exits
     // non-zero on access denied without ever tripping the 740 spawn
     // gate that the carried installer's path handles — a failed status
     // from an unelevated shell retries through the UAC consent once.
     if matches!(&status, Ok(s) if !s.success()) && !shun::targets::elevate::is_elevated() {
-        eprintln!("shun: the Evergreen installer failed unelevated; retrying through UAC");
+        crate::diag!(
+            "shun: runtime acquire: installer failed unelevated — retrying through UAC (consent may be pending)"
+        );
         on_event(RuntimeEvent::InstallRetryElevated);
         status = shun::webview2::run_evergreen_elevated(&installer);
     }
     let mut exit_code = match &status {
         Ok(status) => status.code(),
         Err(err) => {
-            eprintln!("shun: running the Evergreen installer failed ({err}); skipping");
+            crate::diag!("shun: runtime acquire: running the installer failed ({err}); skipping");
             None
         }
     };
@@ -1587,10 +1608,12 @@ pub(crate) fn acquire_webview2_at_install(
             exit_code = Some(i32::from(!status.success()));
         }
     }
+    crate::diag!("shun: runtime acquire: installer exit_code={exit_code:?}");
     // The loader's verdict, not the exit code: it re-reads the machine
     // after the silent run and is the same probe the face ladder and
     // the done page's warning ride.
     let ready = webview2_loader_ready();
+    crate::diag!("shun: runtime acquire: loader re-probe ready={ready}");
     on_event(RuntimeEvent::Done(ready, exit_code.filter(|_| !ready)));
 }
 
