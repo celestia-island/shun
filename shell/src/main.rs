@@ -875,7 +875,7 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     // usual "install complete", the runtime stays missing.
     let mut last_tenth = 0u64;
     let mut last_mark = 0u64;
-    acquire_webview2_at_install(config, payload, &mut |event| {
+    acquire_webview2_at_install(config, payload, true, &mut |event| {
         // A silent install must stay chatty enough for CI logs without
         // flooding them: one line per decile when the size is known,
         // one per 4 MiB otherwise.
@@ -1472,7 +1472,7 @@ pub(crate) fn bootstrap_evergreen_webview2_with_progress(
         return;
     };
     crate::diag!(
-        "shun: evergreen bootstrap: no WebView2 runtime — running the carried installer (/silent /install)"
+        "shun: evergreen bootstrap: no WebView2 runtime — running the carried installer /install (visible)"
     );
     // The offline installer's manifest requires elevation: an
     // unelevated spawn dies on os error 740 (or a non-zero exit) —
@@ -1480,9 +1480,9 @@ pub(crate) fn bootstrap_evergreen_webview2_with_progress(
     // acquire, or the machine silently stays runtime-less.
     // The mutable binding exists only where the Windows retry rebinds.
     #[cfg(windows)]
-    let mut status = shun::webview2::run_evergreen_silent(&installer);
+    let mut status = shun::webview2::run_evergreen(&installer, false);
     #[cfg(not(windows))]
-    let status = shun::webview2::run_evergreen_silent(&installer);
+    let status = shun::webview2::run_evergreen(&installer, false);
     // The elevation retry is a Windows affordance (the elevated
     // runner exists only there).
     #[cfg(windows)]
@@ -1496,7 +1496,7 @@ pub(crate) fn bootstrap_evergreen_webview2_with_progress(
         crate::diag!(
             "shun: evergreen bootstrap: installer failed unelevated — retrying through UAC (consent may be pending)"
         );
-        status = shun::webview2::run_evergreen_elevated(&installer);
+        status = shun::webview2::run_evergreen_elevated(&installer, false);
     }
     if let Err(err) = &status {
         crate::diag!("shun: evergreen bootstrap: running the installer failed ({err}); degrading");
@@ -1549,6 +1549,7 @@ pub(crate) enum RuntimeEvent {
 pub(crate) fn acquire_webview2_at_install(
     config: &ShunConfig,
     payload: &ArchivePayload,
+    silent: bool,
     on_event: &mut dyn FnMut(RuntimeEvent),
 ) {
     if webview2_loader_ready() {
@@ -1581,10 +1582,15 @@ pub(crate) fn acquire_webview2_at_install(
     };
     on_event(RuntimeEvent::InstallStart);
     crate::diag!(
-        "shun: runtime acquire: running the downloaded installer ({}) /silent /install",
-        installer.display()
+        "shun: runtime acquire: running the downloaded installer ({}){}",
+        installer.display(),
+        if silent {
+            " /silent /install"
+        } else {
+            " /install (visible)"
+        }
     );
-    let mut status = shun::webview2::run_evergreen_silent(&installer);
+    let mut status = shun::webview2::run_evergreen(&installer, silent);
     // The downloaded BOOTSTRAPPER runs asInvoker: unelevated it exits
     // non-zero on access denied without ever tripping the 740 spawn
     // gate that the carried installer's path handles — a failed status
@@ -1594,7 +1600,7 @@ pub(crate) fn acquire_webview2_at_install(
             "shun: runtime acquire: installer failed unelevated — retrying through UAC (consent may be pending)"
         );
         on_event(RuntimeEvent::InstallRetryElevated);
-        status = shun::webview2::run_evergreen_elevated(&installer);
+        status = shun::webview2::run_evergreen_elevated(&installer, silent);
     }
     let mut exit_code = match &status {
         Ok(status) => status.code(),
@@ -1693,6 +1699,7 @@ fn format_bytes(bytes: u64) -> String {
 pub(crate) fn acquire_webview2_at_install(
     _config: &ShunConfig,
     _payload: &ArchivePayload,
+    _silent: bool,
     _on_event: &mut dyn FnMut(RuntimeEvent),
 ) {
 }

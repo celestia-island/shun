@@ -2095,83 +2095,94 @@ impl FallbackApp {
                     let mut last_bytes = 0u64;
                     let mut last_tick = std::time::Instant::now();
                     let mut ema: Option<f32> = None;
-                    crate::acquire_webview2_at_install(&core.config, &payload, &mut |event| {
-                        match event {
-                            crate::RuntimeEvent::DownloadStart => {}
-                            crate::RuntimeEvent::Download(so_far, total) => {
-                                let percent =
-                                    total.map(|total| (so_far * 100 / total.max(1)).min(100) as u8);
-                                let now = std::time::Instant::now();
-                                let dt = last_tick.elapsed().as_secs_f32();
-                                if dt >= 0.25 {
-                                    let instant = (so_far.saturating_sub(last_bytes)) as f32 / dt;
-                                    ema = Some(match ema {
-                                        Some(ema) => ema * 0.6 + instant * 0.4,
-                                        None => instant,
-                                    });
-                                    last_bytes = so_far;
-                                    last_tick = now;
-                                    if let Some(mibs) = ema {
-                                        send(WorkerMsg::RuntimeSpeed(mibs / (1024.0 * 1024.0)));
+                    // The wizard's install step runs the installer
+                    // VISIBLY: its own window shows the real progress
+                    // and the elevation consent (no silent installs on
+                    // interactive runs).
+                    crate::acquire_webview2_at_install(
+                        &core.config,
+                        &payload,
+                        false,
+                        &mut |event| {
+                            match event {
+                                crate::RuntimeEvent::DownloadStart => {}
+                                crate::RuntimeEvent::Download(so_far, total) => {
+                                    let percent = total
+                                        .map(|total| (so_far * 100 / total.max(1)).min(100) as u8);
+                                    let now = std::time::Instant::now();
+                                    let dt = last_tick.elapsed().as_secs_f32();
+                                    if dt >= 0.25 {
+                                        let instant =
+                                            (so_far.saturating_sub(last_bytes)) as f32 / dt;
+                                        ema = Some(match ema {
+                                            Some(ema) => ema * 0.6 + instant * 0.4,
+                                            None => instant,
+                                        });
+                                        last_bytes = so_far;
+                                        last_tick = now;
+                                        if let Some(mibs) = ema {
+                                            send(WorkerMsg::RuntimeSpeed(mibs / (1024.0 * 1024.0)));
+                                        }
+                                    }
+                                    if let Some(percent) = percent {
+                                        let decile = (percent / 10) as i32;
+                                        if decile > last_decile {
+                                            last_decile = decile;
+                                            send(WorkerMsg::LogLine(
+                                                crate::terminal::LineKind::Step,
+                                                format!("{}… {}%", download_label, decile * 10),
+                                            ));
+                                            send(WorkerMsg::Event(FlowEvent::Progress {
+                                                phase: shun::flow::FlowPhase::Register,
+                                                step: download_label.clone(),
+                                                percent: Some(percent),
+                                            }));
+                                        }
                                     }
                                 }
-                                if let Some(percent) = percent {
-                                    let decile = (percent / 10) as i32;
-                                    if decile > last_decile {
-                                        last_decile = decile;
-                                        send(WorkerMsg::LogLine(
-                                            crate::terminal::LineKind::Step,
-                                            format!("{}… {}%", download_label, decile * 10),
-                                        ));
-                                        send(WorkerMsg::Event(FlowEvent::Progress {
-                                            phase: shun::flow::FlowPhase::Register,
-                                            step: download_label.clone(),
-                                            percent: Some(percent),
-                                        }));
-                                    }
+                                crate::RuntimeEvent::InstallStart => {
+                                    send(WorkerMsg::Event(FlowEvent::Progress {
+                                        phase: shun::flow::FlowPhase::Register,
+                                        step: install_label.clone(),
+                                        percent: None,
+                                    }));
+                                    send(WorkerMsg::LogLine(
+                                        crate::terminal::LineKind::Step,
+                                        install_label.clone(),
+                                    ));
                                 }
-                            }
-                            crate::RuntimeEvent::InstallStart => {
-                                send(WorkerMsg::Event(FlowEvent::Progress {
-                                    phase: shun::flow::FlowPhase::Register,
-                                    step: install_label.clone(),
-                                    percent: None,
-                                }));
-                                send(WorkerMsg::LogLine(
-                                    crate::terminal::LineKind::Step,
-                                    install_label.clone(),
-                                ));
-                            }
-                            crate::RuntimeEvent::InstallRetryElevated => {
-                                send(WorkerMsg::LogLine(
-                                    crate::terminal::LineKind::Step,
-                                    texts.runtime_elevate.clone(),
-                                ));
-                            }
-                            crate::RuntimeEvent::Done(ready, code) => {
-                                // The loader's verdict, straight into the
-                                // pane: an error row force-opens the
-                                // drawer, so a failed install can't hide,
-                                // and the installer's exit code rides
-                                // along for the diagnosis.
-                                let text = if ready {
-                                    texts.runtime_ready.clone()
-                                } else {
-                                    let code =
-                                        code.map(|c| format!(" (exit {c})")).unwrap_or_default();
-                                    format!("{}{code}", texts.runtime_failed)
-                                };
-                                send(WorkerMsg::LogLine(
-                                    if ready {
-                                        crate::terminal::LineKind::Ok
+                                crate::RuntimeEvent::InstallRetryElevated => {
+                                    send(WorkerMsg::LogLine(
+                                        crate::terminal::LineKind::Step,
+                                        texts.runtime_elevate.clone(),
+                                    ));
+                                }
+                                crate::RuntimeEvent::Done(ready, code) => {
+                                    // The loader's verdict, straight into the
+                                    // pane: an error row force-opens the
+                                    // drawer, so a failed install can't hide,
+                                    // and the installer's exit code rides
+                                    // along for the diagnosis.
+                                    let text = if ready {
+                                        texts.runtime_ready.clone()
                                     } else {
-                                        crate::terminal::LineKind::Error
-                                    },
-                                    text,
-                                ));
+                                        let code = code
+                                            .map(|c| format!(" (exit {c})"))
+                                            .unwrap_or_default();
+                                        format!("{}{code}", texts.runtime_failed)
+                                    };
+                                    send(WorkerMsg::LogLine(
+                                        if ready {
+                                            crate::terminal::LineKind::Ok
+                                        } else {
+                                            crate::terminal::LineKind::Error
+                                        },
+                                        text,
+                                    ));
+                                }
                             }
-                        }
-                    });
+                        },
+                    );
                 });
                 // Picked non-bundled attachments stream in right after
                 // the payload (the web face's download pass, same
