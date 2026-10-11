@@ -59,8 +59,8 @@ const SHUN_LICENSE_DOCS_JSON: &str =
     include_str!(concat!(env!("OUT_DIR"), "/shun-license-docs.json"));
 /// The product logo embedded by build.rs (kind file + bytes) — both GUIs
 /// render it in their caption bars.
-const LOGO_KIND: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-logo-kind.txt"));
-const LOGO_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shun-logo.bin"));
+pub(crate) const LOGO_KIND: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-logo-kind.txt"));
+pub(crate) const LOGO_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shun-logo.bin"));
 /// Build flavor marker (the `shun build --variant` env channel), embedded
 /// at compile time; "full" when unset.
 const SHUN_FLAVOR: &str = match option_env!("SHUN_FLAVOR") {
