@@ -759,6 +759,11 @@ struct Texts {
     splash_abort: String,
     /// The fatal-init box's body (system-locale).
     fatal_init: String,
+    /// The install-step runtime consent ask (title/body/yes/skip).
+    runtime_ask_title: String,
+    runtime_ask_body: String,
+    runtime_ask_yes: String,
+    runtime_ask_skip: String,
     /// The banner variant for builds whose manifest declares
     /// `download-url` (nothing carried, runtime fetched at install
     /// time): says the runtime is coming, instead of only warning.
@@ -1618,6 +1623,15 @@ struct FallbackApp {
     /// webview face became reachable and `main` should run the tauri
     /// loop with the handoff.
     go_tauri: Option<Box<dyn FnOnce() -> bool>>,
+    /// The runtime consent ask: `Some(true)` = asked and granted,
+    /// `Some(false)` = asked and declined, `None` = not yet asked (or
+    /// no ask was needed). The install worker reads it as the acquire
+    /// gate.
+    runtime_consent: Option<bool>,
+    /// The pending ask itself — set when the install click finds a
+    /// runtime-less machine whose manifest would install one; the
+    /// wizard content area renders the ask until answered.
+    runtime_ask_pending: bool,
     /// The WebView2 runtime download's smoothed speed (MiB/s) and the
     /// moment it last moved — the step-text row renders a labeled chip
     /// beside the percent while the value is fresh, and drops it once
@@ -1849,6 +1863,8 @@ impl FallbackApp {
             splash_copy: splash_strings(),
             handoff: None,
             go_tauri: None,
+            runtime_consent: None,
+            runtime_ask_pending: false,
             candidates: probed
                 .into_iter()
                 .map(|c| (c.kind.to_string(), c.writable, c.path))
@@ -2059,6 +2075,90 @@ impl FallbackApp {
 
     /// Spawns the worker thread driving the flow. The egui context is
     /// cloned in so the worker can request repaints as events arrive.
+    /// Whether the install click must ask about the WebView2 runtime
+    /// first: the machine has none, the manifest would install one
+    /// (carried installer or download-url), and the ask has not been
+    /// answered yet.
+    fn needs_runtime_ask(&self) -> bool {
+        if self.runtime_consent.is_some() || self.runtime_ask_pending {
+            return false;
+        }
+        if crate::webview2_loader_ready() {
+            return false;
+        }
+        matches!(
+            shun::webview2::evergreen_source(&self.config, &self.payload),
+            shun::webview2::EvergreenSource::Carried(_)
+                | shun::webview2::EvergreenSource::Download(_)
+        )
+    }
+
+    /// The consent ask: a warning callout with the two answers. The
+    /// wizard's flow pauses here — nothing installs before the user
+    /// picks.
+    fn runtime_ask_view(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme;
+        let texts = self.texts.clone();
+        let icons = self.caption_icons.clone();
+        ui.add_space(40.0);
+        crate::callout::callout(
+            ui,
+            &theme,
+            &crate::callout::CalloutIcons {
+                alert: &icons.alert,
+                info: &icons.info,
+                check: &icons.check,
+            },
+            crate::callout::CalloutLevel::Warning,
+            Some(texts.runtime_ask_title.as_str()),
+            texts.runtime_ask_body.as_str(),
+            &mut |ui| {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(texts.runtime_ask_yes.as_str())
+                                    .strong()
+                                    .size(13.0)
+                                    .color(theme.on_primary),
+                            )
+                            .fill(theme.primary)
+                            .corner_radius(CornerRadius::same(6))
+                            .min_size(Vec2::new(0.0, 30.0)),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        self.runtime_consent = Some(true);
+                        self.runtime_ask_pending = false;
+                        self.spawn_worker(ui.ctx(), false);
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(texts.runtime_ask_skip.as_str())
+                                    .size(13.0)
+                                    .color(theme.text_secondary),
+                            )
+                            .fill(theme.surface)
+                            .stroke(Stroke::new(1.0f32, theme.border))
+                            .corner_radius(CornerRadius::same(6))
+                            .min_size(Vec2::new(0.0, 30.0)),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        self.runtime_consent = Some(false);
+                        self.runtime_ask_pending = false;
+                        self.spawn_worker(ui.ctx(), false);
+                    }
+                });
+            },
+        );
+    }
+
     fn spawn_worker(&mut self, ctx: &Context, uninstalling: bool) {
         let raw = self.dir.clone();
         self.dir = nested_dir(&self.config, &raw);
@@ -2113,6 +2213,12 @@ impl FallbackApp {
         let config = self.config.clone();
         let attachments = self.attachments.clone();
         let texts = self.texts.clone();
+        // The consent answer crosses into the worker as a plain bool
+        // (self is !Send — it owns egui textures); None means no ask
+        // was needed, and the manifest's own knob decides.
+        let runtime_allowed = self
+            .runtime_consent
+            .unwrap_or_else(|| self.config.webview2_silent_install());
         std::thread::spawn(move || {
             // The shared driver, exactly what the webview and TUI faces
             // ride: writability gate, overwrite hygiene, the flow, the
@@ -2171,13 +2277,15 @@ impl FallbackApp {
                     let mut last_tick = std::time::Instant::now();
                     let mut ema: Option<f32> = None;
                     // The wizard's install step runs the installer
-                    // VISIBLY: its own window shows the real progress
-                    // and the elevation consent (no silent installs on
-                    // interactive runs).
+                    // VISIBLY behind the user's consent answer (the
+                    // ask gated this worker's spawn; the default keeps
+                    // the manifest knob for askless machines, where the
+                    // acquire no-ops on a working runtime anyway).
                     crate::acquire_webview2_at_install(
                         &core.config,
                         &payload,
                         false,
+                        runtime_allowed,
                         &mut |event| {
                             match event {
                                 crate::RuntimeEvent::DownloadStart => {}
@@ -5175,6 +5283,9 @@ impl FallbackApp {
                                     self.license_entered = Some(std::time::Instant::now());
                                 }
                             }
+                            _ if !uninstalling && self.needs_runtime_ask() => {
+                                self.runtime_ask_pending = true;
+                            }
                             _ => self.spawn_worker(ctx, uninstalling),
                         }
                     }
@@ -5416,11 +5527,15 @@ impl eframe::App for FallbackApp {
                             self.uninstall_view(ui);
                             return;
                         }
-                        match self.stage {
-                            Stage::Splash(_) => {}
-                            Stage::Configure => self.configure_view(ui),
-                            Stage::Running => self.running_view(ui),
-                            Stage::Finished => self.finished_view(ui),
+                        if self.runtime_ask_pending {
+                            self.runtime_ask_view(ui);
+                        } else {
+                            match self.stage {
+                                Stage::Splash(_) => {}
+                                Stage::Configure => self.configure_view(ui),
+                                Stage::Running => self.running_view(ui),
+                                Stage::Finished => self.finished_view(ui),
+                            }
                         }
                         // The degradation notice is information, not
                         // decoration: it rides the page's document flow as

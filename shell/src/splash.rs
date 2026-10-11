@@ -47,7 +47,6 @@ pub(crate) enum InitMsg {
 pub(crate) fn spawn_init(
     archive: &'static [u8],
     config: ShunConfig,
-    webview_candidate: bool,
     tauri_possible: bool,
     uninstall: bool,
 ) -> Receiver<InitMsg> {
@@ -56,7 +55,6 @@ pub(crate) fn spawn_init(
         sender,
         archive,
         config,
-        webview_candidate,
         tauri_possible,
         uninstall,
     ));
@@ -70,7 +68,6 @@ fn init_worker(
     sender: Sender<InitMsg>,
     archive: &'static [u8],
     config: ShunConfig,
-    webview_candidate: bool,
     tauri_possible: bool,
     uninstall: bool,
 ) -> impl FnOnce() {
@@ -93,22 +90,18 @@ fn init_worker(
             }
         };
         percent(76);
-        // The Evergreen carried-install bootstrap (same gates as the
-        // old pre-ladder call): on a runtime-less machine carrying the
-        // offline installer this silently upgrades the machine —
-        // minutes under the splash, exactly the wait that needs one.
-        if webview_candidate {
-            crate::bootstrap_evergreen_webview2_with_progress(&config, &payload, &mut |p| {
-                percent(76 + p / 8);
-            });
-        }
-        // The fixed-version staging runs only when the webview face is
-        // actually reachable — the manifest offers it AND a runtime is
-        // usable now (the Evergreen attempt above may have just fixed
-        // the machine). A runtime-less machine takes the egui face
-        // regardless; staging hundreds of MB for it would be waste.
+        // NOTE: nothing INSTALLS here anymore. The pre-ladder carried
+        // runtime install moved to the install step behind an explicit
+        // consent ask (user direction): initialization only decodes and
+        // stages. The fixed-version staging below is copy-only (no
+        // system mutation) and runs just when the webview face is
+        // actually reachable.
         let fixed_runtime = if tauri_possible && !uninstall && crate::webview2_loader_ready() {
-            crate::stage_fixed_runtime(&config, &payload, &mut |p| percent(76 + p / 8))
+            percent(80);
+            let staged =
+                crate::stage_fixed_runtime(&config, &payload, &mut |p| percent(80 + p / 5));
+            percent(95);
+            staged
         } else {
             None
         };
