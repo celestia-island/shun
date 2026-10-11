@@ -61,6 +61,21 @@ fn main() {
     let config_json = serde_json::to_vec_pretty(&config).expect("config serializes");
     std::fs::write(out_dir.join("shun-config.json"), config_json).expect("write embedded config");
     println!("cargo:rerun-if-changed={}", manifest_path.display());
+    // The per-run setup log's directory name (diag.rs sinks there): the
+    // product identity, sanitized for a path segment.
+    let log_name: String = config
+        .product
+        .name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    println!("cargo:rustc-env=SHUN_PRODUCT_LOG_NAME={log_name}");
 
     // 1b. Resolve the wizard pipeline with markdown bodies inlined —
     // runtime shells carry no file dependencies, so license/content

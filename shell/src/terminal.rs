@@ -178,33 +178,40 @@ impl Terminal {
         // chevron right — the web bar's three spans.
         let count = self.lines.len();
         let head = format!("{title} · {count}");
-        // Title and preview share ONE vertical center: the two fonts'
-        // metrics differ, so top-anchored draws sat on mismatched
-        // baselines (the sandbox report's 安装日志 vs preview skew).
+        // Baseline-true pair: the proportional title defines the line
+        // (box-centered), and the monospace preview PINS to the title's
+        // measured baseline. Box-centering both still skews — Segoe and
+        // Consolas seat their glyphs at different heights inside their
+        // boxes, so same-center ≠ same-line across families.
         let head_font = egui::FontId::proportional(12.0);
         let preview_font = egui::FontId::monospace(11.0);
-        painter.text(
-            egui::pos2(bar_rect.left(), bar_rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            &head,
-            head_font.clone(),
+        let title_galley = painter.layout_no_wrap(head, head_font, theme.text_tertiary);
+        let title_baseline = title_galley
+            .rows
+            .first()
+            .and_then(|row| row.glyphs.first())
+            .map(|g| g.pos.y)
+            .unwrap_or(title_galley.size().y * 0.8);
+        let title_top = bar_rect.center().y - title_galley.size().y / 2.0;
+        let head_w = title_galley.size().x;
+        painter.galley(
+            egui::pos2(bar_rect.left(), title_top),
+            title_galley,
             theme.text_tertiary,
         );
         let chev_w = 26.0;
-        let head_w = painter
-            .layout_no_wrap(head, head_font.clone(), Color32::WHITE)
-            .size()
-            .x;
         let preview_rect = egui::Rect::from_min_max(
             egui::pos2(bar_rect.left() + head_w + 14.0, bar_rect.top()),
             egui::pos2(bar_rect.right() - chev_w - 6.0, bar_rect.bottom()),
         );
         if preview_rect.width() > 20.0 {
             // Clip the preview to its span (the web span's
-            // text-overflow ellipsis analog).
-            painter.text(
-                egui::pos2(preview_rect.left(), preview_rect.center().y),
-                egui::Align2::LEFT_CENTER,
+            // text-overflow ellipsis analog) while pinning its baseline
+            // to the title's.
+            crate::fallback::paint_on_baseline(
+                &painter.with_clip_rect(preview_rect),
+                preview_rect.left(),
+                title_top + title_baseline,
                 self.preview(),
                 preview_font,
                 theme.text_tertiary,
