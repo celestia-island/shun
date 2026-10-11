@@ -477,6 +477,61 @@ pub(crate) fn paint_on_baseline(
     width
 }
 
+/// The VISUAL BASELINE of one laid-out run: the y its chain's LATIN
+/// face sits on. egui computes every glyph's pen independently from
+/// ITS OWN font's metrics (there is no shared baseline in a row), so
+/// equating pens ACROSS font families aligns nothing — the pen of a
+/// YaHei glyph means something different than the pen of a Segoe
+/// glyph. The Latin face of a chain is the one seat that is both
+/// untweaked (calibration never touches the primary) and the anchor
+/// every fallback's calibration was measured against, so: prefer an
+/// ASCII glyph's pen (the primary face); for pure-CJK runs fold the
+/// chain's measured factor back in (`pen − factor × size`).
+pub(crate) fn chain_visual_baseline(galley: &egui::Galley, size: f32, mono: bool) -> f32 {
+    let row = galley.rows.first().expect("single-line run");
+    if let Some(latin) = row.glyphs.iter().find(|g| g.chr.is_ascii() && g.chr != ' ') {
+        return latin.pos.y;
+    }
+    // Pure-CJK (or pure-Hangul) run: no Latin pen to read. The
+    // calibration lifted this run's rasters by factor × size onto the
+    // chain's Latin baseline, so the visual baseline sits that much
+    // above the glyph pen.
+    let scoped = if mono {
+        "ms-yahei/mono"
+    } else {
+        "ms-yahei/prop"
+    };
+    let factor = CALIBRATED_FACTORS
+        .get()
+        .and_then(|map| map.lock().expect("short-lived read").get(scoped).copied())
+        .unwrap_or(0.0);
+    row.glyphs
+        .first()
+        .map(|g| g.pos.y + factor * size)
+        .unwrap_or(0.0)
+}
+
+/// Draws one run with its CHAIN VISUAL BASELINE pinned to
+/// `baseline_y` — the alignment rule for rows mixing font FAMILIES
+/// (a proportional label beside a monospace value): egui has no
+/// shared baseline across families, so the runs anchor on their
+/// Latin seats instead of their pens. Returns the consumed width.
+pub(crate) fn paint_on_chain_baseline(
+    painter: &egui::Painter,
+    left: f32,
+    baseline_y: f32,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+) -> f32 {
+    let galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
+    let mono = font.family == egui::FontFamily::Monospace;
+    let visual = chain_visual_baseline(&galley, font.size, mono);
+    let width = galley.size().x;
+    painter.galley(egui::pos2(left, baseline_y - visual), galley, color);
+    width
+}
+
 /// Alpha-blends `over` onto `base`.
 pub(crate) fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
     let channel = |b: u8, o: u8| {
@@ -1035,6 +1090,14 @@ pub(crate) fn install_system_fonts(ctx: &Context) -> bool {
     false
 }
 
+/// The calibration factors `calibrate_fallback_baselines` applied,
+/// keyed by the family-scoped font name ("ms-yahei/mono", ...). The
+/// pair-alignment helpers fold the same factors back in when they
+/// anchor a pure-CJK run (whose glyphs carry no Latin pen to read).
+pub(crate) static CALIBRATED_FACTORS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<String, f32>>,
+> = std::sync::OnceLock::new();
+
 /// Measures and cancels every fallback font's baseline drift against
 /// its family's primary — the SYSTEMATIC fix for mixed-script rows.
 ///
@@ -1130,6 +1193,18 @@ fn calibrate_fallback_baselines(
         }
         if let (Some(latin), Some(fallback)) = (latin_y, fallback_y) {
             let drift = fallback - latin;
+            let mut factors = CALIBRATED_FACTORS
+                .get_or_init(|| std::sync::Mutex::new(Default::default()))
+                .lock()
+                .expect("the calibration owns the map during startup");
+            factors.insert(
+                scoped.clone(),
+                if drift.abs() >= 0.02 * REF_SIZE {
+                    -drift / REF_SIZE
+                } else {
+                    0.0
+                },
+            );
             if (0.02 * REF_SIZE..0.4 * REF_SIZE).contains(&drift.abs()) {
                 if let Some(data) = fonts.font_data.get(scoped.as_str()) {
                     let index = data.index;
