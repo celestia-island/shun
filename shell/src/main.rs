@@ -26,6 +26,7 @@ mod diag;
 mod fallback;
 #[cfg(windows)]
 mod screenshot;
+mod splash;
 mod terminal;
 mod tui;
 #[cfg(windows)]
@@ -1131,31 +1132,41 @@ fn env_locale_tag() -> Option<String> {
 // ── WebView2 bootstrap ───────────────────────────────────────────────────
 
 /// Stages the payload's fixed-version WebView2 runtime into the shun
-/// cache and points the loader at it (the one-copy strategy).
-fn bootstrap_fixed_webview2(config: &ShunConfig, payload: &ArchivePayload) {
+/// cache (the one-copy strategy) and returns the staged directory.
+/// Setting `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` stays with the caller:
+/// the splash-era staging runs on a worker thread, and the env write
+/// belongs on the main thread once the splash closes.
+pub(crate) fn stage_fixed_runtime(
+    config: &ShunConfig,
+    payload: &ArchivePayload,
+    on_percent: &mut dyn FnMut(u8),
+) -> Option<PathBuf> {
     let runtime_path = match config.webview2.as_ref() {
         Some(shun::config::Webview2Strategy::FixedVersion { path }) => PathBuf::from(path),
-        _ => return,
+        _ => return None,
     };
     let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) else {
         crate::diag!("shun: no LOCALAPPDATA to cache the fixed-version runtime in");
-        return;
+        return None;
     };
     let cache = local
         .join("shun")
         .join(&config.product.name)
         .join("webview2");
-    if let Err(err) = payload.extract_prefix(&cache, &runtime_path, &mut |_| {}) {
+    let mut sink = |event: shun::flow::FlowEvent| {
+        if let shun::flow::FlowEvent::Progress {
+            percent: Some(percent),
+            ..
+        } = event
+        {
+            on_percent(percent);
+        }
+    };
+    if let Err(err) = payload.extract_prefix(&cache, &runtime_path, &mut sink) {
         crate::diag!("shun: staging the fixed-version runtime failed ({err}); falling back");
-        return;
+        return None;
     }
-    // SAFETY: single-threaded bootstrap before any UI thread exists.
-    unsafe {
-        std::env::set_var(
-            "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
-            cache.join(&runtime_path),
-        );
-    }
+    Some(cache.join(&runtime_path))
 }
 
 // ── Entry ────────────────────────────────────────────────────────────────
@@ -1170,7 +1181,6 @@ fn main() {
     );
     let config: ShunConfig =
         serde_json::from_str(SHUN_CONFIG_JSON).expect("embedded config decodes");
-    let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
     let faces = faces_of(&config);
     // Console first, capabilities after: a GUI-subsystem binary launched
     // from a terminal holds no std handles until the parent console is
@@ -1196,9 +1206,58 @@ fn main() {
         && !cli.no_webview
         && !cli.fallback
         && !cli.egui;
-    if webview_face_candidate {
-        bootstrap_evergreen_webview2(&config, &payload);
-    }
+
+    // The GUI tracks (egui wizard / webview face) open a tiny egui
+    // splash FIRST: a large installer spends its opening seconds
+    // decoding the embedded payload and (on the webview track)
+    // staging the carried runtime before ANY window can exist — the
+    // process read as hung. The splash renders the initialization as
+    // a localized message + percent + bar with an abort seat while a
+    // worker performs exactly that work, then hands the decoded
+    // payload to the resolved face. Non-GUI tracks (headless, TUI,
+    // help) keep the inline flow: a console is already speaking.
+    let caps = refine_caps_with_loader(UiCapabilities::probe());
+    let face = resolve_face(&cli, &caps, &faces);
+    let gui_track = matches!(face, Face::Egui | Face::Tauri);
+
+    let tauri_possible = webview_face_candidate && faces.contains(&shun::config::UiFace::Webview);
+    let init = if gui_track {
+        let debug_screenshot = cli
+            .screenshot
+            .clone()
+            .map(|path| (path, cli.screenshot_delay.unwrap_or(4000)));
+        match splash::run_splash(
+            &config,
+            EMBEDDED_PAYLOAD,
+            webview_face_candidate,
+            tauri_possible,
+            cli.uninstall,
+            debug_screenshot,
+        ) {
+            Ok(init) => init,
+            // Abort (button or window close) or a splash that could
+            // not start — nothing is installed; a silent exit honors
+            // the choice.
+            Err(()) => std::process::exit(0),
+        }
+    } else {
+        let payload =
+            ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
+        if webview_face_candidate {
+            bootstrap_evergreen_webview2(&config, &payload);
+        }
+        // The non-GUI tracks never reach run_tauri — no fixed staging
+        // to prepare for it.
+        splash::InitOutcome {
+            payload,
+            fixed_runtime: None,
+        }
+    };
+    let payload = init.payload;
+
+    // The worker's bootstraps may have upgraded the machine (the
+    // carried Evergreen install): re-probe and re-resolve so the
+    // webview face becomes reachable exactly when it should.
     let caps = refine_caps_with_loader(UiCapabilities::probe());
     let face = resolve_face(&cli, &caps, &faces);
 
@@ -1245,7 +1304,8 @@ fn main() {
             let uninstall = cli.uninstall;
             let screenshot = cli.screenshot.clone();
             let screenshot_delay = cli.screenshot_delay;
-            if let Err(err) = run_tauri(cli, config, payload, uninstall) {
+            let fixed_runtime = init.fixed_runtime;
+            if let Err(err) = run_tauri(cli, config, payload, uninstall, fixed_runtime) {
                 // The refined probe and tauri's own gate read the same
                 // loader verdict, so a webview-runtime failure here
                 // should be unreachable — but if one still slips through
@@ -1366,6 +1426,17 @@ fn refine_caps_with_loader(mut caps: UiCapabilities) -> UiCapabilities {
 /// face ladder on the network — its runtime lands during the install
 /// step instead (see [`acquire_webview2_at_install`]).
 fn bootstrap_evergreen_webview2(config: &ShunConfig, payload: &ArchivePayload) {
+    bootstrap_evergreen_webview2_with_progress(config, payload, &mut |_| {});
+}
+
+/// The reporting twin of [`bootstrap_evergreen_webview2`]:
+/// `on_percent` receives the staging extraction's own 0-100 (the
+/// silent-install run itself is opaque and holds the last percent).
+pub(crate) fn bootstrap_evergreen_webview2_with_progress(
+    config: &ShunConfig,
+    payload: &ArchivePayload,
+    on_percent: &mut dyn FnMut(u8),
+) {
     if !config.webview2_silent_install() || webview2_loader_ready() {
         return;
     }
@@ -1376,12 +1447,36 @@ fn bootstrap_evergreen_webview2(config: &ShunConfig, payload: &ArchivePayload) {
         eprintln!("shun: no LOCALAPPDATA to stage the Evergreen installer in");
         return;
     };
-    let Some(installer) = shun::webview2::stage_evergreen(payload, &cache) else {
+    let Some(installer) =
+        shun::webview2::stage_evergreen_with_progress(payload, &cache, on_percent)
+    else {
         eprintln!("shun: staging the Evergreen installer failed; degrading");
         return;
     };
     println!("shun: no WebView2 runtime — running the carried Evergreen installer silently");
-    if let Err(err) = shun::webview2::run_evergreen_silent(&installer) {
+    // The offline installer's manifest requires elevation: an
+    // unelevated spawn dies on os error 740 (or a non-zero exit) —
+    // retry through the UAC consent exactly like the install-step
+    // acquire, or the machine silently stays runtime-less.
+    // The mutable binding exists only where the Windows retry rebinds.
+    #[cfg(windows)]
+    let mut status = shun::webview2::run_evergreen_silent(&installer);
+    #[cfg(not(windows))]
+    let status = shun::webview2::run_evergreen_silent(&installer);
+    // The elevation retry is a Windows affordance (the elevated
+    // runner exists only there).
+    #[cfg(windows)]
+    if (status
+        .as_ref()
+        .err()
+        .is_some_and(|err| err.raw_os_error() == Some(740))
+        || matches!(&status, Ok(status) if !status.success()))
+        && !shun::targets::elevate::is_elevated()
+    {
+        eprintln!("shun: the Evergreen installer failed unelevated; retrying through UAC");
+        status = shun::webview2::run_evergreen_elevated(&installer);
+    }
+    if let Err(err) = &status {
         eprintln!("shun: running the Evergreen installer failed ({err}); degrading");
     }
     // Success or not, the refined probe that called us re-reads the
@@ -1607,10 +1702,19 @@ fn run_tauri(
     config: ShunConfig,
     payload: ArchivePayload,
     uninstall_mode: bool,
+    fixed_runtime: Option<PathBuf>,
 ) -> Result<(), tauri::Error> {
     let screenshot = cli.screenshot.clone();
     let delay = cli.screenshot_delay.unwrap_or(4000);
-    bootstrap_fixed_webview2(&config, &payload);
+    // The staging itself ran under the splash; this is only the
+    // loader pointer, set once on the main thread.
+    // SAFETY: the splash (the only other thread) has exited; the
+    // webview stack reads the variable after this point.
+    if let Some(runtime) = fixed_runtime {
+        unsafe {
+            std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", runtime);
+        }
+    }
 
     let native_title = os_window_title(&config, uninstall_mode);
     let core = WizardCore::new(config, wizard_license_docs());

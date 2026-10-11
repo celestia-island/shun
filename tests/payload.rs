@@ -181,3 +181,39 @@ fn extract_prefix_stages_only_the_subtree() {
             .is_err()
     );
 }
+
+/// The streaming decode twin reports monotonic progress and decodes
+/// exactly what the buffered path decodes — the splash's percent feed
+/// must never lie about the archive it unfolds.
+#[test]
+fn from_bytes_with_progress_is_monotonic_and_identical() {
+    let archive = pack_directory(&payload_dir()).unwrap();
+
+    let mut reports = Vec::new();
+    let streamed =
+        ArchivePayload::from_bytes_with_progress(&archive, &mut |ratio| reports.push(ratio))
+            .unwrap();
+    let buffered = ArchivePayload::from_bytes(&archive).unwrap();
+
+    assert!(!reports.is_empty(), "the decode must report progress");
+    assert!(
+        reports.iter().all(|r| (0.0..=1.0).contains(r)),
+        "ratios stay within 0..=1"
+    );
+    let mut sorted = reports.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(reports, sorted, "progress is monotonic");
+    assert_eq!(*reports.last().unwrap(), 1.0, "the feed ends complete");
+
+    // Same manifest, same bytes: the entry list order and every file
+    // match the buffered decode exactly.
+    assert_eq!(streamed.entries(), buffered.entries());
+    for entry in buffered.entries() {
+        assert_eq!(
+            streamed.read_file(&entry.path).unwrap(),
+            buffered.read_file(&entry.path).unwrap(),
+            "entry {} differs",
+            entry.path.display()
+        );
+    }
+}

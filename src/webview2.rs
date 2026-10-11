@@ -100,9 +100,29 @@ pub fn evergreen_cache(product: &str) -> Option<std::path::PathBuf> {
 /// staging write fails — callers treat that as "not carried" and keep
 /// going (the face ladder degrades to egui).
 pub fn stage_evergreen(payload: &ArchivePayload, cache: &Path) -> Option<std::path::PathBuf> {
+    stage_evergreen_with_progress(payload, cache, &mut |_| {})
+}
+
+/// The reporting twin of [`stage_evergreen`]: `on_percent` receives the
+/// extraction's own 0-100 as the runtime subtree unfolds (the feed a
+/// startup splash renders while ~127 MB leave the archive).
+pub fn stage_evergreen_with_progress(
+    payload: &ArchivePayload,
+    cache: &Path,
+    on_percent: &mut dyn FnMut(u8),
+) -> Option<std::path::PathBuf> {
     let entry = evergreen_entry(payload)?;
+    let mut sink = |event: crate::flow::FlowEvent| {
+        if let crate::flow::FlowEvent::Progress {
+            percent: Some(percent),
+            ..
+        } = event
+        {
+            on_percent(percent);
+        }
+    };
     if payload
-        .extract_prefix(cache, Path::new(EVERGREEN_PREFIX), &mut |_| {})
+        .extract_prefix(cache, Path::new(EVERGREEN_PREFIX), &mut sink)
         .is_err()
     {
         return None;

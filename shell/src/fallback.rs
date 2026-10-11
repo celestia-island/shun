@@ -636,6 +636,10 @@ fn open_webview2_download_page() {
 #[serde(default)]
 struct Texts {
     banner_missing: String,
+    /// The startup splash's message and abort button (system-locale
+    /// picked before the wizard language is chosen).
+    splash_message: String,
+    splash_abort: String,
     /// The banner variant for builds whose manifest declares
     /// `download-url` (nothing carried, runtime fetched at install
     /// time): says the runtime is coming, instead of only warning.
@@ -736,6 +740,15 @@ struct Texts {
 /// The single authored string source, shared with the web face:
 /// `shell/web` exports it (`pnpm dump-strings`) and both faces render
 /// from it. Parsed once, on first touch.
+/// The startup splash's copy, resolved from the SYSTEM locale (the
+/// wizard language is a later, in-wizard choice): (message, abort).
+pub(crate) fn splash_strings() -> (String, String) {
+    let strings = wizard_strings();
+    let tag = system_locale_tag().unwrap_or_default();
+    let texts = strings.texts(&strings.resolve_system_locale(&tag));
+    (texts.splash_message.clone(), texts.splash_abort.clone())
+}
+
 fn wizard_strings() -> &'static WizardStrings {
     static WIZARD_STRINGS: std::sync::OnceLock<WizardStrings> = std::sync::OnceLock::new();
     WIZARD_STRINGS.get_or_init(|| {
@@ -826,7 +839,7 @@ fn system_locale_tag() -> Option<String> {
 /// CJK-capable font landed: the Chinese UI is only offered when it
 /// did. Anything missing falls through to the legacy SimHei probe and
 /// finally egui's bundled fonts.
-fn install_system_fonts(ctx: &Context) -> bool {
+pub(crate) fn install_system_fonts(ctx: &Context) -> bool {
     let mut fonts = FontDefinitions::default();
 
     // (path, face index, registry name) — order matters: the family
