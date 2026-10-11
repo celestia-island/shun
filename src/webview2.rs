@@ -185,14 +185,21 @@ pub fn evergreen_source(config: &ShunConfig, payload: &ArchivePayload) -> Evergr
 /// Non-Windows platforms have no WebView2 story; the call is a no-op
 /// error so callers can stay unconditional.
 #[cfg(windows)]
-pub fn run_evergreen_silent(installer: &Path) -> std::io::Result<std::process::ExitStatus> {
+pub fn run_evergreen(installer: &Path, silent: bool) -> std::io::Result<std::process::ExitStatus> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    std::process::Command::new(installer)
-        .args(["/silent", "/install"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
+    // `silent` picks the contract: the GUI runs pass FALSE so the
+    // installer's OWN window shows (its progress, its elevation
+    // consent — the user sees the real thing); the headless track
+    // passes TRUE — `--silent` promises no UI at all.
+    let mut command = std::process::Command::new(installer);
+    if silent {
+        command.args(["/silent", "/install"]);
+    } else {
+        command.arg("/install");
+    }
+    command.creation_flags(CREATE_NO_WINDOW).status()
 }
 
 /// Relaunches the Evergreen installer through the UAC consent
@@ -202,11 +209,18 @@ pub fn run_evergreen_silent(installer: &Path) -> std::io::Result<std::process::E
 /// unelevated without tripping the 740 spawn gate, so the caller
 /// retries on a failed status, not only on a failed spawn.
 #[cfg(windows)]
-pub fn run_evergreen_elevated(installer: &Path) -> std::io::Result<std::process::ExitStatus> {
+pub fn run_evergreen_elevated(
+    installer: &Path,
+    silent: bool,
+) -> std::io::Result<std::process::ExitStatus> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let args = ["/silent", "/install"];
+    let args: Vec<&str> = if silent {
+        vec!["/silent", "/install"]
+    } else {
+        vec!["/install"]
+    };
     // Single-quote PowerShell literals; a quote inside the literal
     // (profile paths like `O'Brien`) escapes by doubling. The argument
     // list is fixed flags, so only the path needs the treatment — and
@@ -229,7 +243,21 @@ pub fn run_evergreen_elevated(installer: &Path) -> std::io::Result<std::process:
 }
 
 #[cfg(not(windows))]
-pub fn run_evergreen_silent(_installer: &Path) -> std::io::Result<std::process::ExitStatus> {
+pub fn run_evergreen(
+    _installer: &Path,
+    _silent: bool,
+) -> std::io::Result<std::process::ExitStatus> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "the Evergreen installer only exists on Windows",
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn run_evergreen_elevated(
+    _installer: &Path,
+    _silent: bool,
+) -> std::io::Result<std::process::ExitStatus> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "the Evergreen installer only exists on Windows",
