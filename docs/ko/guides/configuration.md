@@ -40,16 +40,17 @@ target = "data-folder"                     # data-folder | uninstall | app
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 전용: 압축 해제된 런타임 폴더
 # silent-install = true                    # evergreen-installer: 런타임 없는 컴퓨터에서 동봉된
-                                           #   설치 관리자를 자동 설치(기본 켜짐)
+                                           #   설치 관리자를 실행(기본 켜짐 — 위자드는 먼저
+                                           #   동의를 묻고, 헤드리스는 조용히 실행)
 # download-url = "https://…"               # evergreen-installer: 미포함 시 설치 중 Evergreen 설치
-                                           #   관리자를 내려받아 조용히 실행(동일 스위치)
+                                           #   관리자를 내려받아 실행(동봉분과 같은 동의 절차)
 # warn-missing = true                      # skip / evergreen-installer: egui 대체 화면이 시작과
                                            #   끝에 경고하고 Microsoft 공식 다운로드 페이지 링크
                                            #   제공(기본 켜짐)
 
 [[package.metadata.shun.steps]]            # 순서가 있는 마법사 파이프라인(선택)
 columns = 2              # 선택: 모드 그리드 열 수 (기본은 모드별 1열)
-kind = "mode"                              # mode | scope | license | content | install
+kind = "mode"                              # mode | scope | license | content | pairing | install
 align = "center"                           # 단계별 재정의: center | start(기본은 kind에 따름)
 
 [[package.metadata.shun.steps]]
@@ -84,7 +85,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 timeline = "left"          # top (상단 가로) | left (좌측 세로)
 log-level = "all"          # all(기본값) | files | scripts | off
 log-order = "newest"      # newest(기본값, 최신이 위) | oldest(끝에 추가)
-language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -93,7 +94,7 @@ accent = [34, 211, 238]    # RGB 채널 — --color-primary 대체
 
 ### 위자드 언어
 
-위자드는 **첫 단계**에서 언어를 묻습니다. 지원하는 8개 로캘을 각각
+위자드는 **첫 단계**에서 언어를 묻습니다. 지원하는 10개 로캘을 각각
 자국어 레이블(English, 简体中文, 일본어, ...)로 나열한 선택기입니다.
 언어를 바꾸면 UI 문자열과 라이선스 문서가 즉시 다시 렌더링되고
 (동의 문서는 `license-locales` / `locale-paths`에 따라 선택한 로캘의
@@ -165,7 +166,8 @@ markdown = "docs/whats-new.md"
 기존 `body` 문자열은 모든 본문을 구분선으로 연결한 값이므로 `body`만
 읽는 렌더러도 계약 전문을 그대로 표시합니다.
 
-UI에는 8개 로캘(`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`, `ru`, `es`)의
+UI에는 10개 로캘(`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`, `ru`, `es`,
+`de`, `pt`)의
 기본 문구가 포함되어 있습니다. `shell.language = "auto"`는 시스템을 따르고,
 고정 로캘을 지정하면 그 값으로 고정됩니다. 로캘별 라이선스 재정의로
 현지화된 계약서도 지원합니다.

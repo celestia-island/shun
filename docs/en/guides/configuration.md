@@ -50,17 +50,18 @@ target = "data-folder"                     # data-folder | uninstall | app
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version only: extracted runtime folder
 # silent-install = true                    # evergreen-installer: run the carried installer
-                                           #   silently on a runtime-less machine (default)
+                                           #   on a runtime-less machine (default — the
+                                           #   wizard asks first, headless runs it silently)
 # download-url = "https://…"               # evergreen-installer: when nothing is carried,
                                            #   fetch the Evergreen installer at install
-                                           #   time and run it silently (same knob)
+                                           #   time (same consent as the carried one)
 # warn-missing = true                      # skip / evergreen-installer: the egui fallback
                                            #   warns + links to Microsoft's download page
                                            #   when the machine has no runtime (default)
 
 [[package.metadata.shun.steps]]            # ordered wizard pipeline (optional)
 columns = 2             # optional mode-grid columns; defaults to one column per mode
-kind = "mode"                              # mode | scope | license | content | install
+kind = "mode"                              # mode | scope | license | content | pairing | install
 align = "center"                           # per-step override: center | start (default from kind)
 
 [[package.metadata.shun.steps]]
@@ -142,19 +143,25 @@ verdict (`wry::webview_version()`, the exact call tauri gates webview
 creation on), so a broken registry state can no longer send the webview
 face into tauri's English "Could not find the WebView2 Runtime" box:
 
-- `evergreen-installer` + `silent-install` (default `true`): the carried
-  installer — discovered under the payload's `webview2/` prefix — is
-  staged into the per-user cache and run with `/silent /install`
-  (elevating through UAC when the installer's manifest asks). A
-  successful run upgrades the machine in place and the webview face
-  stays reachable.
-- A build that carries no installer but declares `download-url`
-  (and keeps `silent-install` on) fetches the Evergreen installer from
-  that URL during the install step and runs it through the same silent
-  path — a lite flavor upgrades the machine from the network instead of
-  its own payload. A slow or absent network never blocks the first UI:
-  the fetch happens inside the install flow, and the degrade banner
-  says the runtime is coming.
+- `evergreen-installer` + `silent-install` (default `true`): the runtime
+  acquire lives in the install step — initialization only decodes and
+  stages the carried installer (discovered under the payload's
+  `webview2/` prefix) into the per-user cache, and nothing installs
+  before the face ladder resolves. A wizard run pauses on a consent
+  callout first (`Install the runtime` / `Skip, main program only`) and
+  runs the acquire only on the granted answer — visibly, with the
+  installer's own window and elevation through UAC when its manifest
+  asks. The headless track keeps `silent-install` as its consent and
+  runs the installer with `/silent /install`. A successful acquire
+  upgrades the machine in place — the loader reports a usable runtime
+  once it settles.
+- A build that carries no installer but declares `download-url` fetches
+  the Evergreen installer from that URL inside the same install-step
+  acquire, behind the same consent (headless runs keep the
+  `silent-install` knob) — a lite flavor upgrades the machine from the
+  network instead of its own payload. A slow or absent network never
+  blocks the first UI: the fetch happens inside the install flow, and
+  the degrade banner says the runtime is coming.
 - Whatever the outcome, a machine still without a runtime takes the
   egui face. With `warn-missing` (default `true`) and no carried
   installer, that face warns at the start and the end of the wizard and
@@ -192,13 +199,13 @@ logo-background = "#0F172A"
 ## Offline fallback shell
 
 The installer shell embeds an egui fallback UI besides the hikari
-webview UI. It is driven by the same manifest and payload (one flow, two
-renderers), renders no effects, and is selected when WebView2 is missing
-on Windows (the banner states the missing environment explicitly) or
-forced manually:
+webview UI. It is driven by the same manifest and payload (one flow,
+three renderers), renders no effects, and is selected when WebView2 is
+missing on Windows (the banner states the missing environment
+explicitly) or forced manually:
 
 ```bash
-shun-installer --fallback     # same wizard, offline renderer
+shun-installer --no-webview   # same wizard, offline renderer (--fallback is the legacy spelling)
 ```
 
 Both UIs support offline screenshots — the window content is captured
@@ -206,8 +213,8 @@ with `PrintWindow`, no desktop automation, and the process exits after
 saving:
 
 ```bash
-shun-installer --screenshot=ui.png               # hikari (webview) UI
-shun-installer --fallback --screenshot=ui.png    # egui offline UI
+shun-installer --screenshot=ui.png                 # hikari (webview) UI
+shun-installer --no-webview --screenshot=ui.png    # egui offline UI
 ```
 
 ## Shell UI
@@ -220,7 +227,7 @@ document) configures the runtime shell:
 timeline = "left"          # top (horizontal rail) | left (vertical rail)
 log-level = "all"          # all (default) | files | scripts | off
 log-order = "newest"    # newest (default, latest on top) | oldest (append at tail)
-language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -230,7 +237,7 @@ accent = [34, 211, 238]    # RGB channels — overrides --color-primary
 ### Wizard language
 
 The wizard asks for its language on the **first step**: a selector
-listing the eight supported locales, each labeled in its own language
+listing the ten supported locales, each labeled in its own language
 (English, 简体中文, 日本語, ...). Switching re-renders the UI strings
 and the license documents immediately — the agreement follows the
 selected locale through `license-locales` / `locale-paths` — and the
@@ -329,7 +336,7 @@ covers all of them. In the resolved JSON each document travels under
 body joined by a divider line, so renderers that only read `body` keep
 showing the whole agreement.
 
-The UI ships eight locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`,
-`ru`, `es`) with default texts; `shell.language = "auto"` follows the
-system, a fixed locale pins it, and per-locale license overrides keep
-localized agreements working.
+The UI ships ten locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`,
+`ru`, `es`, `de`, `pt`) with default texts; `shell.language = "auto"`
+follows the system, a fixed locale pins it, and per-locale license
+overrides keep localized agreements working.

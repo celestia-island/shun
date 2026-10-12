@@ -38,16 +38,17 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # 僅 Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 專用：解壓後的執行時目錄
-# silent-install = true                    # evergreen-installer：無執行階段的機器上靜默
-                                           #   執行自帶的安裝器（預設開啟）
+# silent-install = true                    # evergreen-installer：無執行階段的機器上執行
+                                           #   自帶的安裝器（預設開啟——精靈先詢問，
+                                           #   headless 靜默執行）
 # download-url = "https://…"               # evergreen-installer：不攜帶安裝器時，安裝期透過網路取得
-                                           #   Evergreen 安裝器並靜默執行（與 silent-install 同一開關）
+                                           #   Evergreen 安裝器（與自帶安裝器同一同意流程）
 # warn-missing = true                      # skip / evergreen-installer：egui 降級介面在開始
                                            #   與結束時警告並附微軟官方下載頁連結（預設開啟）
 
 [[package.metadata.shun.steps]]            # 有序的精靈管線（可選）
 columns = 2              # 可選：模式網格欄數；預設每個模式一欄
-kind = "mode"                              # mode | scope | license | content | install
+kind = "mode"                              # mode | scope | license | content | pairing | install
 align = "center"                           # 按步驟覆寫：center | start（預設由 kind 決定）
 
 [[package.metadata.shun.steps]]
@@ -80,7 +81,7 @@ require-removable = true                   # 拒絕非可移除裝置
 timeline = "left"          # top（頂部橫排）| left（左側直排）
 log-level = "all"          # all（預設）| files | scripts | off
 log-order = "newest"      # newest（預設，最新在頂）| oldest（追加在尾部）
-language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -89,7 +90,7 @@ accent = [34, 211, 238]    # RGB 色頻——覆寫 --color-primary
 
 ### 精靈語言
 
-精靈會在**第一步**詢問語言：選擇器列出全部八個支援的語言，每項都以
+精靈會在**第一步**詢問語言：選擇器列出全部十個支援的語言，每項都以
 自身語言標注（English、简体中文、日本語……）。切換後 UI 文案與授權
 文件立即跟著切換——授權文件按 `license-locales` / `locale-paths`
 跟隨所選語言——而且該選擇會記入每使用者偏好檔，下次執行自動沿用
@@ -154,6 +155,6 @@ markdown = "docs/whats-new.md"
 而舊的 `body` 字串把所有正文用分隔線串接，只讀 `body` 的渲染器也能
 完整呈現整份協議。
 
-介面內建八種語言的預設文案（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
-`ru`、`es`）；`shell.language = "auto"` 跟隨系統，固定語言可直接指定，
+介面內建十種語言的預設文案（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
+`ru`、`es`、`de`、`pt`）；`shell.language = "auto"` 跟隨系統，固定語言可直接指定，
 分語言授權覆寫保證本地化協議正常運作。

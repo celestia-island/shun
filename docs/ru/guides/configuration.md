@@ -39,18 +39,20 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # только Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version: распакованная папка рантайма
-# silent-install = true                    # evergreen-installer: тихо запустить bundled-
-                                           #   установщик на машине без рантайма (по умолчанию)
+# silent-install = true                    # evergreen-installer: запустить bundled-
+                                           #   установщик на машине без рантайма (по умолчанию —
+                                           #   мастер сначала спрашивает согласие, headless
+                                           #   запускает тихо)
 # download-url = "https://…"               # evergreen-installer: если установщик не встроен, скачать
-                                           #   его при установке и запустить без участия пользователя
-                                           #   (тот же переключатель)
+                                           #   его при установке (то же согласие, что и для
+                                           #   встроенного установщика)
 # warn-missing = true                      # skip / evergreen-installer: egui-фолбэк предупреждает
                                            #   в начале и в конце со ссылкой на официальную
                                            #   страницу загрузки Microsoft (по умолчанию)
 
 [[package.metadata.shun.steps]]            # упорядоченный конвейер мастера (опционально)
 columns = 2              # число колонок сетки режимов (по умолчанию — по одной на режим)
-kind = "mode"                              # mode | scope | license | content | install
+kind = "mode"                              # mode | scope | license | content | pairing | install
 align = "center"                           # переопределение шага: center | start (по умолчанию от kind)
 
 [[package.metadata.shun.steps]]
@@ -87,7 +89,7 @@ require-removable = true                   # отказывать несъёмн
 timeline = "left"          # top (горизонтальная лента) | left (вертикальная слева)
 log-level = "all"          # all (по умолчанию) | files | scripts | off
 log-order = "newest"      # newest (по умолчанию, свежие сверху) | oldest (добавление в конец)
-language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -96,7 +98,7 @@ accent = [34, 211, 238]    # каналы RGB — переопределяют -
 
 ### Язык мастера
 
-Мастер спрашивает язык на **первом шаге**: селектор со всеми восемью
+Мастер спрашивает язык на **первом шаге**: селектор со всеми десятью
 поддерживаемыми локалями, каждая подписана на своём языке
 (English, 简体中文, 日本語, ...). Переключение сразу перерисовывает
 строки интерфейса и документы лицензии — соглашение следует выбранной
@@ -172,7 +174,7 @@ markdown = "docs/whats-new.md"
 объединяет все тексты через строку-разделитель, поэтому рендереры,
 читающие только `body`, по-прежнему показывают соглашение целиком.
 
-Интерфейс поставляется с восемью локалями (`en`, `zh-Hans`, `zh-Hant`, `ja`,
-`ko`, `fr`, `ru`, `es`) и текстами по умолчанию; `shell.language = "auto"`
+Интерфейс поставляется с десятью локалями (`en`, `zh-Hans`, `zh-Hant`, `ja`,
+`ko`, `fr`, `ru`, `es`, `de`, `pt`) и текстами по умолчанию; `shell.language = "auto"`
 следует системе, фиксированная локаль закрепляет её, а по-локальные
 переопределения лицензий сохраняют локализованные соглашения.

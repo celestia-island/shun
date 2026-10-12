@@ -40,16 +40,17 @@ target = "data-folder"                     # data-folder | uninstall | app
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 専用：展開済みランタイムフォルダー
 # silent-install = true                    # evergreen-installer：ランタイム未導入の環境で同梱
-                                           #   インストーラーをサイレント実行（既定はオン）
+                                           #   インストーラーを実行（既定はオン——ウィザードは
+                                           #   先に同意を尋ね、ヘッドレスはサイレント実行）
 # download-url = "https://…"               # evergreen-installer：同梱しない場合、インストール時に
-                                           #   Evergreen インストーラーを取得しサイレント実行（同一スイッチ）
+                                           #   Evergreen インストーラーを取得（同梱分と同じ同意フロー）
 # warn-missing = true                      # skip / evergreen-installer：egui 代替画面が開始時と
                                            #   終了時に警告し Microsoft 公式ダウンロードページ
                                            #   へのリンクを表示（既定はオン）
 
 [[package.metadata.shun.steps]]            # 順序付きウィザードパイプライン（任意）
 columns = 2              # 任意：モードグリッドの列数（既定はモードごとに 1 列）
-kind = "mode"                              # mode | scope | license | content | install
+kind = "mode"                              # mode | scope | license | content | pairing | install
 align = "center"                           # ステップ単位の上書き：center | start（既定は kind 次第）
 
 [[package.metadata.shun.steps]]
@@ -85,7 +86,7 @@ UNC 共有ルート `\\server\share`、POSIX の `/` も同様）が対象の
 timeline = "left"          # top（上部の横並び）| left（左側の縦並び）
 log-level = "all"          # all（既定）| files | scripts | off
 log-order = "newest"      # newest（既定、最新が上）| oldest（末尾に追加）
-language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -94,7 +95,7 @@ accent = [34, 211, 238]    # RGB チャンネル — --color-primary を上書�
 
 ### ウィザードの言語
 
-ウィザードは**最初のステップ**で言語を尋ねます。8 言語のロケールを
+ウィザードは**最初のステップ**で言語を尋ねます。10 言語のロケールを
 それぞれ自国語のラベル（English、简体中文、日本語、…）で並べた
 セレクターです。切り替えると UI 文字列とライセンス文書が即座に
 再描画され（契約文書は `license-locales` / `locale-paths` に従って
@@ -169,7 +170,7 @@ markdown = "docs/whats-new.md"
 連結したものになるため、`body` しか読まない描画側でも契約全体を表示
 し続けられます。
 
-UI には 8 ロケール（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、`ru`、`es`）
-の既定テキストが同梱されています。`shell.language = "auto"` はシステムに追従し、
+UI には 10 ロケール（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、`ru`、`es`、
+`de`、`pt`）の既定テキストが同梱されています。`shell.language = "auto"` はシステムに追従し、
 固定ロケールを指定すればそちらに固定されます。ロケール別ライセンスの上書きで
 ローカライズされた契約書も機能します。

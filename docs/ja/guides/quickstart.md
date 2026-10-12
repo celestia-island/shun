@@ -26,5 +26,7 @@ cargo run -p shun_installer
 ```
 
 シェルはビルド時にデモ payload を埋め込み（シングルファイルインストーラー
-パターン）、`shell/Cargo.toml` → `[package.metadata.shun]` で宣言された
-配布モードを描画します。
+パターン）、`demo-app/Cargo.toml` → `[package.metadata.shun]` で宣言された
+配布モードを描画します——隣接するデモ crate のマニフェストを build.rs が
+埋め込みます（`SHUN_MANIFEST` で上書き可。シェル crate 自身は
+`[package.metadata.shun]` を持ちません）。

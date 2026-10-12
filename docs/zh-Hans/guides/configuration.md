@@ -48,17 +48,18 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # 仅 Windows
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version 专用：解压后的运行时目录
-# silent-install = true                    # evergreen-installer：无运行时的机器上静默执行
-                                           #   自带的安装器（默认开启）
+# silent-install = true                    # evergreen-installer：无运行时的机器上执行
+                                           #   自带的安装器（默认开启——向导先询问，
+                                           #   headless 静默执行）
 # download-url = "https://…"               # evergreen-installer：不携带安装器时，安装期联网获取
-                                           #   Evergreen 安装器并静默执行（与 silent-install 同一开关）
+                                           #   Evergreen 安装器（与自带安装器同一同意流程）
 # warn-missing = true                      # skip / evergreen-installer：egui 降级界面在
                                            #   开始与结束时警告并附微软官方下载页链接
                                            #   （默认开启）
 
 [[package.metadata.shun.steps]]            # 有序向导管线（可选）
 columns = 2              # 可选：模式网格列数；默认每个模式一列
-kind = "mode"                              # mode | scope | license | content | install
+kind = "mode"                              # mode | scope | license | content | pairing | install
 align = "center"                           # 按步骤覆盖：center | start（默认由 kind 决定）
 
 [[package.metadata.shun.steps]]
@@ -125,14 +126,19 @@ require-removable = true                   # 拒绝非可移动设备
 门禁）探测运行时，注册表残值再也无法把 webview 面送进 tauri 那个英文
 "Could not find the WebView2 Runtime" 弹框：
 
-- `evergreen-installer` + `silent-install`（默认 `true`）：自带的安装器
-  （按 payload 的 `webview2/` 前缀发现）会先暂存到用户级缓存并以
-  `/silent /install` 静默执行（安装器要求提权时走 UAC）。执行成功即原地
-  升级机器，webview 面继续可用。
-- 不携带安装器但声明了 `download-url`（且 `silent-install` 保持开启）
-  的构建，会在安装步骤中从该地址联网获取 Evergreen 安装器并走同一条静默
-  安装路径——lite 版通过网络而非自带 payload 升级机器。慢网或断网永远不会
-  阻塞首个界面：获取发生在安装流程内，降级横幅也会说明运行时正在到来。
+- `evergreen-installer` + `silent-install`（默认 `true`）：运行时的获取
+  位于安装步骤——初始化只解码并暂存自带的安装器（按 payload 的
+  `webview2/` 前缀发现）到用户级缓存，面阶梯解析前不执行任何安装。
+  向导运行会先停在同意询问上（「安装运行时 / 跳过，仅安装主程序」），
+  仅在用户同意后才可见地执行获取——安装器以自身窗口运行，其清单要求
+  提权时走 UAC。headless 轨道以 `silent-install` 作为同意，以
+  `/silent /install` 静默执行。获取成功即原地升级机器——稳定后加载器
+  即报告运行时可用。
+- 不携带安装器但声明了 `download-url` 的构建，会在安装步骤的同一获取
+  流程中、经同一同意之后从该地址联网获取 Evergreen 安装器（headless
+  运行仍由 `silent-install` 把关）——lite 版通过网络而非自带 payload
+  升级机器。慢网或断网永远不会阻塞首个界面：获取发生在安装流程内，
+  降级横幅也会说明运行时正在到来。
 - 无论结果如何，机器仍无运行时则落到 egui 面。`warn-missing`（默认
   `true`）且未携带安装器时，该面在向导开始与结束处各警告一次，并内嵌
   跳转到微软官方 WebView2 下载页的链接。两个开关均可按产品关闭：
@@ -158,7 +164,7 @@ Evergreen"的机器即便本可创建 webview，也会落到 egui 面——壳�
 timeline = "left"          # top（顶部横排）| left（左侧竖排）
 log-level = "all"          # all（默认）| files | scripts | off
 log-order = "newest"      # newest（默认，最新在顶）| oldest（追加在尾部）
-language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -167,7 +173,7 @@ accent = [34, 211, 238]    # RGB 通道——覆盖 --color-primary
 
 ### 向导语言
 
-向导在**第一步**询问语言：选择器列出全部八个支持的语言，每项都以
+向导在**第一步**询问语言：选择器列出全部十个支持的语言，每项都以
 自身语言标注（English、简体中文、日本語……）。切换后 UI 文案与许可
 文档立即随之切换——协议文档按 `license-locales` / `locale-paths`
 跟随所选语言——并且该选择会记入每用户偏好文件，下次运行自动沿用
@@ -253,6 +259,6 @@ markdown = "docs/whats-new.md"
 而旧的 `body` 字符串把所有正文用分隔线拼接，只读 `body` 的渲染器也能
 完整展示整个协议。
 
-界面内置八种语言的默认文案（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
-`ru`、`es`）；`shell.language = "auto"` 跟随系统，固定语言可直接指定，
+界面内置十种语言的默认文案（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
+`ru`、`es`、`de`、`pt`）；`shell.language = "auto"` 跟随系统，固定语言可直接指定，
 分语言许可覆盖保证本地化协议正常工作。
