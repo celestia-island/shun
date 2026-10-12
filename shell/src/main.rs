@@ -24,6 +24,7 @@
 mod callout;
 mod diag;
 mod fallback;
+mod markdown;
 #[cfg(windows)]
 mod screenshot;
 mod splash;

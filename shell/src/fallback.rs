@@ -701,6 +701,13 @@ const WEBVIEW2_DOWNLOAD_PAGE: &str = "https://developer.microsoft.com/microsoft-
 /// Opens the WebView2 download page in the system browser (no webview
 /// involved — this IS the runtime-less path).
 fn open_webview2_download_page() {
+    open_external(WEBVIEW2_DOWNLOAD_PAGE);
+}
+
+/// Opens `url` in the system browser — the shared jump for the
+/// download-page links and the license documents' markdown links
+/// (`markdown.rs`). No webview involved anywhere on this path.
+pub(crate) fn open_external(url: &str) {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -708,7 +715,7 @@ fn open_webview2_download_page() {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
-        let url: Vec<u16> = std::ffi::OsStr::new(WEBVIEW2_DOWNLOAD_PAGE)
+        let url: Vec<u16> = std::ffi::OsStr::new(url)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
@@ -732,9 +739,7 @@ fn open_webview2_download_page() {
         } else {
             "xdg-open"
         };
-        let _ = std::process::Command::new(program)
-            .arg(WEBVIEW2_DOWNLOAD_PAGE)
-            .spawn();
+        let _ = std::process::Command::new(program).arg(url).spawn();
     }
 }
 
@@ -3489,45 +3494,10 @@ impl FallbackApp {
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                for raw in body.lines() {
-                                    let line = raw.trim_start();
-                                    let (text, size, strong, indent, muted) = if let Some(h) =
-                                        line.strip_prefix("# ")
-                                    {
-                                        (h.trim(), 16.0, true, 0.0, false)
-                                    } else if let Some(h) = line.strip_prefix("## ") {
-                                        (h.trim(), 14.0, true, 0.0, false)
-                                    } else if let Some(h) = line.strip_prefix("### ") {
-                                        (h.trim(), 13.0, true, 0.0, false)
-                                    } else if let Some(item) =
-                                        line.strip_prefix("- ").or_else(|| line.strip_prefix("* "))
-                                    {
-                                        (item.trim(), 12.5, false, 16.0, false)
-                                    } else if let Some(q) = line.strip_prefix("> ") {
-                                        (q.trim(), 12.5, false, 8.0, true)
-                                    } else {
-                                        (line, 12.5, false, 0.0, false)
-                                    };
-                                    let plain = text.replace(['*', '`'], "");
-                                    let color = if muted {
-                                        theme.text_secondary
-                                    } else {
-                                        theme.text
-                                    };
-                                    // horizontal_wrapped: a long paragraph
-                                    // line wraps at the card width —
-                                    // plain `horizontal` runs unbounded
-                                    // and overflows the bordered card.
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.add_space(indent);
-                                        let mut text = RichText::new(plain).size(size).color(color);
-                                        if strong {
-                                            text = text.strong();
-                                        }
-                                        ui.label(text);
-                                    });
-                                    ui.add_space(2.0);
-                                }
+                                // The document card shares the license
+                                // pane's markdown path — one dialect
+                                // across faces and steps.
+                                crate::markdown::render(ui, &theme, &body, 12.5);
                             });
                     });
             },
@@ -4429,9 +4399,12 @@ impl FallbackApp {
                                         );
                                         ui.add_space(6.0);
                                     }
-                                    ui.label(
-                                        RichText::new(body).size(12.5).color(theme.text_secondary),
-                                    );
+                                    // The document bodies render as
+                                    // markdown — the SAME dialect the
+                                    // web face's richText.ts implements
+                                    // (headings, rules, bullets, bold,
+                                    // clickable links).
+                                    crate::markdown::render(ui, theme, body, 12.5);
                                 });
                         });
                     });
