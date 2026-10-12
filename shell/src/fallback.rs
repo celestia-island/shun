@@ -1957,7 +1957,11 @@ impl FallbackApp {
     #[cfg(debug_assertions)]
     fn debug_force_stage(&mut self) {
         if let Ok(step) = std::env::var("SHUN_DEBUG_STEP") {
-            self.step = step.parse().unwrap_or(self.step);
+            // Clamp to the page list — a step beyond the manifest's
+            // pages (a 3-page flow asked for step 3) panicked the
+            // footer's pages[step] index.
+            let parsed: usize = step.parse().unwrap_or(self.step);
+            self.step = parsed.min(self.pages.len().saturating_sub(1));
         }
         if std::env::var("SHUN_DEBUG_LANG_POPUP").is_ok_and(|v| v == "1") {
             self.lang_combo_open = true;
@@ -5121,8 +5125,10 @@ impl FallbackApp {
                 let configuring = self.stage == Stage::Configure;
                 // The license step (2) carries the install button;
                 // language and location walk the pipeline.
-                let on_last_step =
-                    self.pages[self.step].is_license() && self.step + 1 == self.pages.len();
+                let on_last_step = self
+                    .pages
+                    .get(self.step)
+                    .is_some_and(|page| page.is_license() && self.step + 1 == self.pages.len());
                 let step_blocked = self.step_blocked();
                 // The license step's minimum-read countdown (web
                 // parity): the primary stays disabled for the first
