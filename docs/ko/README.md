@@ -38,9 +38,9 @@ shun은 데스크톱 소프트웨어 배포의 **배포** 절반을 패키징합
   - `install` — 플랫폼별 NSIS식 등록: Windows ARP 항목, 바로 가기(AUMID 포함), 탐색기 상황에 맞는 메뉴 동사, 딥 링크, 사용자별 또는 시스템 전체(자가 승격); Linux `.desktop` 런처 + 데스크톱 액션; macOS `.app` 완성 + Launch Services — 그리고 어느 플랫폼에서도 시스템 상태를 쓰지 않는 휴대용 모드;
   - `flash` — 이미지를 블록 디바이스에 쓰고 쓰기 후 검증.
 
-마법사 자체는 **선언형 파이프라인**(`mode | scope | license | content | install`, 자유 순서)이며, 설치 화면에는 단계 가중 실제 진행률 바와 접을 수 있는 터미널이 있어 모든 파일 작업을 한 줄씩 기록합니다 — 상세도는 `shell.log-level`로 설정.
+마법사 자체는 **선언형 파이프라인**(`mode | scope | license | content | pairing | install`, 자유 순서)이며, 설치 화면에는 단계 가중 실제 진행률 바와 접을 수 있는 터미널이 있어 모든 파일 작업을 한 줄씩 기록합니다 — 상세도는 `shell.log-level`로 설정.
 
-Windows에서 셸은 두 얼굴을 가집니다: hikari WebView UI와 WebView2가 전혀 필요 없는 내장 **egui 폴백** — 같은 플로, 같은 매니페스트(`--fallback`으로 강제). 고정 버전 WebView2 런타임은 페이로드에 실어갈 수 있으며 셸과 설치된 앱이 한 사본을 공유.
+Windows에서 셸은 네 얼굴을 가집니다: hikari WebView UI, WebView2가 전혀 필요 없는 내장 **egui 폴백**, ratatui 터미널 마법사, 헤드리스 CLI — 같은 플로, 같은 매니페스트(`--no-webview`로 egui 강제, `--no-gui`로 터미널 강제. `--fallback`은 이전 표기). 고정 버전 WebView2 런타임은 페이로드에 실어갈 수 있으며 셸과 설치된 앱이 한 사본을 공유.
 
 ## 예제
 
@@ -48,7 +48,7 @@ Windows에서 셸은 두 얼굴을 가집니다: hikari WebView UI와 WebView2�
 
 ```bash
 just demo                                        # # 스테이지 → 빌드 → 설치 셸 실행
-just demo -- --fallback                          # # 오프라인 egui 셸 강제
+just demo -- --no-webview                        # # 오프라인 egui 셸 강제
 cargo run --example demo_install                 # # .shun 패키지 생성 + 로컬 설치
 cargo run --example demo_install -- --portable   # # 휴대용 설치(시스템 상태 없음)
 cargo run --example demo_flash                   # # 플래시 후보 디바이스 나열
@@ -59,7 +59,7 @@ cargo run --example demo_flash                   # # 플래시 후보 디바이�
 
 ## 상태
 
-현재 릴리스: **0.2.1**. crate는 celestia 생태계의 세 실제 소비자 — WoWSP 설치 셸, shittim-chest 로컬, evernight 이미지 플래셔 — 에 맞춰 안정화 중입니다. API는 마이너 버전 사이에서 이 세 소비자를 따릅니다 — 통합 피드백에 따른 추가 변경을 예상.
+현재 릴리스: **0.6.21**. crate는 celestia 생태계의 세 실제 소비자 — WoWSP 설치 셸, shittim-chest 로컬, evernight 이미지 플래셔 — 에 맞춰 안정화 중입니다. API는 마이너 버전 사이에서 이 세 소비자를 따릅니다 — 통합 피드백에 따른 추가 변경을 예상.
 
 ## 구조
 
@@ -70,7 +70,7 @@ cargo run --example demo_flash                   # # 플래시 후보 디바이�
 | `src/payload.rs` | 페이로드 패킹 / 매니페스트 / 스트리밍 추출 |
 | `src/targets/` | 설치 target(Windows/Linux/macOS 등록)과 플래시 target |
 | `demo-app/` | ShunDemo — Tauri 2 페이로드 앱(샘플 UI, 배포 매니페스트) |
-| `shell/` | 설치 셸: hikari UI(Tauri) + egui 오프라인 폴백 |
+| `shell/` | 설치 셸: hikari webview UI + egui / ratatui 오프라인 화면 |
 | `docs/` | 언어별 가이드와 설계 노트 |
 
 ## 개발

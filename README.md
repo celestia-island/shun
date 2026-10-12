@@ -47,16 +47,18 @@ runtime shell:
     verification.
 
 The wizard itself is a **declarative pipeline**
-(`mode | scope | license | content | install`, freely ordered), its
+(`mode | scope | license | content | pairing | install`, freely
+ordered), its
 install pane shows a real phase-weighted progress bar and a collapsible
 terminal logging every file operation — verbosity configurable via
 `shell.log-level`.
 
-On Windows the shell has two faces: a hikari WebView UI and an embedded
-**egui fallback** that needs no WebView2 at all — same flow, same
-manifest (`--fallback` forces it). A fixed-version WebView2 runtime can
-ride inside the payload, one copy shared by the shell and the installed
-app.
+On Windows the shell has four faces: a hikari WebView UI, an embedded
+**egui fallback** that needs no WebView2 at all, a ratatui terminal
+wizard, and the headless CLI — same flow, same manifest (`--no-webview`
+forces egui, `--no-gui` the terminal; `--fallback` is the legacy
+spelling). A fixed-version WebView2 runtime can ride inside the
+payload, one copy shared by the shell and the installed app.
 
 ## Example
 
@@ -67,7 +69,7 @@ One demo covers delivery end to end — a real Tauri 2 payload
 
 ```bash
 just demo                                        # stage → build → run the installer shell
-just demo -- --fallback                          # force the offline egui shell
+just demo -- --no-webview                        # force the offline egui shell
 cargo run --example demo_install                 # generate a .shun package + local install
 cargo run --example demo_install -- --portable   # portable install (no system state)
 cargo run --example demo_flash                   # enumerate flash-candidate devices
@@ -78,7 +80,7 @@ Full field reference: [configuration guide](./docs/en/guides/configuration.md)
 
 ## Status
 
-Current release: **0.2.1**. The crate settles against three real
+Current release: **0.6.21**. The crate settles against three real
 consumers in the celestia ecosystem — the WoWSP installer shell,
 shittim-chest local, and the evernight image flasher. APIs track the
 three consumers between minor versions — expect additive changes from
@@ -93,7 +95,7 @@ their integration feedback.
 | `src/payload.rs` | Payload pack / manifest / streamed extraction |
 | `src/targets/` | Install (Windows/Linux/macOS registration) and flash targets |
 | `demo-app/` | ShunDemo — the Tauri 2 payload app (sample UI, delivery manifest) |
-| `shell/` | Installer shell: hikari UI (Tauri) + egui offline fallback |
+| `shell/` | Installer shell: hikari webview UI + egui / ratatui offline faces |
 | `docs/` | Guides and design notes, per locale |
 
 ## Development

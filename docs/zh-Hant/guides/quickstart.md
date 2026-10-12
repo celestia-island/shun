@@ -23,4 +23,6 @@ cargo run -p shun_installer
 ```
 
 殼在建置期嵌入 demo payload（單檔安裝器模式），並渲染
-`shell/Cargo.toml` → `[package.metadata.shun]` 宣告的交付模式。
+`demo-app/Cargo.toml` → `[package.metadata.shun]` 宣告的交付模式——
+即相鄰 demo crate 的清單，由 build.rs 嵌入（`SHUN_MANIFEST` 可覆寫；
+shell crate 自身沒有 `[package.metadata.shun]`）。

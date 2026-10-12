@@ -38,9 +38,9 @@ shun はデスクトップソフトウェア配布の**配布**側半分をパ�
   - `install` —— プラットフォームごとの NSIS 型登録：Windows ARP エントリー、ショートカット（AUMID 付き）、Explorer コンテキストメニュー動詞、ディープリンク、ユーザー単位またはマシン全体（自己昇格）；Linux は `.desktop` ランチャー + デスクトップアクション；macOS は `.app` 補完 + Launch Services——そしてどのプラットフォームでもシステム状態を書かないポータブルモード；
   - `flash` —— イメージをブロックデバイスへ書き込み、書き込み後検証。
 
-ウィザード自体は**宣言型パイプライン**（`mode | scope | license | content | install`、自由順序）で、インストール画面にはフェーズ加重の実際の進捗バーと折りたたみ式ターミナルがあり、ファイル操作を一行ずつ記録——冗長度は `shell.log-level` で設定。
+ウィザード自体は**宣言型パイプライン**（`mode | scope | license | content | pairing | install`、自由順序）で、インストール画面にはフェーズ加重の実際の進捗バーと折りたたみ式ターミナルがあり、ファイル操作を一行ずつ記録——冗長度は `shell.log-level` で設定。
 
-Windows ではシェルが二つの顔を持ちます：hikari WebView UI と、WebView2 を一切必要としない組み込みの **egui フォールバック**——同じフロー、同じマニフェスト（`--fallback` で強制）。固定バージョンの WebView2 ランタイムはペイロード内に同梱でき、シェルとインストール済みアプリが同一コピーを共有。
+Windows ではシェルが 4 つの顔を持ちます：hikari WebView UI、WebView2 を一切必要としない組み込みの **egui フォールバック**、ratatui ターミナルウィザード、ヘッドレス CLI——同じフロー、同じマニフェスト（`--no-webview` で egui を、`--no-gui` でターミナルを強制。`--fallback` は旧スペル）。固定バージョンの WebView2 ランタイムはペイロード内に同梱でき、シェルとインストール済みアプリが同一コピーを共有。
 
 ## 例
 
@@ -48,7 +48,7 @@ Windows ではシェルが二つの顔を持ちます：hikari WebView UI と、
 
 ```bash
 just demo                                        # # ステージ → ビルド → インストーラーシェル実行
-just demo -- --fallback                          # # オフライン egui シェルを強制
+just demo -- --no-webview                        # # オフライン egui シェルを強制
 cargo run --example demo_install                 # # .shun パッケージ生成 + ローカルインストール
 cargo run --example demo_install -- --portable   # # ポータブルインストール（システム状態ゼロ）
 cargo run --example demo_flash                   # # フラッシュ候補デバイスを列挙
@@ -59,7 +59,7 @@ cargo run --example demo_flash                   # # フラッシュ候補デバ
 
 ## ステータス
 
-現在のリリース：**0.2.1**。crate は celestia エコシステムの 3 つの実消費者——WoWSP インストーラーシェル、shittim-chest ローカル、evernight イメージフラッシャー——に合わせて安定化中。API はマイナーバージョン間でこの 3 消費者に追従——統合フィードバックによる追加変更を想定。
+現在のリリース：**0.6.21**。crate は celestia エコシステムの 3 つの実消費者——WoWSP インストーラーシェル、shittim-chest ローカル、evernight イメージフラッシャー——に合わせて安定化中。API はマイナーバージョン間でこの 3 消費者に追従——統合フィードバックによる追加変更を想定。
 
 ## 構成
 
@@ -70,7 +70,7 @@ cargo run --example demo_flash                   # # フラッシュ候補デバ
 | `src/payload.rs` | ペイロードのパック / マニフェスト / ストリーム展開 |
 | `src/targets/` | インストール target（Windows/Linux/macOS 登録）とフラッシュ target |
 | `demo-app/` | ShunDemo——Tauri 2 ペイロードアプリ（サンプル UI、配布マニフェスト） |
-| `shell/` | インストーラーシェル：hikari UI（Tauri）+ egui オフラインフォールバック |
+| `shell/` | インストーラーシェル：hikari webview UI + egui / ratatui オフライン画面 |
 | `docs/` | 言語別ガイドと設計ノート |
 
 ## 開発

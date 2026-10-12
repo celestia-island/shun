@@ -39,9 +39,9 @@ build et le shell d'exécution :
   - `install` — enregistrement façon NSIS, par plateforme : entrées ARP Windows, raccourcis (avec AUMID), verbes du menu contextuel de l'Explorateur, liens profonds, par utilisateur ou machine (auto-élévation) ; lanceurs `.desktop` Linux avec actions de bureau ; complétion `.app` macOS plus Launch Services — et un mode portable qui n'écrit aucun état système nulle part ;
   - `flash` — écrire une image sur un périphérique bloc avec vérification après écriture.
 
-L'assistant lui-même est un **pipeline déclaratif** (`mode | scope | license | content | install`, ordre libre) ; son volet d'installation affiche une vraie barre de progression pondérée par phase et un terminal repliable qui journalise chaque opération de fichier — verbosité configurable via `shell.log-level`.
+L'assistant lui-même est un **pipeline déclaratif** (`mode | scope | license | content | pairing | install`, ordre libre) ; son volet d'installation affiche une vraie barre de progression pondérée par phase et un terminal repliable qui journalise chaque opération de fichier — verbosité configurable via `shell.log-level`.
 
-Sous Windows, le shell a deux visages : une interface WebView hikari et un **fallback egui** embarqué qui n'a pas du tout besoin de WebView2 — même flux, même manifeste (`--fallback` le force). Un runtime WebView2 à version fixe peut voyager dans le payload, une copie partagée par le shell et l'application installée.
+Sous Windows, le shell a quatre visages : une interface WebView hikari, un **fallback egui** embarqué qui n'a pas du tout besoin de WebView2, un assistant terminal ratatui et le CLI headless — même flux, même manifeste (`--no-webview` force egui, `--no-gui` le terminal ; `--fallback` est l'orthographe historique). Un runtime WebView2 à version fixe peut voyager dans le payload, une copie partagée par le shell et l'application installée.
 
 ## Exemple
 
@@ -49,7 +49,7 @@ Une démo couvre la livraison de bout en bout — un vrai payload Tauri 2 (`demo
 
 ```bash
 just demo                                        # # staging → build → lancer le shell d'installation
-just demo -- --fallback                          # # forcer le shell egui hors ligne
+just demo -- --no-webview                        # # forcer le shell egui hors ligne
 cargo run --example demo_install                 # # générer un paquet .shun + installation locale
 cargo run --example demo_install -- --portable   # # installation portable (aucun état système)
 cargo run --example demo_flash                   # # énumérer les périphériques flashables
@@ -60,7 +60,7 @@ Référence complète des champs :[guide de configuration](./guides/configuratio
 
 ## Statut
 
-Version actuelle : **0.2.1**. La crate se stabilise face à trois consommateurs réels de l'écosystème celestia — le shell d'installation WoWSP, shittim-chest local, et le flasheur d'images evernight. Les API suivent ces trois consommateurs entre versions mineures — attendez-vous à des changements additifs issus de leurs retours d'intégration.
+Version actuelle : **0.6.21**. La crate se stabilise face à trois consommateurs réels de l'écosystème celestia — le shell d'installation WoWSP, shittim-chest local, et le flasheur d'images evernight. Les API suivent ces trois consommateurs entre versions mineures — attendez-vous à des changements additifs issus de leurs retours d'intégration.
 
 ## Structure
 
@@ -71,7 +71,7 @@ Version actuelle : **0.2.1**. La crate se stabilise face à trois consommateurs 
 | `src/payload.rs` | Empaquetage du payload / manifeste / extraction en flux |
 | `src/targets/` | Targets install (enregistrement Windows/Linux/macOS) et flash |
 | `demo-app/` | ShunDemo — l'app payload Tauri 2 (UI d'exemple, manifeste de livraison) |
-| `shell/` | Shell d'installation : UI hikari (Tauri) + fallback egui hors ligne |
+| `shell/` | Shell d'installation : UI webview hikari + faces hors ligne egui / ratatui |
 | `docs/` | Guides et notes de conception, par langue |
 
 ## Développement

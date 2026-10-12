@@ -28,4 +28,7 @@ cargo run -p shun_installer
 
 El shell incrusta el payload de demo en tiempo de construcción (patrón de
 instalador mono-archivo) y muestra los modos de entrega declarados en
-`shell/Cargo.toml` → `[package.metadata.shun]`.
+`demo-app/Cargo.toml` → `[package.metadata.shun]` — el manifiesto de la
+crate de demo vecina, que incrusta build.rs (`SHUN_MANIFEST` lo
+sobreescribe; la crate del shell no lleva su propio
+`[package.metadata.shun]`).

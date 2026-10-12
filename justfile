@@ -68,10 +68,10 @@ demo-payload:
     cargo run --quiet -p shun -- stage --manifest demo-app/Cargo.toml
 
 # Demo: the comprehensive one — stage the demo app, build and run the
-# installer shell over it (hikari UI; --fallback forces the egui shell).
+# installer shell over it (hikari UI; --no-webview forces the egui shell).
 demo ARGS='':
     just demo-payload
-    cargo run --release -p shun_demo_shell -- {{ARGS}}
+    cargo run --release -p shun_installer -- {{ARGS}}
 
 # Demo (CLI): generate <Product>.shun and run a local install.
 demo-install ARGS='':

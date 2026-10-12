@@ -27,4 +27,6 @@ cargo run -p shun_installer
 
 Оболочка встраивает демо-payload во время сборки (паттерн однофайлового
 установщика) и отображает режимы доставки, объявленные в
-`shell/Cargo.toml` → `[package.metadata.shun]`.
+`demo-app/Cargo.toml` → `[package.metadata.shun]` — манифест соседнего
+демо-crate, который встраивает build.rs (`SHUN_MANIFEST` переопределяет;
+у самой crate оболочки своего `[package.metadata.shun]` нет).

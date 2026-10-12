@@ -27,4 +27,6 @@ cargo run -p shun_installer
 
 The shell embeds the demo payload at build time (single-file installer
 pattern) and renders the delivery modes declared in
-`shell/Cargo.toml` → `[package.metadata.shun]`.
+`demo-app/Cargo.toml` → `[package.metadata.shun]` — the sibling demo
+crate's manifest, which build.rs embeds (`SHUN_MANIFEST` overrides; the
+shell crate carries no `[package.metadata.shun]` of its own).

@@ -25,4 +25,7 @@ cargo run -p shun_installer
 ```
 
 셸은 빌드 시점에 데모 payload를 내장(단일 파일 설치 패턴)하며,
-`shell/Cargo.toml` → `[package.metadata.shun]`에 선언된 배포 모드를 렌더링합니다.
+`demo-app/Cargo.toml` → `[package.metadata.shun]`에 선언된 배포 모드를
+렌더링합니다 — 인접한 데모 crate의 매니페스트를 build.rs가 내장합니다
+(`SHUN_MANIFEST`로 재정의 가능. 셸 crate 자체는
+`[package.metadata.shun]`을 갖지 않음).

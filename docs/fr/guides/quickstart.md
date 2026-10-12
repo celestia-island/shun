@@ -29,4 +29,7 @@ cargo run -p shun_installer
 
 Le shell embarque le payload de démo à la construction (modèle
 d'installateur mono-fichier) et rend les modes de livraison déclarés dans
-`shell/Cargo.toml` → `[package.metadata.shun]`.
+`demo-app/Cargo.toml` → `[package.metadata.shun]` — le manifeste de la
+crate de démo voisine, embarqué par build.rs (`SHUN_MANIFEST` pour
+surcharger ; la crate shell ne porte pas son propre
+`[package.metadata.shun]`).

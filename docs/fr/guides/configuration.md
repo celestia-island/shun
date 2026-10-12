@@ -39,18 +39,19 @@ target = "data-folder"                     # data-folder | uninstall | app
 [package.metadata.shun.webview2]           # Windows uniquement
 type = "skip"                              # skip | evergreen-installer | fixed-version
 # path = "WebView2Runtime"                 # fixed-version : dossier runtime extrait
-# silent-install = true                    # evergreen-installer : exécute en silence
-                                           #   l'installateur embarqué sans runtime (défaut)
+# silent-install = true                    # evergreen-installer : exécute
+                                           #   l'installateur embarqué sans runtime (défaut —
+                                           #   l'assistant demande d'abord, headless en silence)
 # download-url = "https://…"               # evergreen-installer : sans installateur embarqué, récupère
-                                           #   l'installateur Evergreen à l'installation et l'exécute en
-                                           #   silence (même option que silent-install)
+                                           #   l'installateur Evergreen à l'installation (même
+                                           #   consentement que l'installateur embarqué)
 # warn-missing = true                      # skip / evergreen-installer : le repli egui avertit
                                            #   au début et à la fin, avec le lien officiel
                                            #   Microsoft (défaut)
 
 [[package.metadata.shun.steps]]            # pipeline ordonné de l'assistant (optionnel)
 columns = 2              # colonnes de la grille des modes (par défaut : une par mode)
-kind = "mode"                              # mode | scope | license | content | install
+kind = "mode"                              # mode | scope | license | content | pairing | install
 align = "center"                           # remplacement par étape : center | start (défaut du kind)
 
 [[package.metadata.shun.steps]]
@@ -87,7 +88,7 @@ configure le shell d'exécution :
 timeline = "left"          # top (rail horizontal) | left (rail vertical à gauche)
 log-level = "all"          # all (par défaut) | files | scripts | off
 log-order = "newest"      # newest (défaut, dernier en haut) | oldest (ajout à la fin)
-language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es
+language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -97,7 +98,7 @@ accent = [34, 211, 238]    # canaux RGB — remplace --color-primary
 ### Langue de l'assistant
 
 L'assistant demande sa langue à la **première étape** : un sélecteur
-listant les huit langues prises en charge, chacune libellée dans sa
+listant les dix langues prises en charge, chacune libellée dans sa
 propre langue (English, 简体中文, 日本語, ...). Le changement re-rend
 immédiatement les textes de l'interface et les documents de licence —
 l'accord suit la langue choisie via `license-locales` / `locale-paths`
@@ -176,7 +177,7 @@ est transporté sous `licenses` (title + body) ; la chaîne historique
 afin que les moteurs de rendu qui ne lisent que `body` continuent
 d'afficher l'accord complet.
 
-L'interface embarque huit locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`,
-`fr`, `ru`, `es`) avec leurs textes par défaut ; `shell.language = "auto"`
+L'interface embarque dix locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`,
+`fr`, `ru`, `es`, `de`, `pt`) avec leurs textes par défaut ; `shell.language = "auto"`
 suit le système, une locale fixe l'épingle, et les licences par locale
 restent localisées.

@@ -41,13 +41,15 @@ shun 打包桌面软件发布的**交付**半边。一份配置——应用自�
     Services——以及任何平台都不写系统状态的便携模式；
   - `flash` —— 镜像写入块设备并做写后校验。
 
-向导本身是**声明式管线**（`mode | scope | license | content |
+向导本身是**声明式管线**（`mode | scope | license | content | pairing |
 install`，自由排序），安装页显示真实的按阶段加权进度条与可折叠终端，
 逐行记录每个文件操作——详细度由 `shell.log-level` 配置。
 
-Windows 上壳有两副面孔：hikari WebView UI 与内嵌的**egui 降级界面**
-（完全不需要 WebView2）——同一流程、同一清单（`--fallback` 强制）。
-固定版本 WebView2 运行时可随载荷携带，安装壳与已装应用共享一份副本。
+Windows 上壳有四副面孔：hikari WebView UI、内嵌的**egui 降级界面**
+（完全不需要 WebView2）、ratatui 终端向导与 headless CLI——同一流程、
+同一清单（`--no-webview` 强制 egui，`--no-gui` 强制终端；`--fallback`
+为旧拼写）。固定版本 WebView2 运行时可随载荷携带，安装壳与已装应用
+共享一份副本。
 
 ## 示例
 
@@ -57,7 +59,7 @@ Windows 上壳有两副面孔：hikari WebView UI 与内嵌的**egui 降级界�
 
 ```bash
 just demo                                        # 暂存 → 构建 → 运行安装壳
-just demo -- --fallback                          # 强制离线 egui 壳
+just demo -- --no-webview                        # 强制离线 egui 壳
 cargo run --example demo_install                 # 生成 .shun 包 + 本机安装
 cargo run --example demo_install -- --portable   # 便携安装（零系统状态）
 cargo run --example demo_flash                   # 枚举可烧写设备
@@ -68,7 +70,7 @@ cargo run --example demo_flash                   # 枚举可烧写设备
 
 ## 状态
 
-当前发布：**0.2.1**。crate 正面向 celestia 生态的三个真实消费者打磨——
+当前发布：**0.6.21**。crate 正面向 celestia 生态的三个真实消费者打磨——
 WoWSP 安装器壳、shittim-chest 本地版、evernight 镜像烧写器。API 在次要
 版本间跟随这三个消费者——预期来自其集成反馈的增量变更。
 
@@ -81,7 +83,7 @@ WoWSP 安装器壳、shittim-chest 本地版、evernight 镜像烧写器。API �
 | `src/payload.rs` | 载荷打包 / 清单 / 流式解压 |
 | `src/targets/` | 安装 target（Windows/Linux/macOS 注册）与烧写 target |
 | `demo-app/` | ShunDemo——Tauri 2 载荷应用（示例 UI、交付清单） |
-| `shell/` | 安装壳：hikari UI（Tauri）+ egui 离线降级 |
+| `shell/` | 安装壳：hikari webview UI + egui / ratatui 离线界面 |
 | `docs/` | 分语言指南与设计笔记 |
 
 ## 开发
