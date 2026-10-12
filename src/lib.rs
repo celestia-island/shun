@@ -53,8 +53,9 @@ pub mod targets;
 #[cfg(feature = "online")]
 pub mod update;
 // Evergreen offline-installer delivery: discovery inside the payload,
-// per-user staging, and the silent `/silent /install` runner the shell
-// uses on runtime-less machines before the face ladder resolves.
+// per-user staging, and the `/silent /install` runner the shell's
+// install step uses on runtime-less machines (wizard consent; headless
+// silent).
 pub mod webview2;
 
 pub mod wizard;

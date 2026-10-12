@@ -743,9 +743,9 @@ pub(crate) fn open_external(url: &str) {
     }
 }
 
-// The language the fallback UI renders in — the egui side carries the
-// two TEXTS tables below, so its first-step language selector offers
-// these two locales (the web shell offers all eight). The chosen value
+// The language the fallback UI renders in — the egui side reads the
+// same wizard-strings.json the web face exports (all ten locales), so
+// its first-step language selector offers them all. The chosen value
 // is what reaches the install context (and from there `SHUN_LANGUAGE`
 // for scripts and the install manifest).
 

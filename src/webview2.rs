@@ -3,11 +3,13 @@
 //! The `evergreen-installer` strategy (config) carries Microsoft's
 //! standalone Evergreen installer inside the payload, under the
 //! `webview2/` prefix. On a machine the loader reports as runtime-less,
-//! the shell stages that subtree into its per-user cache and runs the
-//! installer silently (`/silent /install`) BEFORE the face ladder
-//! resolves — a successful run upgrades the machine in place and the
-//! webview face stays reachable; a declined elevation or a failed run
-//! degrades to the egui face instead of dying on a message box.
+//! initialization only decodes and stages that subtree into the
+//! per-user cache — the runtime install happens at the INSTALL step:
+//! wizard runs ask first (a consent callout) and run the installer
+//! with its own window, headless runs pass `/silent /install` under
+//! the `silent-install` knob. A declined consent or a failed run just
+//! leaves the runtime missing — the ladder degrades to the egui face
+//! instead of dying on a message box.
 //!
 //! Discovery is by prefix + file-name pattern, not an explicit path, so
 //! the payload layout stays a packaging concern:
@@ -34,9 +36,9 @@
 //! whose payload carries no installer resolves to
 //! [`EvergreenSource::Download`]: the runtime shell (which owns the
 //! HTTP fetch — this crate stays offline-safe) downloads Microsoft's
-//! Evergreen installer from that URL at install time and runs it
-//! through the same silent path as a carried one. The
-//! `silent-install` knob gates carried and downloaded alike, so
+//! Evergreen installer from that URL inside the same install-step
+//! acquire, behind the same consent (headless keeps the silent path).
+//! The `silent-install` knob gates carried and downloaded alike, so
 //! disabling it opts out of both. The intended value is a permanent
 //! permalink (the Evergreen bootstrapper's fwlink) — a few MB that
 //! fetches the actual runtime itself.
@@ -56,7 +58,7 @@ const EVERGREEN_INSTALLER_STEM: &str = "microsoftedgewebview2runtimeinstaller";
 
 /// Whether the payload carries an Evergreen offline installer under the
 /// [`EVERGREEN_PREFIX`] subtree — the "actually carried" gate for the
-/// silent-install bootstrap and the missing-runtime warning.
+/// install-step runtime acquire and the missing-runtime warning.
 ///
 /// Carry exactly ONE architecture's installer: discovery takes the
 /// first stem match in pack order, so an X64+ARM64 pair runs whichever
@@ -86,9 +88,9 @@ fn evergreen_entry(payload: &ArchivePayload) -> Option<std::path::PathBuf> {
         .cloned()
 }
 
-/// The per-user cache the installer subtree stages into before the
-/// silent run — the same one-copy cache the fixed-version bootstrap
-/// uses, scoped per product.
+/// The per-user cache the installer subtree stages into at init — the
+/// install step runs it from there; the same one-copy cache the
+/// fixed-version bootstrap uses, scoped per product.
 pub fn evergreen_cache(product: &str) -> Option<std::path::PathBuf> {
     std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
@@ -132,19 +134,20 @@ pub fn stage_evergreen_with_progress(
 }
 
 /// Where the install step can get an Evergreen installer on a
-/// runtime-less machine — the ONE decision every caller (startup
-/// bootstrap, install-step acquire, fallback banner copy) renders.
+/// runtime-less machine — the ONE decision every caller (install-step
+/// acquire, consent ask, fallback banner copy) renders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EvergreenSource {
     /// The payload carries an installer under the `webview2/` prefix;
-    /// the boxed path is its archive-relative entry. Handled before the
-    /// face ladder (startup bootstrap) — never re-attempted at install
-    /// time, a second UAC prompt on a declined run would read as a bug.
+    /// the boxed path is its archive-relative entry. Staged into the
+    /// per-user cache at init, run at the install step behind the
+    /// consent ask (headless: behind the `silent-install` knob).
     Carried(std::path::PathBuf),
 
     /// Nothing carried, but the manifest declares `download-url` and the
     /// `silent-install` knob is on: fetch the installer from this URL at
-    /// install time and run it silently.
+    /// install time through the same acquire (the same consent ask;
+    /// headless runs it silently).
     Download(String),
 
     /// Nothing to install from — the missing-runtime warnings and the

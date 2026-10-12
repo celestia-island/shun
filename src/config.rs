@@ -623,10 +623,12 @@ pub struct ProductIdentity {
 /// system writes, no version drift. The Evergreen installer instead
 /// registers a system-wide runtime (~127 MB embedded) shared with other
 /// apps, but requires elevation at install time; on a runtime-less
-/// machine the shell runs a carried installer silently before choosing a
-/// face, and a build that carries none can still fetch Microsoft's
-/// Evergreen installer from the network at install time (`download-url`)
-/// — the `silent-install` knob (default on) gates both sources. Both
+/// machine the install step acquires the runtime — wizard runs ask
+/// first and run the installer with its own window, headless runs pass
+/// `/silent /install` behind the `silent-install` knob (default on) —
+/// and a build that carries no installer can still fetch Microsoft's
+/// Evergreen installer from the network at install time
+/// (`download-url`), the same knob gating both sources. Both
 /// `skip` and `evergreen-installer` also carry `warn-missing` (default
 /// on): when the machine still has no runtime and nothing to install
 /// from, the egui fallback warns at the start and the end of the wizard
@@ -654,8 +656,9 @@ pub enum Webview2Strategy {
     /// inside the payload under the `webview2/` prefix (see
     /// [`crate::webview2`]).
     EvergreenInstaller {
-        /// Silently run the carried installer when the machine has no
-        /// runtime (before the face ladder resolves). Default on.
+        /// The headless consent for the install-step runtime acquire:
+        /// run the carried installer with `/silent /install` when the
+        /// machine has no runtime (wizard runs ask instead). Default on.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         silent_install: Option<bool>,
         /// Warn (fallback banner + done page, with the Microsoft
@@ -666,12 +669,14 @@ pub enum Webview2Strategy {
         /// Networked fallback for builds that carry no `webview2/`
         /// subtree (lite flavors): when the machine has no runtime, the
         /// install step downloads Microsoft's Evergreen installer from
-        /// this URL and runs it silently — the SAME `silent-install`
-        /// knob gates the carried and the downloaded source, so
-        /// disabling it opts out of both. Empty/absent keeps the build
-        /// fully offline (warnings only). A permanent permalink such as
-        /// the Evergreen bootstrapper's fwlink is the intended value;
-        /// the file is a few MB and fetches the runtime itself.
+        /// this URL and runs it through the same acquire (the same
+        /// consent ask; headless keeps the silent path) — the SAME
+        /// `silent-install` knob gates the carried and the downloaded
+        /// source, so disabling it opts out of both. Empty/absent keeps
+        /// the build fully offline (warnings only). A permanent
+        /// permalink such as the Evergreen bootstrapper's fwlink is the
+        /// intended value; the file is a few MB and fetches the runtime
+        /// itself.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         download_url: Option<String>,
     },
@@ -943,7 +948,8 @@ pub struct ShellUiConfig {
     pub theme: Option<ThemeConfig>,
 
     /// UI language: `auto` (follow the system) or a fixed locale
-    /// (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`, `ru`, `es`).
+    /// (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`, `ru`, `es`, `de`,
+    /// `pt`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 

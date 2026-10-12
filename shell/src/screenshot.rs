@@ -1,6 +1,6 @@
 //! Offline window capture for both shell UIs.
 //!
-//! `shun-demo-shell --screenshot=<path.png>` renders the UI (webview or
+//! `shun-installer --screenshot=<path.png>` renders the UI (webview or
 //! egui), captures the window content with `PrintWindow(
 //! PW_RENDERFULLCONTENT)` — window-content capture, not desktop
 //! automation: no focus stealing, no input synthesis, works when the

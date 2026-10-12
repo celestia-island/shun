@@ -1190,15 +1190,14 @@ fn main() {
     // `--no-gui` from cmd/PowerShell otherwise resolves to the help
     // text instead of the TUI.
     let _ = shun::env_probe::attach_parent_console();
-    // Evergreen bootstrap FIRST — but ONLY when the webview face is a
-    // live candidate for this run. On a runtime-less machine whose
-    // payload carries the offline installer (and `silent-install` is
-    // not turned off), this upgrades the machine in place BEFORE the
-    // ladder resolves, keeping the webview face reachable; a declined
-    // elevation or failed run just leaves the runtime missing and the
-    // refined probe degrades to the egui face. The candidate gate
-    // matters as much as the ordering: `--silent` promises no UI at all
-    // (a UAC consent would break it), the ARP `/uninstall` must not
+    // Whether the webview face is a live candidate for this run — the
+    // gate for the fixed-version runtime staging under the splash (a
+    // run that can never take the webview face skips the copy-only
+    // staging). Nothing INSTALLS at init anymore: the carried Evergreen
+    // installer moved to the install step behind the consent ask
+    // (headless: behind `silent-install`); initialization only decodes
+    // and stages. The candidate gate matters as much as ever:
+    // `--silent` promises no UI at all, the ARP `/uninstall` must not
     // mutate the machine on its way OUT, `--no-gui` may resolve to the
     // read-only help text, and the forced-egui flags explicitly
     // declined the webview face.
