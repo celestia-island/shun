@@ -83,7 +83,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `logo` | path | — | 壳的 logo 资产（相对清单文件） |
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
-| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`root-dir-folder`（裸盘符根目录下垫的文件夹，默认取产品名） |
+| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（环境变量展开的默认位置覆盖）、`verbs`、`deep-links`、`aumid`、`icon`、`root-dir-folder`（裸盘符根目录下垫的文件夹，默认取产品名） |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
@@ -124,6 +124,14 @@ require-removable = true                   # 拒绝非可移动设备
 | `evergreen-installer` | Evergreen 离线安装器（约 127 MB） | 安装时提权 | 注册系统级运行时 |
 | `fixed-version` | 解压后的运行时目录 | 无 | 私有副本由壳与已装应用共享，横跨安装与便携模式 |
 
+实测（2026-09，v151 x64）：fixed-version 运行时**压缩约 293 MB /
+解压约 661 MB**——已接受的成本，与其他打包器相当。发行物只内嵌
+**一份**副本：壳把 payload 的运行时子树暂存到
+`%LOCALAPPDATA%\shun\<product>\webview2` 并把
+`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` 指向那里完成自举；解压感知
+哈希，重装与已暂存文件会被沿用而非重写（"Reusing" 进度事件）——
+同一引擎不会出现第二份。
+
 ### 无运行时机器的降级
 
 面阶梯永远不会因缺少运行时而死亡——只会降级。阶梯解析前，壳用加载器
@@ -159,6 +167,39 @@ warn-missing = false                    # 静默降级，不带警告横幅
 `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`，因此"仅 fixed-version、未安装
 Evergreen"的机器即便本可创建 webview，也会落到 egui 面——壳优先选择
 一定能渲染的面。
+
+## MSIX 图标底板
+
+Windows 会在每个忽略 `BackgroundColor="transparent"` 的表面上，把
+打包桌面应用的图标垫在默认系统蓝（`#0078D7`）上——App Installer
+对话框就是其中之一。`msix.logo-background` 接受 `#RRGGBB` 颜色：
+shun CLI 把透明图标合成到该色上作为包资产，并把它声明为
+`BackgroundColor`，品牌由此掌控每个表面的底板色：
+
+```toml
+[package.metadata.shun.msix]
+# identity-name / publisher / display-name / executable ...
+logo-background = "#0F172A"
+```
+
+## 离线壳
+
+安装壳在 hikari webview UI 之外还内嵌了一个 egui 离线 UI。它由同一
+份清单与 payload 驱动（一份流程，三个渲染器），不渲染特效，并在
+Windows 缺少 WebView2 时被选中（横幅会明确说明缺失的环境）或被
+手动强制：
+
+```bash
+shun-installer --no-webview   # 同一向导，离线渲染器（--fallback 为旧拼写）
+```
+
+两个 UI 都支持离线截图——窗口内容以 `PrintWindow` 捕获，无需桌面
+自动化，保存后进程即退出：
+
+```bash
+shun-installer --screenshot=ui.png                 # hikari（webview）UI
+shun-installer --no-webview --screenshot=ui.png    # egui 离线 UI
+```
 
 ## 壳 UI
 
