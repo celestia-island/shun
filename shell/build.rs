@@ -74,7 +74,15 @@ fn warn_on_stale_web_dist(manifest_dir: &Path) {
             }
         }
     }
-    if newest_src.is_some_and(|src_mtime| src_mtime > dist_mtime) {
+    // Fresh git checkouts stamp every file with the checkout time in
+    // arbitrary write order, so a few seconds of "src newer than dist"
+    // is noise, not staleness; a real forgotten rebuild is minutes or
+    // more apart.
+    const MTIME_SLACK: std::time::Duration = std::time::Duration::from_secs(60);
+    if newest_src
+        .and_then(|src_mtime| src_mtime.duration_since(dist_mtime).ok())
+        .is_some_and(|age| age > MTIME_SLACK)
+    {
         println!(
             "cargo:warning=shell/web/dist is OLDER than its sources — the embedded web face is stale. Run `pnpm build` in shell/web and commit the dist."
         );
