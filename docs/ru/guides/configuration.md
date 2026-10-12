@@ -90,11 +90,18 @@ timeline = "left"          # top (горизонтальная лента) | lef
 log-level = "all"          # all (по умолчанию) | files | scripts | off
 log-order = "newest"      # newest (по умолчанию, свежие сверху) | oldest (добавление в конец)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
+faces = ["webview", "egui", "tui"]  # лица, которые может показывать оболочка продукта (по умолчанию все три)
 
 [shell.theme]
 mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # каналы RGB — переопределяют --color-primary
 ```
+
+`shell.faces` ограничивает лица, которые может показывать оболочка
+этого продукта, — `webview` / `egui` / `tui`; отсутствие ключа = все
+три. Headless-CLI (`--silent`, строка деинсталляции ARP) — субстрат,
+его отключить нельзя. Запрос отключённого лица — ошибка; автоподбор
+пропускает отключённые лица.
 
 ### Язык мастера
 

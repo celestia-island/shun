@@ -82,11 +82,17 @@ timeline = "left"          # top（頂部橫排）| left（左側直排）
 log-level = "all"          # all（預設）| files | scripts | off
 log-order = "newest"      # newest（預設，最新在頂）| oldest（追加在尾部）
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
+faces = ["webview", "egui", "tui"]  # 本產品殼可呈現的介面（預設三項全開）
 
 [shell.theme]
 mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB 色頻——覆寫 --color-primary
 ```
+
+`shell.faces` 限定本產品殼可呈現的介面——`webview` / `egui` /
+`tui`；缺省即三項全開。headless CLI 面（`--silent`、ARP 解除安裝
+字串）是基底，無法停用。請求被停用的介面是錯誤；自動選擇會跳過
+被停用的面。
 
 ### 精靈語言
 
