@@ -279,14 +279,14 @@ body {
 /* ── license pane ─────────────────────────────────────────────────── */
 
 .license-box {
-  // The cap keeps the tall agreement text from pushing the checkbox and
-  // footer buttons out of the window: the box scrolls internally, and
-  // the cap stops it well above the bottom edge so the agree row keeps
-  // open air under it instead of hugging the window bottom (the old
-  // 300px reserve let the box eat every free pixel down to the footer).
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: calc(100vh - 400px);
+  // Space-derived height, the scroll-area recipe: basis 0 + grow fills
+  // EXACTLY the pane's leftover after the heading, pager, agree row and
+  // the reserved footer band (an `auto` basis let the content floor win
+  // and the box overran the reservation). Internal scroll on short
+  // windows; the old viewport-math caps (`100vh - 300px`, later
+  // `- 400px`) guessed at the footer's band and kept missing it.
+  flex: 1 1 0;
+  min-height: 160px;
   min-width: 0;
   border: 1px solid rgb(var(--color-border));
   border-radius: var(--radius-md);
@@ -366,6 +366,20 @@ body {
   &:focus-visible {
     outline: 2px solid rgb(var(--color-focused-border) / 60%);
   }
+}
+
+// The document steps (license / content) run their content to the
+// pane's bottom edge, where the floating footer (bottom 20px + 40px
+// lg plates) overlays it: reserve that band plus real air, so the
+// card's lower border and the agree checkbox can never hug the
+// 同意并安装 button (the sandbox report).
+.wizard-pane--doc {
+  padding-bottom: 96px;
+}
+
+// The agree row's breathing room above the pane's own 16px gap.
+.license-agree {
+  margin-top: 8px;
 }
 
 // Multi-document pager under the license box (single-doc installs never

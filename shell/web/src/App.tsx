@@ -984,7 +984,7 @@ export default defineComponent({
           (() => {
             const contentStep = flow[flowIndex(step.value)].step;
             return (
-              <section class="wizard-pane">
+              <section class="wizard-pane wizard-pane--doc">
                 <h1>{contentStep?.title}</h1>
                 <HkScrollContainer class="license-box" axis="vertical">
                   <div
@@ -1002,7 +1002,7 @@ export default defineComponent({
             onClaimed={() => (pairingClaimed.value = true)}
           />
         ) : step.value === "license" ? (
-          <section class="wizard-pane">
+          <section class="wizard-pane wizard-pane--doc">
             <h1>{s.license.title}</h1>
             <p class="wizard-sub">{s.license.sub}</p>
             <HkScrollContainer class="license-box" axis="vertical">
@@ -1039,11 +1039,13 @@ export default defineComponent({
                 </HkButton>
               </div>
             )}
-            <HkCheckbox
-              modelValue={agreed.value}
-              label={s.license.agree}
-              onUpdate:modelValue={(v: boolean) => (agreed.value = v)}
-            />
+            <div class="license-agree">
+              <HkCheckbox
+                modelValue={agreed.value}
+                label={s.license.agree}
+                onUpdate:modelValue={(v: boolean) => (agreed.value = v)}
+              />
+            </div>
           </section>
         ) : step.value === "install" ? (
           <section class="wizard-pane wizard-pane--install">
