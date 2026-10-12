@@ -17,9 +17,74 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Warns when the embedded web frontend (`web/dist`, TRACKED in this
+/// repo) is older than its sources.
+///
+/// The dist is committed so tag checkouts and local `shun build` runs
+/// carry a usable face without a node toolchain — but that also means a
+/// stale build is invisible: several web-face fixes once reached `src`
+/// without ever reaching an installer because nobody rebuilt the dist
+/// (found in the field: the license step's spacing still showed the old
+/// layout). A `cargo:warning` in every build surfaces the trap;
+/// `pnpm build` in `shell/web` + committing the dist clears it.
+fn warn_on_stale_web_dist(manifest_dir: &Path) {
+    let web = manifest_dir.join("web");
+    let dist_mtime = match std::fs::metadata(web.join("dist").join("index.html"))
+        .and_then(|meta| meta.modified())
+    {
+        Ok(mtime) => mtime,
+        // No dist at all: the include step fails loudly on its own.
+        Err(_) => return,
+    };
+    fn newest_mtime(dir: &Path, newest: &mut Option<std::time::SystemTime>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name == "node_modules" || name == "dist" {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                newest_mtime(&entry.path(), newest);
+            } else if let Ok(mtime) = meta.modified() {
+                if newest.is_none_or(|current| mtime > current) {
+                    *newest = Some(mtime);
+                }
+            }
+        }
+    }
+    let mut newest_src = None;
+    newest_mtime(&web.join("src"), &mut newest_src);
+    for file in ["package.json", "vite.config.ts", "index.html", "../strings"] {
+        let path = web.join(file);
+        let entries: Vec<PathBuf> = if path.is_dir() {
+            std::fs::read_dir(&path)
+                .map(|read| read.flatten().map(|entry| entry.path()).collect())
+                .unwrap_or_default()
+        } else {
+            vec![path]
+        };
+        for entry in entries {
+            if let Ok(mtime) = std::fs::metadata(&entry).and_then(|meta| meta.modified()) {
+                if newest_src.is_none_or(|current| mtime > current) {
+                    newest_src = Some(mtime);
+                }
+            }
+        }
+    }
+    if newest_src.is_some_and(|src_mtime| src_mtime > dist_mtime) {
+        println!(
+            "cargo:warning=shell/web/dist is OLDER than its sources — the embedded web face is stale. Run `pnpm build` in shell/web and commit the dist."
+        );
+    }
+}
+
 fn main() {
     let own_manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo");
+    warn_on_stale_web_dist(Path::new(&own_manifest_dir));
 
     // Delivery manifest resolution: the `shun build` CLI points
     // SHUN_MANIFEST at the application's manifest; a plain cargo build of
