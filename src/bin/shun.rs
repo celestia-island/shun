@@ -375,7 +375,7 @@ fn run(command: CliCommand) -> Result<(), String> {
                 .map_err(|e| format!("shell manifest parse: {e}"))?;
             // The artifact cargo writes is named after the [[bin]] target,
             // not the package: shells routinely rename their binary
-            // (shun-demo-shell.exe for the shun_demo_shell package), so
+            // (shun-installer.exe for the shun_installer package), so
             // resolve the first [[bin]].name and fall back to the package
             // name (the implicit bin target) only when no [[bin]] table
             // declares one.
