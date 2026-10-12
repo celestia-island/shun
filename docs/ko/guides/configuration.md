@@ -86,11 +86,18 @@ timeline = "left"          # top (상단 가로) | left (좌측 세로)
 log-level = "all"          # all(기본값) | files | scripts | off
 log-order = "newest"      # newest(기본값, 최신이 위) | oldest(끝에 추가)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
+faces = ["webview", "egui", "tui"]  # 이 제품 셸이 제공할 수 있는 화면(기본: 세 가지 모두)
 
 [shell.theme]
 mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB 채널 — --color-primary 대체
 ```
+
+`shell.faces`는 이 제품의 셸이 제공할 수 있는 화면 — `webview` /
+`egui` / `tui` — 을 제한합니다. 생략하면 세 가지 모두. 헤드리스
+CLI 화면(`--silent`, ARP 제거 문자열)은 기반이라 비활성화할 수
+없습니다. 비활성화된 화면을 요청하면 오류가 나고, 자동 선택은
+비활성화된 화면을 건너뜁니다.
 
 ### 위자드 언어
 

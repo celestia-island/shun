@@ -89,6 +89,11 @@ require-removable = true                   # refuse non-removable devices
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
+| `steps` | array of tables | default pipeline | Ordered wizard pipeline (`mode`/`scope`/`license`/`content`/`pairing`/`install`, freely ordered; exactly one `install`) |
+| `script` | table | none | Payload script hooks: `runner` + `hooks[]` (`phase`/`script`) — see the scripting design note |
+| `variant` | array of tables | none | Named artifact configurations the `shun build --variant` flag selects |
+| `signing` | table | unsigned | Authenticode / codesign profile applied to built artifacts |
+| `license-sysl` | table | none | Bundle the SySL license + official translations from its repository |
 | `msix.logo-background` | color | `transparent` | Plate flattened under a transparent MSIX logo |
 | `flash` | table | — | Declares the flash target |
 
@@ -228,11 +233,18 @@ timeline = "left"          # top (horizontal rail) | left (vertical rail)
 log-level = "all"          # all (default) | files | scripts | off
 log-order = "newest"    # newest (default, latest on top) | oldest (append at tail)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
+faces = ["webview", "egui", "tui"]  # faces this product may present (default: all three)
 
 [shell.theme]
 mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB channels — overrides --color-primary
 ```
+
+`shell.faces` restricts the interface faces this product's shell may
+present — `webview` / `egui` / `tui`; absent means all three. The
+headless CLI face (`--silent`, the ARP uninstall string) is the
+substrate and cannot be disabled. Requesting a disabled face is an
+error; auto-selection skips disabled faces.
 
 ### Wizard language
 
@@ -254,6 +266,42 @@ receive it as the `SHUN_LANGUAGE` environment variable, and it is
 recorded in the on-disk install manifest (so repair/update passes can
 see it). What lands in the installed application's own configuration
 is up to the payload's scripts — shun only exports the fact.
+
+## Pairing step
+
+The `pairing` step kind claims a credential for this machine — the
+inverted lane: this machine displays a code, an operator types it into
+a control panel. One pane, two lanes:
+
+```toml
+[[package.metadata.shun.steps]]
+kind = "pairing"
+
+[package.metadata.shun.steps.pairing.source]
+kind = "gateway"                     # gateway | scripts
+official = "https://gateway.example.test"   # preselected gateway base URL
+# allow-custom = true                # also offer a custom gateway input (default)
+
+[package.metadata.shun.steps.pairing.identity]
+node-id = true                       # the gateway protocol keys on it
+name = false                         # optional device name (hostname prefill)
+# tier = 1                           # tier provisioned on claim, when the product pins one
+
+# env-file = "pairing.env"           # gateway lane: where the claimed credential lands
+                                     #   inside the install dir (.env style)
+```
+
+- `gateway` — the built-in JSON-RPC client (`pairing.request` mints
+  the code, `pairing.await` long-polls, `pairing.accept` delivers the
+  credential). No scripting runtime needed on the target machine; the
+  lane requires `node-id` and `env-file`.
+- `scripts` — product-owned activation: `request` / `await` / `record`
+  payload-relative Python scripts (`python3`, falling back to
+  `python`). The pane's answers arrive as one JSON object on the
+  script's **stdin** — never argv — and each phase's stdout must be
+  exactly one JSON value; `record` persists the claim (an `env-file`
+  is carried but unconsumed). Every phase runs under a deadline: a
+  hung script is killed, not waited out.
 
 ## Source
 
@@ -302,6 +350,45 @@ itself — a `latest` version marker as text (`fetch_text`), artifact
 downloads through the online payload pipeline (`OnlinePayload`:
 download → extract → verify).
 
+## Build variants
+
+`[[package.metadata.shun.variant]]` (singular — the table-array idiom)
+declares named artifact configurations the `shun build --variant <name>`
+flag selects — the axes behind an installer matrix (architecture and
+OS come from `--target`, resource packs ride the payload directories):
+
+```toml
+[[package.metadata.shun.variant]]
+name = "lite"                        # id + artifact-name suffix
+payload = "payload-lite"             # payload directory override
+faces = ["egui", "tui"]              # face overrides for this variant's shell
+
+[package.metadata.shun.variant.env]  # reaches the shell's cargo build
+SHUN_FLAVOR = "lite"                 # (and its build.rs) — flavor markers
+```
+
+Applying a variant swaps the payload directory and the shell's face
+list; `env` rides the shell build so flavors can embed markers.
+Unknown names are an error.
+
+## Code signing
+
+`[package.metadata.shun.signing]` configures signing of built
+artifacts — `shun build` signs the installer at the end of its run and
+`shun sign` signs standalone files (both skip with `--no-sign`).
+Absent = unsigned artifacts, fine for local testing:
+
+```toml
+[package.metadata.shun.signing.windows]   # Authenticode via signtool
+enabled = true
+thumbprint = "<certificate thumbprint>"   # selects a cert from the user/machine store (/sha1)
+# timestamp-url = "http://timestamp.digicert.com"   # RFC 3161 (/tr, the default)
+
+[package.metadata.shun.signing.macos]     # codesign
+enabled = true
+identity = "<signing identity>"
+```
+
 ## License and custom steps
 
 ```toml
@@ -340,3 +427,43 @@ The UI ships ten locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`, `fr`,
 `ru`, `es`, `de`, `pt`) with default texts; `shell.language = "auto"`
 follows the system, a fixed locale pins it, and per-locale license
 overrides keep localized agreements working.
+
+## License from the SySL repository
+
+`[package.metadata.shun.license-sysl]` bundles the Synthetic Source
+License and its official translations from the license's own
+repository at build time (requires the `online` feature) — wizards
+show the agreement in the user's language without vendoring license
+files:
+
+```toml
+[package.metadata.shun.license-sysl]
+repo = "celestia-island/sysl"        # default
+branch = "main"                      # default
+locales = ["zh-Hans", "ja"]          # translations to bundle (root English is always bundled)
+```
+
+Locale tags map onto the sysl repository's i18n directories
+(`zh-Hans` → `zhs`, `zh-Hant` → `zht`; `ja`/`ko`/`fr`/`ru`/`es`/`de`/
+`pt`/`ar` direct). The bundled documents render on the license step
+like any other license document.
+
+## Script hooks
+
+`[package.metadata.shun.script]` declares payload-relative runner
+scripts the delivery flow executes at phase boundaries. One runner per
+product — only `duckscript` (the embedded interpreter) is mounted
+today:
+
+```toml
+[package.metadata.shun.script]
+runner = "duckscript"
+
+[[package.metadata.shun.script.hooks]]
+phase = "post-install"               # prepare | post-install | pre-uninstall
+script = "scripts/post_install.ds"   # payload-relative, packed with the payload
+```
+
+A failing hook fails the flow. The full contract — phases, the
+environment hooks see (`SHUN_LANGUAGE` among them), and examples —
+lives in the [scripting design note](../design/scripting.md).

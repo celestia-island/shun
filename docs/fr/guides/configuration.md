@@ -89,11 +89,18 @@ timeline = "left"          # top (rail horizontal) | left (rail vertical à gauc
 log-level = "all"          # all (par défaut) | files | scripts | off
 log-order = "newest"      # newest (défaut, dernier en haut) | oldest (ajout à la fin)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
+faces = ["webview", "egui", "tui"]  # faces que le shell de ce produit peut présenter (défaut : les trois)
 
 [shell.theme]
 mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # canaux RGB — remplace --color-primary
 ```
+
+`shell.faces` restreint les faces que le shell de ce produit peut
+présenter — `webview` / `egui` / `tui` ; absent = les trois. La face
+CLI headless (`--silent`, la chaîne de désinstallation ARP) est le
+substrat et ne peut pas être désactivée. Demander une face désactivée
+est une erreur ; la sélection automatique saute les faces désactivées.
 
 ### Langue de l'assistant
 

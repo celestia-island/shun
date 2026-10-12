@@ -87,6 +87,11 @@ require-removable = true                   # 拒绝非可移动设备
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
+| `steps` | 表格数组 | 默认管线 | 有序向导管线（`mode`/`scope`/`license`/`content`/`pairing`/`install`，自由排序；恰好一个 `install`） |
+| `script` | table | 无 | payload 脚本钩子：`runner` + `hooks[]`（`phase`/`script`）——见脚本设计笔记 |
+| `variant` | 表格数组 | 无 | 由 `shun build --variant` 旗标选取的命名构建配置 |
+| `signing` | table | 不签名 | 应用于构建产物的 Authenticode / codesign 配置 |
+| `license-sysl` | table | 无 | 从 SySL 仓库打包许可证及官方译文 |
 | `msix.logo-background` | 颜色 | `transparent` | 透明 MSIX 图标底下的底板色 |
 | `flash` | table | — | 声明烧写目标 |
 
@@ -165,11 +170,16 @@ timeline = "left"          # top（顶部横排）| left（左侧竖排）
 log-level = "all"          # all（默认）| files | scripts | off
 log-order = "newest"      # newest（默认，最新在顶）| oldest（追加在尾部）
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
+faces = ["webview", "egui", "tui"]  # 本产品壳可呈现的界面（默认三项全开）
 
 [shell.theme]
 mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB 通道——覆盖 --color-primary
 ```
+
+`shell.faces` 限定本产品壳可呈现的界面——`webview` / `egui` /
+`tui`；缺省即三项全开。headless CLI 面（`--silent`、ARP 卸载串）是
+基底，无法禁用。请求被禁用的界面是错误；自动选择会跳过被禁用的面。
 
 ### 向导语言
 
@@ -187,6 +197,39 @@ accent = [34, 211, 238]    # RGB 通道——覆盖 --color-primary
 环境变量拿到它，同时它也被写入磁盘上的安装清单（修复/更新等后续
 流程可以读取）。往已安装应用自身的配置里写什么由 payload 的脚本
 决定——shun 只导出事实。
+
+## 配对步骤
+
+`pairing` 步骤为本机申领凭据——反向通道：本机显示验证码，操作员
+在控制面板里输入它。一个窗格，两条通道：
+
+```toml
+[[package.metadata.shun.steps]]
+kind = "pairing"
+
+[package.metadata.shun.steps.pairing.source]
+kind = "gateway"                     # gateway | scripts
+official = "https://gateway.example.test"   # 预选的网关根 URL
+# allow-custom = true                # 同时提供自定义网关输入（默认开启）
+
+[package.metadata.shun.steps.pairing.identity]
+node-id = true                       # 网关协议以此为主键
+name = false                         # 可选设备名（按主机名预填）
+# tier = 1                           # 申领时赋予的层级（产品固定时声明）
+
+# env-file = "pairing.env"           # gateway 通道：申领到的凭据写入安装目录内的
+                                     #   位置（.env 风格）
+```
+
+- `gateway` —— 内置 JSON-RPC 客户端（`pairing.request` 铸码、
+  `pairing.await` 长轮询、`pairing.accept` 交付凭据）。目标机器无需
+  任何脚本运行时；该通道要求 `node-id` 与 `env-file`。
+- `scripts` —— 产品自有激活：`request` / `await` / `record` 三份
+  payload 相对路径的 Python 脚本（`python3`，宿主机只有无版本号
+  名字时回退 `python`）。窗格答案以单个 JSON 对象从脚本 **stdin**
+  传入——绝不走 argv；每个阶段的 stdout 必须恰好一个 JSON 值；
+  `record` 持久化申领结果（`env-file` 会随配置携带但不被消费）。
+  每个阶段都有时限：挂死的脚本会被杀死，而不是干等。
 
 ## Payload 来源
 
@@ -228,6 +271,42 @@ files = ["latest", "app-setup.exe"]
 ——`latest` 版本标记以文本读取（`fetch_text`），产物下载走在线 payload
 流水线（`OnlinePayload`：下载 → 解压 → 校验）。
 
+## 构建变体
+
+`[[package.metadata.shun.variant]]`（单数——表格数组惯用法）声明
+`shun build --variant <name>` 旗标选取的命名产物配置——安装器矩阵
+的各条轴（架构与系统来自 `--target`，资源包跟随 payload 目录）：
+
+```toml
+[[package.metadata.shun.variant]]
+name = "lite"                        # id + 产物名后缀
+payload = "payload-lite"             # payload 目录覆盖
+faces = ["egui", "tui"]              # 该变体壳的界面覆盖
+
+[package.metadata.shun.variant.env]  # 传递给壳的 cargo 构建
+SHUN_FLAVOR = "lite"                 # （及其 build.rs）——风味标记
+```
+
+应用变体会替换 payload 目录与壳的界面清单；`env` 随壳构建传递，
+风味可借此嵌入标记。未知名字是错误。
+
+## 代码签名
+
+`[package.metadata.shun.signing]` 配置构建产物的签名——`shun build`
+在流程末尾为安装器签名，`shun sign` 为独立文件签名（均可
+`--no-sign` 跳过）。缺省即不签名，本地测试无妨：
+
+```toml
+[package.metadata.shun.signing.windows]   # 经 signtool 的 Authenticode
+enabled = true
+thumbprint = "<证书指纹>"                 # 从用户/机器证书库选取（/sha1）
+# timestamp-url = "http://timestamp.digicert.com"   # RFC 3161（/tr，默认值）
+
+[package.metadata.shun.signing.macos]     # codesign
+enabled = true
+identity = "<签名身份>"
+```
+
 ## 许可与自定义步骤
 
 ```toml
@@ -262,3 +341,38 @@ markdown = "docs/whats-new.md"
 界面内置十种语言的默认文案（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
 `ru`、`es`、`de`、`pt`）；`shell.language = "auto"` 跟随系统，固定语言可直接指定，
 分语言许可覆盖保证本地化协议正常工作。
+
+## 从 SySL 仓库取许可证
+
+`[package.metadata.shun.license-sysl]` 构建期从许可证自己的仓库打包
+Synthetic Source License 及其官方译文（需 `online` feature）——向导
+无需在仓库里存放许可证文件即可按用户语言展示协议：
+
+```toml
+[package.metadata.shun.license-sysl]
+repo = "celestia-island/sysl"        # 默认
+branch = "main"                      # 默认
+locales = ["zh-Hans", "ja"]          # 要打包的译文（根目录英文始终打包）
+```
+
+语言标签映射到 sysl 仓库的 i18n 目录（`zh-Hans` → `zhs`、
+`zh-Hant` → `zht`；`ja`/`ko`/`fr`/`ru`/`es`/`de`/`pt`/`ar` 直接
+对应）。打包出的文档像其他许可文档一样渲染在许可步骤。
+
+## 脚本钩子
+
+`[package.metadata.shun.script]` 声明 payload 相对路径的运行器脚本，
+交付流程在阶段边界执行它们。每产品一个运行器——目前只挂载
+`duckscript`（内嵌解释器）：
+
+```toml
+[package.metadata.shun.script]
+runner = "duckscript"
+
+[[package.metadata.shun.script.hooks]]
+phase = "post-install"               # prepare | post-install | pre-uninstall
+script = "scripts/post_install.ds"   # payload 相对路径，随载荷打包
+```
+
+失败的钩子会中断整个流程。完整契约——阶段、钩子可见的环境
+（含 `SHUN_LANGUAGE`）与示例——见[脚本设计笔记](../design/scripting.md)。

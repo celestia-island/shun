@@ -87,11 +87,18 @@ timeline = "left"          # top（上部の横並び）| left（左側の縦並
 log-level = "all"          # all（既定）| files | scripts | off
 log-order = "newest"      # newest（既定、最新が上）| oldest（末尾に追加）
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
+faces = ["webview", "egui", "tui"]  # この製品のシェルが提示できる画面（既定は 3 つすべて）
 
 [shell.theme]
 mode = "system"            # system | light | dark
 accent = [34, 211, 238]    # RGB チャンネル — --color-primary を上書き
 ```
+
+`shell.faces` はこの製品のシェルが提示できる画面——`webview` /
+`egui` / `tui`——を限定します。省略時は 3 つすべて。ヘッドレス
+CLI 面（`--silent`、ARP のアンインストール文字列）は基盤であり
+無効化できません。無効化された画面の要求はエラー、自動選択は
+無効化された画面をスキップします。
 
 ### ウィザードの言語
 
