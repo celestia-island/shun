@@ -65,6 +65,44 @@ kind = "install"                           # install ステップはちょうど
 require-removable = true                   # リムーバブル以外のデバイスを拒否
 ```
 
+## フィールド
+
+| フィールド | 型 | 既定 | 意味 |
+| --- | --- | --- | --- |
+| `product` | string | パッケージ `name` | タイトル、ARP 表示名、フラッシュラベル |
+| `publisher` | string | — | ARP Publisher フィールド |
+| `logo` | path | — | シェルのロゴアセット（マニフェスト相対） |
+| `payload` | path | — | 成果物にパックされるディレクトリ |
+| `main-exe` | path | — | payload 相対のエントリポイント（ショートカットの宛先） |
+| `install` | table | 両モードオン | `local` / `portable` スイッチ、`portable-marker` ファイル名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` ポリシー、`default-dir`（環境変数展開される既定位置の上書き）、`verbs`、`deep-links`、`aumid`、`icon`、`root-dir-folder`（ドライブルート直下に挟むフォルダー、既定は製品名） |
+| `attachments` | テーブル配列 | なし | 追加リソース（アセットパック）：`key` / `title` / `dest` / `online.url`。ライト版はインストール時にダウンロード |
+| `update` | table | なし | 更新ウォッチ：`sources`（ミラー基底 URL、順にプローブ）+ 最初に到達したソース配下で解決される `files` |
+| `webview2` | table | `skip` | Windows ランタイム戦略 |
+| `steps` | テーブル配列 | 既定パイプライン | 順序付きウィザードパイプライン（`mode`/`scope`/`license`/`content`/`pairing`/`install`、自由順序。`install` はちょうど 1 つ） |
+| `script` | table | なし | payload スクリプトフック：`runner` + `hooks[]`（`phase`/`script`）——スクリプト設計ノート参照 |
+| `variant` | テーブル配列 | なし | `shun build --variant` で選択される名前付きビルド構成 |
+| `signing` | table | 未署名 | 成果物に適用する Authenticode / codesign プロファイル |
+| `license-sysl` | table | なし | SySL ライセンスと公式翻訳をリポジトリからバンドル |
+| `msix.logo-background` | color | `transparent` | 透過 MSIX ロゴの下に敷くプレート色 |
+| `flash` | table | — | flash ターゲットの宣言 |
+
+## インストール後の起動
+
+`install.launch-after-install` は完了ページの慣例を解決します：`ask`
+（既定）はウィザードのチェックボックスに従います——NSIS の
+「インストール後に起動」トグルで、ヘッドレス実行ではチェック付き
+として扱われます。`always` / `never` はそのトグルを持たないシェル
+向けに固定します。
+
+インストールフロー自体は何も起動しません。実行が成功した後に
+シェルが `shun::targets::install::launch` を呼びます：インストール
+ディレクトリ内の設定された `main-exe` をデタッチで起動します
+（待機しないため、インストーラープロセスは直後に終了できます）。
+解決された `InstallContext::launch_after_install` が false の場合、
+またはエントリポイントが未宣言の場合は何もしません。宣言済みの
+エントリポイントが見つからない場合は通常どおり `MissingEntry`
+エラーになります。
+
 ## ドライブルートの保護
 
 ドライブなど、裸のファイルシステムルート（`D:\` のほか `D:`、
@@ -75,6 +113,109 @@ UNC 共有ルート `\\server\share`、POSIX の `/` も同様）が対象の
 ウィザードはルートが選択・入力された時点でパス欄を書き換えるため、
 表示される宛先は常に実際のものです。ヘッドレスの `--dir=D:\` 実行
 もフロー内で同じ保護を受けます。
+
+## WebView2 戦略
+
+| `type` | 同梱物 | 必要条件 | 備考 |
+| --- | --- | --- | --- |
+| `skip` | なし | システムの WebView2 | 標準アーティファクト |
+| `evergreen-installer` | Evergreen オフラインインストーラー（約 127 MB） | インストール時の昇格 | システム全体のランタイムを登録 |
+| `fixed-version` | 展開済みランタイムフォルダー | なし | シェルとインストール済みアプリがインストール／ポータブル両モードで共有する私有コピー |
+
+実測（2026-09、v151 x64）：fixed-version ランタイムは**圧縮で
+約 293 MB / 展開で約 661 MB**——許容済みのコストで、他のパッカーと
+同水準です。アーティファクトが埋め込むコピーは**ちょうど 1 つ**：
+シェルは payload のランタイムサブツリーを
+`%LOCALAPPDATA%\shun\<product>\webview2` へステージングし、
+`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` をそこへ向けて自己ブート
+ストラップします。展開はハッシュを把握しており、再インストールや
+先行ステージ済みファイルは書き換えずに採用されます
+（"Reusing" 進捗イベント）——同じエンジンの二つ目のコピーは
+生まれません。
+
+### ランタイム未導入マシンの劣化
+
+面のラダーはランタイム欠落で死なず、劣化するだけです。ラダー解決の
+前、シェルはローダー自身の判定（`wry::webview_version()`、tauri が
+webview 生成前に課すのと同じゲート）でランタイムを probe するため、
+壊れたレジストリ残骸が webview 面を tauri の英語
+"Could not find the WebView2 Runtime" ボックスへ送り込むことは
+もうありません：
+
+- `evergreen-installer` + `silent-install`（既定 `true`）：ランタイム
+  の取得はインストールステップにあります——初期化は同梱
+  インストーラー（payload の `webview2/` プレフィックスで発見）を
+  ユーザーごとのキャッシュへデコードしてステージするだけです。ラダー
+  解決前に何もインストールしません。ウィザード実行はまず同意確認で
+  停止し（「ランタイムをインストール / スキップして本体のみ」）、
+  許可された場合にのみ取得を実行します——インストーラーは自身の
+  ウィンドウで可視に走り、マニフェストが要求すれば UAC を経由します。
+  ヘッドレストラックは `silent-install` を同意として `/silent
+  /install` で実行します。取得に成功するとマシンはその場で
+  アップグレードされ、ローダーが利用可能なランタイムを報告します。
+- インストーラーを同梱しないが `download-url` を宣言するビルドは、
+  同じインストールステップの取得の中で、同じ同意の後に Evergreen
+  インストーラーをその URL から取得します（ヘッドレスは
+  `silent-install` ノブのまま）——lite フレーバーは自前の payload
+  ではなくネットワークからマシンをアップグレードします。低速・
+  切断ネットワークが最初の UI をブロックすることは決してありません：
+  取得はインストールフロー内で行われ、劣化バナーはランタイムが
+  来ると伝えます。
+- 結果如何にかかわらず、ランタイムのないマシンは egui 面に落ちます。
+  `warn-missing`（既定 `true`）でインストーラーを同梱しない場合、
+  その面はウィザードの冒頭と末尾に一度ずつ警告し、Microsoft 公式の
+  WebView2 ダウンロードページへのリンクを埋め込みます。両ノブは
+  製品単位でオフにできます：
+
+```toml
+[package.metadata.shun.webview2]
+type = "evergreen-installer"
+silent-install = false                  # 同梱インストーラーを自動実行しない
+warn-missing = false                    # 警告バナーなしの静かな劣化
+```
+
+知っておくべき上流の制限：tauri のランタイムゲートは
+`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` を読まないため、
+fixed-version のみ（Evergreen 未導入）のマシンは、webview 生成が
+可能だったとしても egui 面に落ちます——シェルは必ず描画できる面を
+優先します。
+
+## MSIX ロゴプレート
+
+Windows は `BackgroundColor="transparent"` を無視するあらゆる表面で、
+パッケージデスクトップアプリのロゴを既定のシステムブルー
+（`#0078D7`）の上に敷きます——App Installer ダイアログもその一つ
+です。`msix.logo-background` は `#RRGGBB` 色を受け付けます：shun CLI
+は透過ロゴをその色に合成してパッケージアセットとし、
+`BackgroundColor` として宣言します。ブランドがすべての表面の
+プレート色を握れます：
+
+```toml
+[package.metadata.shun.msix]
+# identity-name / publisher / display-name / executable ...
+logo-background = "#0F172A"
+```
+
+## オフラインシェル
+
+インストーラーシェルは hikari webview UI に加えて egui フォール
+バック UI を埋め込みます。同じマニフェストと payload で駆動され
+（1 つのフロー、3 つのレンダラー）、エフェクトは描画せず、Windows
+で WebView2 が欠けているとき（バナーは欠けた環境を明示します）、
+または手動強制時に選択されます：
+
+```bash
+shun-installer --no-webview   # 同じウィザード、オフラインレンダラー（--fallback は旧スペル）
+```
+
+両 UI がオフラインスクリーンショットに対応します——ウィンドウ内容を
+`PrintWindow` で取り込み、デスクトップ自動化なしで保存後、プロセスは
+終了します：
+
+```bash
+shun-installer --screenshot=ui.png                 # hikari（webview）UI
+shun-installer --no-webview --screenshot=ui.png    # egui オフライン UI
+```
 
 ## シェル UI
 
@@ -122,6 +263,44 @@ CLI 面（`--silent`、ARP のアンインストール文字列）は基盤で�
 書き込むかは payload のスクリプト次第です — shun が輸出するのは
 事実だけです。
 
+## ペアリングステップ
+
+`pairing` ステップ種はこのマシンのために資格情報を要求します——
+逆方向レーン：このマシンがコードを表示し、オペレーターが管理
+パネルに入力します。1 つのペイン、2 つのレーン：
+
+```toml
+[[package.metadata.shun.steps]]
+kind = "pairing"
+
+[package.metadata.shun.steps.pairing.source]
+kind = "gateway"                     # gateway | scripts
+official = "https://gateway.example.test"   # 事前選択されるゲートウェイ基底 URL
+# allow-custom = true                # カスタムゲートウェイ入力も提供（既定オン）
+
+[package.metadata.shun.steps.pairing.identity]
+node-id = true                       # ゲートウェイプロトコルの主キー
+name = false                         # 任意のデバイス名（ホスト名で事前入力）
+# tier = 1                           # 要求時に付与されるティア（製品が固定する場合）
+
+# env-file = "pairing.env"           # gateway レーン：要求された資格情報の
+                                     #   インストールディレクトリ内の書き込み先（.env 形式）
+```
+
+- `gateway` —— 内蔵 JSON-RPC クライアント（`pairing.request` が
+  コードを発行、`pairing.await` がロングポール、`pairing.accept` が
+  資格情報を配達）。対象マシンにスクリプトランタイムは不要です。
+  このレーンには `node-id` と `env-file` が必要です。
+- `scripts` —— 製品独自のアクティベーション：`request` / `await` /
+  `record` の payload 相対 Python スクリプト（`python3`、バージョン
+  なし名のみのホストでは `python` にフォールバック）。ペインの回答は
+  スクリプトの **stdin** に 1 つの JSON オブジェクトとして渡されます
+  ——argv は決して使いません。各フェーズの stdout は正確に 1 つの
+  JSON 値である必要があります。`record` が要求結果を永続化します
+  （`env-file` は運ばれますが消費されません）。各フェーズには
+  デッドラインがあり、フリーズしたスクリプトは待たされず終了され
+  ます。
+
 ## payload の供給元
 
 `[package.metadata.shun.source]` でインストール時の payload の供給元を選択：
@@ -142,6 +321,71 @@ url = "https://github.com/<org>/<repo>/releases/latest/download/ShunDemo.shun"
 ダウンロードと展開の両フェーズを同時に報告します（多層プログレス）。`url`
 をリリースフィード（GitHub Releases や任意の HTTP ホスト）に向ければ、新しい
 パッケージの公開だけでインストーラーが更新されます。
+
+## 更新ウォッチ
+
+`[package.metadata.shun.update]`（スタンドアロンドキュメントでは
+`update` キー）は、シェルが更新を probe するミラーソースと、その
+配下で解決されるファイルを宣言します：
+
+```toml
+[update]
+sources = [                                # ミラー基底 URL、順に試行
+  "https://mirror.example.test/shun-demo",
+  "https://releases.example.test/shun-demo",
+]
+files = ["latest", "app-setup.exe"]
+```
+
+実行時、シェルは `shun::update::resolve` を呼びます：各ソースに
+短い probe（最初のファイルへの素朴な GET、10 秒タイムアウト）を
+行い、最初に `200` を返したソースがその回の全体で勝ち、宣言された
+各ファイルは勝ったソース配下の URL（`<source>/<file>`）に解決され
+ます。到達不能・非 200 のソースは警告としてスキップされ、どこも
+応答しなければ何も解決されません。シェルはその後、解決された URL
+を自分で取得します——`latest` バージョンマーカーはテキストとして
+（`fetch_text`）、成果物のダウンロードはオンライン payload パイプ
+ライン（`OnlinePayload`：ダウンロード → 展開 → 検証）経由です。
+
+## ビルドバリアント
+
+`[[package.metadata.shun.variant]]`（単数形——テーブル配列の慣用）
+は `shun build --variant <name>` フラグで選択される名前付き成果物
+構成を宣言します——インストーラーマトリクスの軸です（アーキテク
+チャと OS は `--target`、リソースパックは payload ディレクトリに
+乗ります）：
+
+```toml
+[[package.metadata.shun.variant]]
+name = "lite"                        # id + 成果物名のサフィックス
+payload = "payload-lite"             # payload ディレクトリの上書き
+faces = ["egui", "tui"]              # このバリアントのシェルの面上書き
+
+[package.metadata.shun.variant.env]  # シェルの cargo ビルドに渡る
+SHUN_FLAVOR = "lite"                 # （と build.rs）——フレーバーマーカー
+```
+
+バリアントの適用は payload ディレクトリとシェルの面リストを差し
+替えます。`env` はシェルビルドに渡り、フレーバーがマーカーを埋め
+込めます。不明な名前はエラーです。
+
+## コード署名
+
+`[package.metadata.shun.signing]` は成果物の署名を設定します——
+`shun build` は実行の最後にインストーラーへ署名し、`shun sign` は
+単独のファイルへ署名します（どちらも `--no-sign` でスキップ）。
+未宣言＝未署名の成果物で、ローカルテストには十分です：
+
+```toml
+[package.metadata.shun.signing.windows]   # signtool による Authenticode
+enabled = true
+thumbprint = "<証明書の拇印>"              # ユーザー／マシンストアから選択（/sha1）
+# timestamp-url = "http://timestamp.digicert.com"   # RFC 3161（/tr、既定値）
+
+[package.metadata.shun.signing.macos]     # codesign
+enabled = true
+identity = "<署名アイデンティティ>"
+```
 
 ## ライセンスとカスタムステップ
 
@@ -181,3 +425,42 @@ UI には 10 ロケール（`en`、`zh-Hans`、`zh-Hant`、`ja`、`ko`、`fr`、
 `de`、`pt`）の既定テキストが同梱されています。`shell.language = "auto"` はシステムに追従し、
 固定ロケールを指定すればそちらに固定されます。ロケール別ライセンスの上書きで
 ローカライズされた契約書も機能します。
+
+## SySL リポジトリからのライセンス
+
+`[package.metadata.shun.license-sysl]` はビルド時に、ライセンス自身の
+リポジトリから Synthetic Source License と公式翻訳をバンドルします
+（`online` feature が必要）——ライセンスファイルをリポジトリに
+vendor せずに、ウィザードが利用者の言語で合意を示せます：
+
+```toml
+[package.metadata.shun.license-sysl]
+repo = "celestia-island/sysl"        # 既定
+branch = "main"                      # 既定
+locales = ["zh-Hans", "ja"]          # バンドルする翻訳（ルートの英語は常にバンドル）
+```
+
+ロケールタグは sysl リポジトリの i18n ディレクトリへ対応します
+（`zh-Hans` → `zhs`、`zh-Hant` → `zht`。`ja`/`ko`/`fr`/`ru`/`es`/
+`de`/`pt`/`ar` は直接）。バンドルされた文書は他のライセンス文書と
+同じくライセンスステップで描画されます。
+
+## スクリプトフック
+
+`[package.metadata.shun.script]` は payload 相対のランナースクリプト
+を宣言し、配布フローがフェーズ境界で実行します。製品ごとに 1 つの
+ランナー——現在マウントされているのは `duckscript`（組み込み
+インタープリター）だけです：
+
+```toml
+[package.metadata.shun.script]
+runner = "duckscript"
+
+[[package.metadata.shun.script.hooks]]
+phase = "post-install"               # prepare | post-install | pre-uninstall
+script = "scripts/post_install.ds"   # payload 相対。payload と共にパック
+```
+
+失敗したフックはフローを失敗させます。完全な契約——フェーズ、
+フックから見える環境（`SHUN_LANGUAGE` を含む）、例——は
+[スクリプト設計ノート](../design/scripting.md)にあります。
