@@ -48,11 +48,11 @@ En Windows el shell tiene cuatro caras: una interfaz WebView hikari, un **fallba
 Un demo cubre la entrega de punta a punta — un payload Tauri 2 real (`demo-app/`), un shell de instalación construido sobre [@celestia-island/hikari](https://github.com/celestia-island/hikari) (`shell/`), un manifiesto:
 
 ```bash
-just demo                                        # # staging → build → ejecutar el shell de instalación
-just demo -- --no-webview                        # # forzar el shell egui sin conexión
-cargo run --example demo_install                 # # generar un paquete .shun + instalación local
-cargo run --example demo_install -- --portable   # # instalación portable (sin estado del sistema)
-cargo run --example demo_flash                   # # enumerar dispositivos flasheables
+just demo                                        # staging → build → ejecutar el shell de instalación
+just demo -- --no-webview                        # forzar el shell egui sin conexión
+cargo run --example demo_install                 # generar un paquete .shun + instalación local
+cargo run --example demo_install -- --portable   # instalación portable (sin estado del sistema)
+cargo run --example demo_flash                   # enumerar dispositivos flasheables
 ```
 
 Referencia completa de campos:[guía de configuración](./guides/configuration.md)
@@ -77,8 +77,8 @@ Versión actual: **0.6.21**. El crate se estabiliza frente a tres consumidores r
 ## Desarrollo
 
 ```bash
-just fetch   # # preparar las recetas compartidas de celestia-devtools (una vez)
-just ci      # # fmt-check + clippy + test
+just fetch   # preparar las recetas compartidas de celestia-devtools (una vez)
+just ci      # fmt-check + clippy + test
 ```
 
 El trabajo llega a `master` mediante PRs con squash merge desde ramas `feat/*` / `fix/*`. Convenciones completas en [AGENTS.md](../../AGENTS.md).

@@ -47,11 +47,11 @@ Windows에서 셸은 네 얼굴을 가집니다: hikari WebView UI, WebView2가 
 하나의 demo가 배포를 종단간으로 다룹니다 — 실제 Tauri 2 페이로드(`demo-app/`), [@celestia-island/hikari](https://github.com/celestia-island/hikari) 기반 설치 셸(`shell/`), 하나의 매니페스트:
 
 ```bash
-just demo                                        # # 스테이지 → 빌드 → 설치 셸 실행
-just demo -- --no-webview                        # # 오프라인 egui 셸 강제
-cargo run --example demo_install                 # # .shun 패키지 생성 + 로컬 설치
-cargo run --example demo_install -- --portable   # # 휴대용 설치(시스템 상태 없음)
-cargo run --example demo_flash                   # # 플래시 후보 디바이스 나열
+just demo                                        # 스테이지 → 빌드 → 설치 셸 실행
+just demo -- --no-webview                        # 오프라인 egui 셸 강제
+cargo run --example demo_install                 # .shun 패키지 생성 + 로컬 설치
+cargo run --example demo_install -- --portable   # 휴대용 설치(시스템 상태 없음)
+cargo run --example demo_flash                   # 플래시 후보 디바이스 나열
 ```
 
 전체 필드 참조:[구성 가이드](./guides/configuration.md)
@@ -76,8 +76,8 @@ cargo run --example demo_flash                   # # 플래시 후보 디바이�
 ## 개발
 
 ```bash
-just fetch   # # 공유 celestia-devtools 레시피 스테이징(한 번)
-just ci      # # fmt-check + clippy + test
+just fetch   # 공유 celestia-devtools 레시피 스테이징(한 번)
+just ci      # fmt-check + clippy + test
 ```
 
 작업은 `feat/*` / `fix/*` 브랜치에서 squash 병합된 PR로 `master`에 반영됩니다. 전체 규약은 [AGENTS.md](../../AGENTS.md).

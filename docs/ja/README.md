@@ -47,11 +47,11 @@ Windows ではシェルが 4 つの顔を持ちます：hikari WebView UI、WebV
 一つの demo が配布をエンドツーエンドでカバー——実際の Tauri 2 ペイロード（`demo-app/`）、[@celestia-island/hikari](https://github.com/celestia-island/hikari) 製インストーラーシェル（`shell/`）、一つのマニフェスト：
 
 ```bash
-just demo                                        # # ステージ → ビルド → インストーラーシェル実行
-just demo -- --no-webview                        # # オフライン egui シェルを強制
-cargo run --example demo_install                 # # .shun パッケージ生成 + ローカルインストール
-cargo run --example demo_install -- --portable   # # ポータブルインストール（システム状態ゼロ）
-cargo run --example demo_flash                   # # フラッシュ候補デバイスを列挙
+just demo                                        # ステージ → ビルド → インストーラーシェル実行
+just demo -- --no-webview                        # オフライン egui シェルを強制
+cargo run --example demo_install                 # .shun パッケージ生成 + ローカルインストール
+cargo run --example demo_install -- --portable   # ポータブルインストール（システム状態ゼロ）
+cargo run --example demo_flash                   # フラッシュ候補デバイスを列挙
 ```
 
 全フィールド参照：[設定ガイド](./guides/configuration.md)
@@ -76,8 +76,8 @@ cargo run --example demo_flash                   # # フラッシュ候補デバ
 ## 開発
 
 ```bash
-just fetch   # # 共有 celestia-devtools レシピを取得（一度だけ）
-just ci      # # fmt-check + clippy + test
+just fetch   # 共有 celestia-devtools レシピを取得（一度だけ）
+just ci      # fmt-check + clippy + test
 ```
 
 作業は `feat/*` / `fix/*` ブランチから squash マージされた PR で `master` に届きます。規約の全文は [AGENTS.md](../../AGENTS.md)。
