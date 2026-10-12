@@ -47,11 +47,11 @@ Windows 上殼有四副面孔：hikari WebView UI、內嵌的**egui 降級介面
 一個 demo 端到端覆蓋交付——真實 Tauri 2 載荷（`demo-app/`）、基於 [@celestia-island/hikari](https://github.com/celestia-island/hikari) 的安裝殼（`shell/`）、一份清單：
 
 ```bash
-just demo                                        # # 暫存 → 构建 → 執行安裝殼
-just demo -- --no-webview                        # # 強制離線 egui 殼
-cargo run --example demo_install                 # # 生成 .shun 包 + 本機安裝
-cargo run --example demo_install -- --portable   # # 便攜安裝（零系統狀態）
-cargo run --example demo_flash                   # # 列舉可燒寫裝置
+just demo                                        # 暫存 → 构建 → 執行安裝殼
+just demo -- --no-webview                        # 強制離線 egui 殼
+cargo run --example demo_install                 # 生成 .shun 包 + 本機安裝
+cargo run --example demo_install -- --portable   # 便攜安裝（零系統狀態）
+cargo run --example demo_flash                   # 列舉可燒寫裝置
 ```
 
 完整欄位參考：[配置指南](./guides/configuration.md)
@@ -76,8 +76,8 @@ cargo run --example demo_flash                   # # 列舉可燒寫裝置
 ## 開發
 
 ```bash
-just fetch   # # 拉取共享 celestia-devtools recipes（一次）
-just ci      # # fmt-check + clippy + test
+just fetch   # 拉取共享 celestia-devtools recipes（一次）
+just ci      # fmt-check + clippy + test
 ```
 
 工作經 `feat/*` / `fix/*` 分支以 squash 合併的 PR 落到 `master`。完整慣例見 [AGENTS.md](../../AGENTS.md)。

@@ -48,11 +48,11 @@ shun упаковывает **доставочную** половину выпу
 Одно демо покрывает доставку от начала до конца — настоящий пейлоад Tauri 2 (`demo-app/`), оболочка установки на [@celestia-island/hikari](https://github.com/celestia-island/hikari) (`shell/`), один манифест:
 
 ```bash
-just demo                                        # # стейджинг → сборка → запуск оболочки установки
-just demo -- --no-webview                        # # принудительный офлайн-шелл egui
-cargo run --example demo_install                 # # сгенерировать пакет .shun + локальная установка
-cargo run --example demo_install -- --portable   # # портативная установка (без системного состояния)
-cargo run --example demo_flash                   # # перечислить флешуемые устройства
+just demo                                        # стейджинг → сборка → запуск оболочки установки
+just demo -- --no-webview                        # принудительный офлайн-шелл egui
+cargo run --example demo_install                 # сгенерировать пакет .shun + локальная установка
+cargo run --example demo_install -- --portable   # портативная установка (без системного состояния)
+cargo run --example demo_flash                   # перечислить флешуемые устройства
 ```
 
 Полный справочник полей:[руководство по конфигурации](./guides/configuration.md)
@@ -77,8 +77,8 @@ cargo run --example demo_flash                   # # перечислить фл
 ## Разработка
 
 ```bash
-just fetch   # # подготовить общие рецепты celestia-devtools (однократно)
-just ci      # # fmt-check + clippy + test
+just fetch   # подготовить общие рецепты celestia-devtools (однократно)
+just ci      # fmt-check + clippy + test
 ```
 
 Работа попадает в `master` через squash-merge PR из веток `feat/*` / `fix/*`. Полные конвенции — в [AGENTS.md](../../AGENTS.md).
