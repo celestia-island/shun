@@ -153,9 +153,52 @@ fn main() {
     // 1b. Resolve the wizard pipeline with markdown bodies inlined —
     // runtime shells carry no file dependencies, so license/content
     // documents are read (relative to the manifest) and embedded here.
-    let steps = config
+    let mut steps = config
         .resolve_steps(&manifest_dir, None)
         .expect("wizard pipeline resolves");
+
+    // The demo's release-notes content step pulls the LATEST GitHub
+    // release body at build time — the categorized gitmoji summary the
+    // release-notes workflow publishes (### ✨ Features / 🐛 Fixes / …).
+    // Offline or on failure the vendored markdown file stays as-is.
+    // Gated to the demo app: product installers author their own
+    // release-notes content.
+    if manifest_dir.ends_with("demo-app") {
+        if let Ok(response) =
+            ureq::get("https://api.github.com/repos/celestia-island/shun/releases/latest")
+                .set("Accept", "application/vnd.github+json")
+                .set("User-Agent", "shun-demo-build")
+                .timeout(std::time::Duration::from_secs(15))
+                .call()
+        {
+            let body: Option<String> = response.into_string().ok().and_then(|text| {
+                serde_json::from_str::<serde_json::Value>(&text)
+                    .ok()
+                    .and_then(|json| {
+                        json.get("body")
+                            .and_then(|body| body.as_str().map(str::to_string))
+                    })
+            });
+            if let Some(body) = body {
+                for step in &mut steps {
+                    // The demo's release-notes step declares
+                    // markdown = "release-notes.md"; match the resolved
+                    // body against that file's first line rather than
+                    // the (already-inlined) path.
+                    if step.kind == shun::config::StepKind::Content
+                        && step
+                            .body
+                            .as_deref()
+                            .is_some_and(|body| body.contains("ShunDemo 发行说明"))
+                    {
+                        step.body = Some(body);
+                        println!("cargo:rerun-if-env-changed=SHUN_RELEASE_NOTES_FETCH");
+                        break;
+                    }
+                }
+            }
+        }
+    }
     for doc in config.license.iter().chain(config.license_locales.values()) {
         println!(
             "cargo:rerun-if-changed={}",

@@ -1957,7 +1957,10 @@ impl FallbackApp {
     #[cfg(debug_assertions)]
     fn debug_force_stage(&mut self) {
         if let Ok(step) = std::env::var("SHUN_DEBUG_STEP") {
-            self.step = step.parse().unwrap_or(self.step);
+            // Clamp to the page list — a step beyond the manifest's
+            // pages (a 3-page flow asked for step 3) panicked here.
+            let parsed: usize = step.parse().unwrap_or(self.step);
+            self.step = parsed.min(self.pages.len() - 1);
         }
         if std::env::var("SHUN_DEBUG_LANG_POPUP").is_ok_and(|v| v == "1") {
             self.lang_combo_open = true;
@@ -3471,7 +3474,9 @@ impl FallbackApp {
         // filled across the just-drawn heading, and the fixed 300px
         // viewport neither absorbed the pane's free height nor scaled
         // with the window.
-        let card_h = (ui.available_height()).max(120.0);
+        // Reserve a footer-clearance strip below the card — the pane
+        // runs to the window bottom, where the floating footer sits.
+        let card_h = (ui.available_height() - 16.0).max(120.0);
         let card_rect = egui::Rect::from_min_size(
             pos2(ui.max_rect().left(), ui.cursor().top()),
             egui::vec2(ui.available_width(), card_h),
