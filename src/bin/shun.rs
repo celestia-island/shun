@@ -429,6 +429,17 @@ fn run(command: CliCommand) -> Result<(), String> {
             if is_msvc_target(target.as_deref()) {
                 ensure_static_crt(&mut cargo, &variant_env);
             }
+            // The collection step below must read the exe from wherever
+            // cargo actually put it. An ambient CARGO_TARGET_DIR used to
+            // desync the two: the fresh shell build landed in the override
+            // while the copy step read the default location — silently
+            // shipping whatever stale exe sat there (in practice: another
+            // product's installer wearing this one's name). Pin the target
+            // dir explicitly and resolve the artifact from the same value.
+            let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| shell_src.join("..").join("target"));
+            cargo.arg("--target-dir").arg(&target_dir);
             let status = cargo
                 .status()
                 .map_err(|e| format!("cargo build failed: {e}"))?;
@@ -438,7 +449,6 @@ fn run(command: CliCommand) -> Result<(), String> {
 
             // 3. Collect artifacts: single-file installer + payload package.
             std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-            let target_dir = shell_src.join("..").join("target");
             let target_dir = match &target {
                 Some(triple) => target_dir.join(triple),
                 None => target_dir,

@@ -280,11 +280,7 @@ fn main() {
     //    JSON merge-patch tauri-build applies over that file; arrays are
     //    replaced wholesale (RFC 7396), so the windows entry is mirrored
     //    in full with only the title swapped.
-    let slug = config
-        .product
-        .name
-        .to_lowercase()
-        .replace(' ', "-");
+    let slug = config.product.name.to_lowercase().replace(' ', "-");
     let identity_overlay = serde_json::json!({
         "productName": config.product.name,
         "version": config.product.version,
