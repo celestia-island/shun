@@ -166,6 +166,7 @@ pub trait PayloadSource {
 /// Cloning is cheap-ish (the file set is fully materialized in memory) and
 /// extraction is repeatable.
 #[derive(Clone)]
+
 pub struct ArchivePayload {
     entries: Vec<PayloadEntry>,
     files: HashMap<PathBuf, Vec<u8>>,
@@ -190,6 +191,23 @@ impl std::io::Read for CountingReader<'_> {
         (self.on_progress)((self.pos as f32 / self.total.max(1) as f32).min(1.0));
         Ok(n)
     }
+}
+
+/// Audit shun-R1-1: whether a manifest/archive entry path may be joined
+/// under the install dir. Rejects absolute paths, Windows prefixes, and
+/// any `..` component — `Path::join` would otherwise let a crafted
+/// payload (or a poisoned manifest) write or delete outside the install
+/// directory. Shared by the extract paths, the online variant, and the
+/// uninstall sweep (wizard's stale-file cleanup uses it too).
+pub(crate) fn entry_path_is_unsafe(path: &Path) -> bool {
+    path.components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::Prefix(_)
+                | std::path::Component::RootDir
+                | std::path::Component::ParentDir
+        )
+    })
 }
 
 impl ArchivePayload {
@@ -328,6 +346,14 @@ impl ArchivePayload {
             )));
         }
 
+        // Audit shun-R1-1: fail-closed on traversal entries — a crafted
+        // payload must not write outside the install directory.
+        if entry_path_is_unsafe(&entry.path) {
+            return Err(ShunError::Config(format!(
+                "payload entry path escapes the install directory: {}",
+                entry.path.display()
+            )));
+        }
         let target = dest.join(&entry.path);
         let reused = target_is_identical(&target, entry)?;
         if !reused {
@@ -404,4 +430,82 @@ impl PayloadSource for ArchivePayload {
 /// Extracts without progress reporting (convenience for tests and tools).
 pub fn extract_all(source: &dyn PayloadSource, dest: &Path) -> Result<(), ShunError> {
     source.extract(dest, &mut |_| {})
+}
+
+#[cfg(test)]
+mod traversal_guard_tests {
+    use super::*;
+
+    /// Hand-craft a minimal ustar archive (manifest.json first, then one
+    /// regular file at exactly `hostile_path`) — tar::Builder refuses to
+    /// append traversal names, and the real attacker hand-crafts the
+    /// bytes the same way.
+    fn hostile_archive(hostile_path: &str, content: &[u8]) -> Vec<u8> {
+        let manifest_entries = vec![PayloadEntry {
+            path: std::path::PathBuf::from(hostile_path),
+            size: content.len() as u64,
+            sha256: sha256_hex(content),
+        }];
+        let manifest_json = serde_json::to_vec(&manifest_entries).expect("manifest serialize");
+
+        let mut tar_bytes = Vec::new();
+        for (name, body) in [
+            (MANIFEST_PATH, manifest_json.as_slice()),
+            (hostile_path, content),
+        ] {
+            let mut header = [0u8; 512];
+            header[..name.len()].copy_from_slice(name.as_bytes());
+            header[100..108].copy_from_slice(b"0000644\0");
+            header[108..116].copy_from_slice(b"0000000\0");
+            header[116..124].copy_from_slice(b"0000000\0");
+            header[124..136].copy_from_slice(format!("{:011o}\0", body.len()).as_bytes());
+            header[136..148].copy_from_slice(b"00000000000\0");
+            header[156] = b'0'; // regular file
+            header[257..263].copy_from_slice(b"ustar\0");
+            header[263..265].copy_from_slice(b"00");
+            // The checksum sums the whole header with the chksum field
+            // itself counted as eight spaces.
+            header[148..156].copy_from_slice(b"        ");
+            let sum: u32 = header.iter().map(|&b| b as u32).sum();
+            header[148..156].copy_from_slice(format!("{:06o}\0 ", sum).as_bytes());
+            tar_bytes.extend_from_slice(&header);
+            tar_bytes.extend_from_slice(body);
+            let pad = (512 - body.len() % 512) % 512;
+            tar_bytes.extend(std::iter::repeat(0u8).take(pad));
+        }
+        tar_bytes.extend(std::iter::repeat(0u8).take(1024)); // footer
+        zstd::stream::encode_all(&tar_bytes[..], 3).expect("zstd encode")
+    }
+
+    /// Audit shun-R1-1: an archive entry with a parent-dir escape must be
+    /// refused at extraction (the old code joined it verbatim and wrote
+    /// outside the install directory).
+    #[test]
+    fn extract_refuses_parent_dir_escape() {
+        let archive = hostile_archive("../../escaped.txt", b"payload");
+        let payload = ArchivePayload::from_bytes(&archive).unwrap();
+
+        let dest = std::env::temp_dir().join("shun-traversal-test");
+        std::fs::create_dir_all(&dest).unwrap();
+        let before = std::fs::read_dir(&dest).unwrap().count();
+
+        let out = extract_all(&payload, &dest);
+        assert!(out.is_err(), "traversal entry must be refused");
+        let escaped = dest.parent().unwrap().join("escaped.txt");
+        assert!(!escaped.exists(), "no file may land outside dest");
+        let after = std::fs::read_dir(&dest).unwrap().count();
+        assert_eq!(after, before, "no files written inside dest either");
+    }
+
+    /// Audit shun-R1-1: an ABSOLUTE archive entry replaces the join base
+    /// entirely (Path::join semantics) — must be refused the same way.
+    #[test]
+    fn extract_refuses_absolute_entry() {
+        let archive = hostile_archive("/etc/shun-escaped", b"payload");
+        let payload = ArchivePayload::from_bytes(&archive).unwrap();
+        let dest = std::env::temp_dir().join("shun-absolute-test");
+        std::fs::create_dir_all(&dest).unwrap();
+        let out = extract_all(&payload, &dest);
+        assert!(out.is_err(), "absolute entry must be refused");
+    }
 }

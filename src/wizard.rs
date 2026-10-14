@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{InstallConfig, ShunConfig, TargetConfig};
 use crate::flow::{Flow, FlowEvent, FlowLog, FlowPhase};
-use crate::payload::{ArchivePayload, MANIFEST_PATH, PayloadEntry};
+use crate::payload::{ArchivePayload, MANIFEST_PATH, PayloadEntry, entry_path_is_unsafe};
 use crate::targets::install::{
     InstallContext, InstallFlow, UNINSTALLER_NAME, WindowsRegistration, WizardAnswers,
     default_aumid, nest_root_dir, read_manifest, uninstall,
@@ -951,19 +951,6 @@ pub fn stop_running_app(_install_dir: &Path, _main_exe: &str) -> bool {
 fn is_installer_artifact(path: &Path) -> bool {
     let name = path.to_string_lossy().to_lowercase();
     name == MANIFEST_PATH || name == UNINSTALLER_NAME || name == ".shun-portable"
-}
-
-/// Whether a manifest entry path may be joined under the install dir
-/// for deletion: archive-relative and free of `..`.
-fn entry_path_is_unsafe(path: &Path) -> bool {
-    path.components().any(|c| {
-        matches!(
-            c,
-            std::path::Component::Prefix(_)
-                | std::path::Component::RootDir
-                | std::path::Component::ParentDir
-        )
-    })
 }
 
 /// The on-disk payload manifest a previous install left behind.
