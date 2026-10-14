@@ -97,6 +97,13 @@ impl OnlinePayload {
                 )));
             }
 
+            // Audit shun-R1-1: fail-closed on traversal entries.
+            if crate::payload::entry_path_is_unsafe(&path) {
+                return Err(ShunError::Config(format!(
+                    "payload entry path escapes the install directory: {}",
+                    path.display()
+                )));
+            }
             let target = dest.join(&path);
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;

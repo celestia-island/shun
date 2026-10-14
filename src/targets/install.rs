@@ -598,6 +598,18 @@ pub fn uninstall(ctx: &InstallContext, registration: &dyn Registration) -> Resul
         // read_manifest accepts both the wrapper and the legacy bare
         // entry list, so copies installed by older shells still uninstall.
         for entry in read_manifest(&ctx.install_dir)?.entries {
+            // Audit shun-R1-1: a poisoned manifest must not delete files
+            // outside the install directory — skip traversal entries
+            // loudly instead of removing them.
+            if crate::payload::entry_path_is_unsafe(std::path::Path::new(&entry.path)) {
+                // The crate is log-free by design — stderr is the
+                // observable channel (mirrors the elevate.rs style).
+                eprintln!(
+                    "shun: uninstall skipping traversal entry {:?} (poisoned manifest?)",
+                    entry.path
+                );
+                continue;
+            }
             let _ = std::fs::remove_file(ctx.install_dir.join(entry.path));
         }
         let _ = std::fs::remove_file(&manifest_path);
