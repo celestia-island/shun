@@ -271,7 +271,45 @@ fn main() {
         windows_attributes = windows_attributes.window_icon_path(&ico);
     }
 
-    // 4. Embed the application manifest (comctl32 v6 + per-monitor DPI).
+    // 4. Carry the product identity into tauri-build: the version
+    //    resource it stamps (FileDescription/ProductName — what Explorer,
+    //    the taskbar and the UAC prompt show) and the webview face's
+    //    window title otherwise read this shell's generic "shun
+    //    installer" defaults from tauri.conf.json, so every product's
+    //    setup.exe introduced itself as the packager. TAURI_CONFIG is a
+    //    JSON merge-patch tauri-build applies over that file; arrays are
+    //    replaced wholesale (RFC 7396), so the windows entry is mirrored
+    //    in full with only the title swapped.
+    let slug = config.product.name.to_lowercase().replace(' ', "-");
+    let identity_overlay = serde_json::json!({
+        "productName": config.product.name,
+        "version": config.product.version,
+        "identifier": format!("world.celestia.{slug}.installer"),
+        "app": {
+            "windows": [{
+                "label": "installer",
+                "title": config.product.name,
+                "width": 800,
+                "height": 600,
+                "resizable": false,
+                "fullscreen": false,
+                "center": true,
+                "visible": true,
+                "decorations": false,
+                "transparent": false,
+                "shadow": true,
+                "minimizable": true,
+                "maximizable": false,
+                "closable": true
+            }]
+        }
+    });
+    // SAFETY: build scripts are single-threaded; the variable is set
+    // after all parallel file stages and immediately consumed by
+    // try_build in this same process.
+    unsafe { std::env::set_var("TAURI_CONFIG", identity_overlay.to_string()) };
+
+    // 5. Embed the application manifest (comctl32 v6 + per-monitor DPI).
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows_attributes))
         .expect("tauri-build failed");
 }
