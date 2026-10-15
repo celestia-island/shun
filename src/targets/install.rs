@@ -1117,6 +1117,23 @@ fn schedule_self_delete(exe: &Path) {
             exe.display(),
             dir,
         );
+        // Audit shun-R1-6: cmd.exe metacharacters in the installation
+        // path (quotes, percent-variables) escape the surrounding quotes
+        // and execute arbitrary commands at the installation privilege
+        // (machine scope = elevated). Refuse to schedule when the path
+        // contains them — the delayed delete silently no-ops instead.
+        let path_str = exe.display().to_string();
+        if path_str.contains('"')
+            || path_str.contains('%')
+            || dir.to_string_lossy().contains('"')
+            || dir.to_string_lossy().contains('%')
+        {
+            eprintln!(
+                "shun: refusing cmd-based self-delete: installation path \
+                 contains cmd metacharacters (quote or percent); delete manually"
+            );
+            return;
+        }
         let _ = std::process::Command::new("cmd")
             .arg("/C")
             .raw_arg(script)

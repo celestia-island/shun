@@ -72,10 +72,27 @@ pub struct PairingClient {
 
 impl PairingClient {
     /// Wraps a gateway base URL (e.g. `https://gateway.example/server`).
-    pub fn new(base: &str) -> Self {
-        Self {
-            base: base.trim().trim_end_matches('/').to_string(),
+    ///
+    /// Audit shun-R1-5: non-https bases are refused (the pairing
+    /// response carries the DEVICE_SECRET — plaintext transit is a
+    /// credential interception vector). Loopback (localhost /
+    /// 127.0.0.1 / [::1]) is exempt for local development gateways.
+    pub fn new(base: &str) -> Result<Self, String> {
+        let trimmed = base.trim().trim_end_matches('/');
+        let scheme_ok = trimmed.starts_with("https://")
+            || trimmed.starts_with("http://localhost")
+            || trimmed.starts_with("http://127.0.0.1")
+            || trimmed.starts_with("http://[::1]");
+        if !scheme_ok {
+            return Err(format!(
+                "pairing gateway must use https (or loopback http for local \
+                 development): {trimmed:?} — the pairing response carries a \
+                 device credential that must not transit plaintext"
+            ));
         }
+        Ok(Self {
+            base: trimmed.to_string(),
+        })
     }
 
     /// The JSON-RPC endpoint every pairing call posts to.
@@ -217,7 +234,7 @@ mod tests {
     fn request_sends_the_device_params_and_parses_the_code() {
         let (base, seen) =
             mock(r#"{"jsonrpc":"2.0","id":1,"result":{"code":"7QK2M4XP","expires_in":300}}"#);
-        let client = PairingClient::new(&base);
+        let client = PairingClient::new(&base).unwrap();
         let code = client
             .request("node-1", Some("Corridor dryer"), Some(2))
             .unwrap();
@@ -244,6 +261,7 @@ mod tests {
     fn request_omits_unset_optionals() {
         let (base, seen) = mock(r#"{"result":{"code":"AAAA","expires_in":60}}"#);
         PairingClient::new(&base)
+            .unwrap()
             .request("node-1", None, None)
             .unwrap();
         let params = seen.join().unwrap()["params"].clone();
@@ -255,6 +273,7 @@ mod tests {
         let (base, _) = mock(r#"{"result":{"status":"pending","expires_in":291}}"#);
         assert_eq!(
             PairingClient::new(&base)
+                .unwrap()
                 .await_code("node-1", "7QK2M4XP")
                 .unwrap(),
             PairingAwait::Pending { expires_in: 291 }
@@ -265,6 +284,7 @@ mod tests {
                 "owner":"ops@Example","pairing_code":"7QK2M4XP"}}"#,
         );
         match PairingClient::new(&base)
+            .unwrap()
             .await_code("node-1", "7QK2M4XP")
             .unwrap()
         {
@@ -278,6 +298,7 @@ mod tests {
         let (base, _) = mock(r#"{"result":{"status":"unknown"}}"#);
         assert_eq!(
             PairingClient::new(&base)
+                .unwrap()
                 .await_code("node-1", "dead")
                 .unwrap(),
             PairingAwait::Unknown
@@ -288,6 +309,7 @@ mod tests {
     fn gateway_errors_surface_their_message() {
         let (base, _) = mock(r#"{"error":{"code":-32001,"message":"rate limited"}}"#);
         let err = PairingClient::new(&base)
+            .unwrap()
             .request("node-1", None, None)
             .unwrap_err();
         assert!(err.contains("rate limited"), "{err}");
@@ -328,6 +350,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"result":{"code":"7QK2M4XP","expires_in":300},"error":null}"#,
         );
         let code = PairingClient::new(&base)
+            .unwrap()
             .request("node-1", None, None)
             .expect("a null error must not reject a success");
         assert_eq!(code.code, "7QK2M4XP");
@@ -339,6 +362,7 @@ mod tests {
         // result object directly.
         let (base, _) = mock(r#"{"code":"BARE1","expires_in":60}"#);
         let code = PairingClient::new(&base)
+            .unwrap()
             .request("node-1", None, None)
             .unwrap();
         assert_eq!(code.code, "BARE1");
@@ -349,6 +373,7 @@ mod tests {
     fn missing_expires_in_defaults_to_five_minutes() {
         let (base, _) = mock(r#"{"result":{"code":"NODEF"}}"#);
         let code = PairingClient::new(&base)
+            .unwrap()
             .request("node-1", None, None)
             .unwrap();
         assert_eq!(code.expires_in, 300, "the documented mint default");
@@ -356,7 +381,7 @@ mod tests {
 
     #[test]
     fn new_trims_whitespace_and_trailing_slashes() {
-        let client = PairingClient::new("  https://gateway.example/server/  ");
+        let client = PairingClient::new("  https://gateway.example/server/  ").unwrap();
         assert_eq!(client.endpoint(), "https://gateway.example/server/api/ws");
     }
 
@@ -365,6 +390,7 @@ mod tests {
         let (base, _) =
             mock(r#"{"result":{"status":"claimed","node_id":"n1","device_secret":"s"}}"#);
         match PairingClient::new(&base)
+            .unwrap()
             .await_code("n1", "SHOWN1")
             .unwrap()
         {
@@ -381,6 +407,7 @@ mod tests {
         let (base, _) = mock(r#"{"result":{"expires_in":300}}"#);
         assert!(
             PairingClient::new(&base)
+                .unwrap()
                 .request("node-1", None, None)
                 .is_err()
         );

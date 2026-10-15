@@ -628,12 +628,27 @@ pub fn apply_finish(
             let _ = writeln!(body, "DEVICE_SECRET={}", safe(&outcome.device_secret));
             let _ = writeln!(body, "BOOTSTRAP_NODE_ID={}", safe(&outcome.node_id));
             let _ = writeln!(body, "BOOTSTRAP_GATEWAY={}", safe(&outcome.gateway));
+            // Audit shun-R1-4: create the file with 0600 from the start —
+            // the old write-then-chmod had a brief 0644 window on Unix,
+            // and Windows relied solely on inherited ACLs.
             let tmp = path.with_extension("env.tmp");
-            std::fs::write(&tmp, body).map_err(|e| format!("write pairing credential: {e}"))?;
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt as _;
-                let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+                use std::os::unix::fs::OpenOptionsExt as _;
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&tmp)
+                    .map_err(|e| format!("create pairing credential: {e}"))?;
+                use std::io::Write as _;
+                f.write_all(body.as_bytes())
+                    .map_err(|e| format!("write pairing credential: {e}"))?;
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::write(&tmp, body).map_err(|e| format!("write pairing credential: {e}"))?;
             }
             std::fs::rename(&tmp, &path).map_err(|e| format!("install pairing credential: {e}"))?;
         }

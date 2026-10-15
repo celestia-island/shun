@@ -127,8 +127,12 @@ fn read_all(pipe: &mut impl Read) -> Vec<u8> {
 /// bit / extension check only.
 fn which(program: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
+    // Audit shun-R1-7: .cmd and .bat scripts on PATH are a hijack
+    // vector — a same-named .bat placed earlier in PATH intercepts the
+    // interpreter resolution and runs at the installation privilege
+    // (machine scope = elevated). Only true executables resolve.
     #[cfg(windows)]
-    let extensions: &[&str] = &[".exe", ".cmd", ".bat", ""];
+    let extensions: &[&str] = &[".exe", ""];
     #[cfg(not(windows))]
     let extensions: &[&str] = &[""];
     for dir in std::env::split_paths(&path) {
