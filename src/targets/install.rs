@@ -561,14 +561,49 @@ pub struct InstallFlow<'a> {
 impl Flow for InstallFlow<'_> {
     fn run(&self, on_event: &mut dyn FnMut(FlowEvent)) -> Result<(), ShunError> {
         on_event(FlowEvent::Started);
-        self.payload.extract(&self.ctx.install_dir, on_event)?;
+
+        // Audit shun-R1-3: the payload used to extract directly into the
+        // final install directory — an interruption left a half-written
+        // tree with no manifest (uninstallable) or a stale manifest
+        // pointing at the OLD file set. Extract into a staging directory
+        // and atomically rename into place; an interrupted run leaves
+        // only the staging directory (cleanable on the next attempt).
+        let staging_dir = self.ctx.install_dir.with_extension("shun-partial");
+
+        // Clean up any leftover staging from a previous interrupted run.
+        if staging_dir.exists() {
+            let _ = std::fs::remove_dir_all(&staging_dir);
+        }
+        std::fs::create_dir_all(&staging_dir)?;
+
+        self.payload.extract(&staging_dir, on_event)?;
 
         let manifest = serde_json::to_vec_pretty(&InstallManifest {
             language: self.ctx.language.clone(),
             entries: self.payload.manifest().to_vec(),
         })
         .map_err(|e| ShunError::Config(format!("manifest serialize: {e}")))?;
-        std::fs::write(self.ctx.install_dir.join(MANIFEST_PATH), manifest)?;
+        std::fs::write(staging_dir.join(MANIFEST_PATH), manifest)?;
+
+        // Atomic swap: the final directory either has the complete
+        // payload + manifest, or it does not exist at all.
+        if self.ctx.install_dir.exists() {
+            // An existing installation is replaced: move it aside first
+            // so the rename is a single atomic step.
+            let backup = self.ctx.install_dir.with_extension("shun-old");
+            let _ = std::fs::remove_dir_all(&backup);
+            std::fs::rename(&self.ctx.install_dir, &backup)?;
+            std::fs::rename(&staging_dir, &self.ctx.install_dir)?;
+            let _ = std::fs::remove_dir_all(&backup);
+        } else {
+            std::fs::create_dir_all(
+                self.ctx
+                    .install_dir
+                    .parent()
+                    .unwrap_or(std::path::Path::new(".")),
+            )?;
+            std::fs::rename(&staging_dir, &self.ctx.install_dir)?;
+        }
 
         let mut ctx = self.ctx.clone();
         let total_bytes = PayloadEntry::total_bytes(self.payload.manifest());
