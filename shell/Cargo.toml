@@ -78,6 +78,15 @@ winreg = "0.56.0"
 # same minor the lockfile already resolves for tauri (a looser line
 # would compile a second wry tree for nothing).
 wry = "0.57"
+# Right-click suppression in the webview face (src/webview_hardening.rs):
+# SetAreDefaultContextMenusEnabled on the live WebView2 settings object,
+# release builds only. Kept on the same minor line tauri/wry build
+# against (webview2-com-sys 0.39) — the controller ref `with_webview`
+# hands over IS that crate's type. No windows-core dep is added: the
+# module never casts to Settings3/4 (a diverging windows-core copy is
+# what breaks `settings.cast::<…>()`; the v1 interface method used here
+# needs no cast).
+webview2-com = "^0.39"
 
 # The shell carries no `[package.metadata.shun]` of its own: the delivery
 # manifest it embeds comes from the target application (SHUN_MANIFEST, or

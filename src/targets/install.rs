@@ -1123,10 +1123,14 @@ fn schedule_self_delete(exe: &Path) {
         // (machine scope = elevated). Refuse to schedule when the path
         // contains them — the delayed delete silently no-ops instead.
         let path_str = exe.display().to_string();
+        // `dir` is already the resolved String form (the same value the
+        // schedule call above consumes) — the Windows-only compile caught
+        // the stray to_string_lossy on a String that the ubuntu job's
+        // cfg never type-checks (2026-10-15 master red).
         if path_str.contains('"')
             || path_str.contains('%')
-            || dir.to_string_lossy().contains('"')
-            || dir.to_string_lossy().contains('%')
+            || dir.contains('"')
+            || dir.contains('%')
         {
             eprintln!(
                 "shun: refusing cmd-based self-delete: installation path \

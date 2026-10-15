@@ -30,6 +30,7 @@ mod screenshot;
 mod splash;
 mod terminal;
 mod tui;
+mod webview_hardening;
 #[cfg(windows)]
 mod window_frame;
 
@@ -1793,7 +1794,10 @@ async fn pairing_request(
                 .gateway
                 .clone()
                 .unwrap_or_else(|| official_gateway(&pairing));
-            let client = shun::pairing::PairingClient::new(&gateway);
+            // #113 turned PairingClient::new into a Result (https
+            // enforcement); propagate it here until the pairing follow-up
+            // lands its own call-site shape (this hunk is droppable).
+            let client = shun::pairing::PairingClient::new(&gateway)?;
             tauri::async_runtime::spawn_blocking(move || {
                 client
                     .request(&args.node_id, args.name.as_deref(), args.tier)
@@ -1866,7 +1870,7 @@ async fn pairing_await(
                 .gateway
                 .clone()
                 .unwrap_or_else(|| official_gateway(&pairing));
-            let client = shun::pairing::PairingClient::new(&gateway);
+            let client = shun::pairing::PairingClient::new(&gateway)?;
             tauri::async_runtime::spawn_blocking(move || {
                 client
                     .await_code(&args.node_id, &args.code)
@@ -2135,6 +2139,10 @@ fn run_shell(
                         );
                     }
                 }
+                // Release builds never surface the webview's own
+                // right-click menu — the wizard owns the whole surface
+                // (debug/dev builds keep it; see `webview_hardening`).
+                webview_hardening::attach(&window);
             }
             Ok(())
         })
