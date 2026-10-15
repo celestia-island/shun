@@ -360,7 +360,7 @@ impl ArchivePayload {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&target, bytes)?;
+            replace_file(&target, bytes)?;
         }
 
         *done += entry.size;
@@ -386,6 +386,66 @@ impl ArchivePayload {
             percent: Some((*done * 100 / total).min(100) as u8),
         });
         Ok(reused)
+    }
+}
+
+/// Write `bytes` over `target`, surviving the one Windows upgrade trap
+/// that matters: a RUNNING executable cannot be opened for write
+/// (sharing violation), but it CAN be renamed. An upgrade install over a
+/// live app therefore parks the old file aside under a `.shun-old-<ts>`
+/// sibling name first, writes the new one in its place, and then tries
+/// to delete the parked copy (the delete of a still-running image fails
+/// harmlessly — the leftover is swept by the next install's pre-clean).
+fn replace_file(target: &Path, bytes: &[u8]) -> Result<(), ShunError> {
+    if target.exists() {
+        // Sweep any parked copies from earlier upgrades before parking a
+        // fresh one (bounded: same-directory siblings, prefix-matched).
+        if let Some(dir) = target.parent() {
+            if let Ok(read_dir) = std::fs::read_dir(dir) {
+                let prefix = format!(
+                    "{}.shun-old-",
+                    target
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                );
+                for stale in read_dir.flatten() {
+                    let name = stale.file_name().to_string_lossy().into_owned();
+                    if name.starts_with(&prefix) {
+                        let _ = std::fs::remove_file(stale.path());
+                    }
+                }
+            }
+        }
+        let parked = target.with_file_name(format!(
+            "{}.shun-old-{}",
+            target
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::rename(target, &parked)?;
+        match std::fs::write(target, bytes) {
+            Ok(()) => {
+                // The parked copy only survives when the old image is
+                // still running — its deletion then fails, by design.
+                let _ = std::fs::remove_file(&parked);
+                Ok(())
+            }
+            Err(e) => {
+                // Put the old file back so a failed write does not leave
+                // the destination without its previous content.
+                let _ = std::fs::rename(&parked, target);
+                Err(e.into())
+            }
+        }
+    } else {
+        std::fs::write(target, bytes)?;
+        Ok(())
     }
 }
 
@@ -471,9 +531,9 @@ mod traversal_guard_tests {
             tar_bytes.extend_from_slice(&header);
             tar_bytes.extend_from_slice(body);
             let pad = (512 - body.len() % 512) % 512;
-            tar_bytes.extend(std::iter::repeat(0u8).take(pad));
+            tar_bytes.extend(std::iter::repeat_n(0u8, pad));
         }
-        tar_bytes.extend(std::iter::repeat(0u8).take(1024)); // footer
+        tar_bytes.extend(std::iter::repeat_n(0u8, 1024)); // footer
         zstd::stream::encode_all(&tar_bytes[..], 3).expect("zstd encode")
     }
 
@@ -507,5 +567,51 @@ mod traversal_guard_tests {
         std::fs::create_dir_all(&dest).unwrap();
         let out = extract_all(&payload, &dest);
         assert!(out.is_err(), "absolute entry must be refused");
+    }
+}
+
+#[cfg(test)]
+mod replace_file_tests {
+    use super::*;
+
+    #[test]
+    fn replace_file_overwrites_a_differing_target_and_cleans_up() {
+        let dir = std::env::temp_dir().join("shun-replace-file-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("app.exe");
+        std::fs::write(&target, b"old image").unwrap();
+
+        replace_file(&target, b"new image").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new image");
+        // The parked sibling must be gone after a successful write.
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            assert!(!name.contains(".shun-old-"), "leftover parked file: {name}");
+        }
+    }
+
+    #[test]
+    fn replace_file_sweeps_parked_copies_from_earlier_upgrades() {
+        let dir = std::env::temp_dir().join("shun-replace-sweep-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("app.exe");
+        std::fs::write(&target, b"old image").unwrap();
+        // A parked copy an earlier upgrade could not delete (the old
+        // image was still running at the time).
+        let parked = dir.join("app.exe.shun-old-1234567890");
+        std::fs::write(&parked, b"ancient image").unwrap();
+
+        replace_file(&target, b"newer image").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"newer image");
+        assert!(!parked.exists(), "the stale parked copy must be swept");
+    }
+
+    #[test]
+    fn replace_file_writes_a_missing_target_directly() {
+        let dir = std::env::temp_dir().join("shun-replace-missing-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("fresh.exe");
+        replace_file(&target, b"first image").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"first image");
     }
 }
