@@ -24,7 +24,7 @@ url = "https://example.test/models.shun"   # recurso adjunto opcional (las build
 local = true                               # instalación registrada (ARP, desinstalador, accesos)
 portable = true                            # modo portable (marcador .shun-portable, sin registro)
 portable-marker = ".shun-portable"          # nombre del archivo marcador de las copias portables (cámbialo si la app detecta el suyo)
-desktop-shortcut = "ask"                   # always | never | ask (casilla del asistente, marcada por defecto)
+desktop-shortcut = "ask"                   # always | never | ask (casilla del asistente, marcada por defecto; headless resuelve ask según la presencia del acceso directo)
 start-menu-shortcut = "always"             # always | never | ask (por defecto: always — el que se pregunta es el acceso del escritorio)
 scope = "ask"                              # user (por defecto) | machine | ask
 deep-links = ["shundemo"]                  # esquemas de URL propios de la app (myapp://…)
@@ -87,6 +87,20 @@ require-removable = true                   # rechazar dispositivos no extraíble
 | `license-sysl` | table | ninguna | empaqueta la licencia SySL + traducciones oficiales desde su repositorio |
 | `msix.logo-background` | color | `transparent` | Color de la placa bajo un logo MSIX transparente |
 | `flash` | table | — | Declara el destino flash |
+
+## Políticas de accesos directos
+
+`install.desktop-shortcut` e `install.start-menu-shortcut` se resuelven
+según el carril. Las caras del asistente muestran casillas (marcadas por
+defecto — la convención NSIS); el carril headless (`--silent`) resuelve
+`ask` por **presencia**: un acceso directo que ya existe se refresca in
+situ, uno que falta no se inventa. Una actualización silenciosa jamás
+debe rociar iconos que el usuario no pidió — las heurísticas de AV/EDR
+señalan exactamente eso, y un acceso directo que el usuario borró debe
+seguir borrado. `always` / `never` fijan la respuesta en todos los
+carriles; las opciones explícitas `--shortcut-desktop` /
+`--shortcut-menu` (el contrato del actualizador) prevalecen sobre todo.
+La desinstalación elimina los accesos directos incondicionalmente.
 
 ## Ejecutar tras la instalación
 

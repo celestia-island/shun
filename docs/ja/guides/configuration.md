@@ -24,7 +24,7 @@ url = "https://example.test/models.shun"   # 任意の添付リソース（ラ�
 local = true                               # 登録インストール（ARP、アンインストーラー、ショートカット）
 portable = true                            # ポータブルモード（.shun-portable マーカー、レジストリ不使用）
 portable-marker = ".shun-portable"          # ポータブルコピーに書かれるマーカーファイル名（アプリが独自のマーカーを検出するなら上書き）
-desktop-shortcut = "ask"                   # always | never | ask（ウィザードのチェックボックス、既定でオン）
+desktop-shortcut = "ask"                   # always | never | ask（ウィザードのチェックボックス、既定でオン；ヘッドレス実行は ask をショートカットの存在で解決）
 start-menu-shortcut = "always"             # always | never | ask（既定は always、尋ねられるのはデスクトップの方）
 scope = "ask"                              # user（既定）| machine | ask
 deep-links = ["shundemo"]                  # アプリが保有する URL スキーム（myapp://…）
@@ -85,6 +85,20 @@ require-removable = true                   # リムーバブル以外のデバ�
 | `license-sysl` | table | なし | SySL ライセンスと公式翻訳をリポジトリからバンドル |
 | `msix.logo-background` | color | `transparent` | 透過 MSIX ロゴの下に敷くプレート色 |
 | `flash` | table | — | flash ターゲットの宣言 |
+
+## ショートカットポリシー
+
+`install.desktop-shortcut` と `install.start-menu-shortcut` はレーン
+ごとに解決されます。ウィザードの各フェイスはチェックボックスを表示します
+（既定でオン —— NSIS の慣行）。ヘッドレスレーン（`--silent`）は `ask` を
+**存在**で解決します：既に存在するショートカットはその場で更新され、
+存在しないものは新たに作られません。サイレント更新が、ユーザーが求めて
+いないアイコンをまき散らすことは決してあってはなりません —— AV/EDR の
+ヒューリスティクスが指摘するのはまさにその挙動ですし、ユーザーが削除した
+ショートカットは削除されたままでなければなりません。`always` / `never`
+はすべてのレーンで回答を固定します。明示的な `--shortcut-desktop` /
+`--shortcut-menu` フラグ（アップデーターの契約）はすべてに優先します。
+アンインストールはショートカットを無条件に除去します。
 
 ## インストール後の起動
 

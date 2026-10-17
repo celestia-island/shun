@@ -777,15 +777,17 @@ pub struct InstallConfig {
     pub main_exe: Option<PathBuf>,
 
     /// Desktop-shortcut policy for local mode. `ask` (the default) is the
-    /// NSIS checkbox convention: the wizard shows a default-checked toggle
-    /// (headless runs treat it as checked).
+    /// NSIS checkbox convention: the wizard shows a default-checked
+    /// toggle, while headless runs resolve by presence — an existing
+    /// launcher is refreshed, a missing one is not invented.
     #[serde(default)]
     pub desktop_shortcut: DesktopShortcutPolicy,
 
-    /// Start-menu-shortcut policy for local mode. Same values as
-    /// `desktop-shortcut`; the default is `always` — standard installs
-    /// have always carried the start-menu launcher, only the desktop
-    /// convenience copy is asked about.
+    /// Start-menu-shortcut policy for local mode. Same values and the
+    /// same headless presence resolution as `desktop-shortcut`; the
+    /// default is `always` — standard installs have always carried the
+    /// start-menu launcher, only the desktop convenience copy is asked
+    /// about.
     #[serde(default = "start_menu_shortcut_default")]
     pub start_menu_shortcut: ShortcutPolicy,
 

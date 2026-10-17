@@ -41,9 +41,10 @@ real.
 
 Resuelto desde la política (`always` | `never` | `ask`, la convención de
 casilla de NSIS — el asistente egui muestra una casilla marcada por
-defecto para `ask`, las ejecuciones headless responden marcada) y escrito
-junto al del menú Inicio. El escritorio se resuelve mediante
-**`SHGetKnownFolderPath(FOLDERID_Desktop)`** — nunca
+defecto para `ask`, las ejecuciones headless lo resuelven por presencia:
+un acceso directo existente se refresca in situ, uno que falta no se
+inventa) y escrito junto al del menú Inicio. El escritorio se resuelve
+mediante **`SHGetKnownFolderPath(FOLDERID_Desktop)`** — nunca
 `%USERPROFILE%\Desktop`, que es incorrecto siempre que el escritorio está
 redirigido (OneDrive, políticas de dominio). La desinstalación lo elimina
 incondicionalmente (la configuración puede haber cambiado entre la

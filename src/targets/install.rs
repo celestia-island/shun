@@ -102,8 +102,9 @@ pub struct WizardAnswers {
 }
 
 impl WizardAnswers {
-    /// The default-checked answers (headless runs): desktop and
-    /// start-menu shortcuts on, per-user scope, launch after install on.
+    /// The default-checked answers (the NSIS done-page convention):
+    /// desktop and start-menu shortcuts on, per-user scope, launch
+    /// after install on.
     pub fn defaults() -> Self {
         Self {
             desktop_shortcut: true,
@@ -265,8 +266,9 @@ impl InstallContext {
     /// Applies the install-target configuration knobs onto a context:
     /// the desktop- and start-menu-shortcut, launch-after-install and
     /// install-scope policies resolved against the wizard answers (`ask`
-    /// consults them; headless runs pass [`WizardAnswers::defaults`]),
-    /// the context-menu verbs, the deep-link schemes, the AUMID, and the
+    /// consults them; the shared flow passes all-false answers and the
+    /// shells apply shortcuts past the flow, at their done pages), the
+    /// context-menu verbs, the deep-link schemes, the AUMID, and the
     /// launcher icon.
     pub fn apply_config(&mut self, install: &InstallConfig, answers: WizardAnswers) {
         use crate::config::{DesktopShortcutPolicy, ScopePolicy};

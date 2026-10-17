@@ -34,8 +34,9 @@ Windows 自己讀回來（WScript.Shell COM 解析器、登錄檔、Windows SDK
 ### 桌面捷徑 —— `install.desktop-shortcut`
 
 由原則（`always` | `never` | `ask`，NSIS 核取方塊慣例——egui 精靈為
-`ask` 顯示預設勾選的開關，無頭執行按勾選處理）解析後，與開始功能表
-捷徑一同寫入。桌面用 **`SHGetKnownFolderPath(FOLDERID_Desktop)`**
+`ask` 顯示預設勾選的開關，無頭執行按存在性解析：已存在的捷徑原位
+重新整理，缺失的不憑空建立）解析後，與開始功能表捷徑一同寫入。
+桌面用 **`SHGetKnownFolderPath(FOLDERID_Desktop)`**
 解析——絕不用 `%USERPROFILE%\Desktop`，桌面被重新導向（OneDrive、
 網域原則）時後者是錯的。解除安裝時無條件移除（安裝與解除安裝之間
 配置可能已變化）。

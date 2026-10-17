@@ -41,10 +41,11 @@ machine réelle.
 
 Résolu depuis la politique (`always` | `never` | `ask`, la convention de
 la case à cocher NSIS — l'assistant egui montre un interrupteur coché
-par défaut pour `ask`, les exécutions headless répondent « coché ») et
-écrit à côté de celui du menu Démarrer. Le bureau est résolu via
-**`SHGetKnownFolderPath(FOLDERID_Desktop)`** — jamais
-`%USERPROFILE%\Desktop`, qui est faux dès que le bureau est redirigé
+par défaut pour `ask`, les exécutions headless le résolvent par
+présence : un raccourci existant est rafraîchi sur place, un raccourci
+manquant n'est pas inventé) et écrit à côté de celui du menu Démarrer.
+Le bureau est résolu via **`SHGetKnownFolderPath(FOLDERID_Desktop)`** —
+jamais `%USERPROFILE%\Desktop`, qui est faux dès que le bureau est redirigé
 (OneDrive, stratégies de domaine). La désinstallation le retire
 inconditionnellement (la configuration a pu changer entre
 l'installation et la désinstallation).
