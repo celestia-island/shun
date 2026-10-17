@@ -34,8 +34,9 @@ Windows 自己读回来（WScript.Shell COM 解析器、注册表、Windows SDK
 ### 桌面快捷方式 —— `install.desktop-shortcut`
 
 由策略（`always` | `never` | `ask`，NSIS 复选框惯例——egui 向导为
-`ask` 显示默认勾选的开关，无头运行按勾选处理）解析后，与开始菜单
-快捷方式一同写入。桌面用 **`SHGetKnownFolderPath(FOLDERID_Desktop)`**
+`ask` 显示默认勾选的开关，无头运行按存在性解析：已存在的快捷方式
+原位刷新，缺失的不凭空创建）解析后，与开始菜单快捷方式一同写入。
+桌面用 **`SHGetKnownFolderPath(FOLDERID_Desktop)`**
 解析——绝不用 `%USERPROFILE%\Desktop`，桌面被重定向（OneDrive、域
 策略）时后者是错的。卸载时无条件移除（安装与卸载之间配置可能已
 变化）。

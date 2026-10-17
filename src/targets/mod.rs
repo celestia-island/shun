@@ -43,6 +43,16 @@ pub mod shortcuts {
         Ok(())
     }
 
+    /// Start-menu launcher presence — always false away from Windows.
+    pub fn start_menu_shortcut_exists(_product: &str) -> bool {
+        false
+    }
+
+    /// Desktop launcher presence — always false away from Windows.
+    pub fn desktop_shortcut_exists(_product: &str) -> bool {
+        false
+    }
+
     #[cfg(test)]
     mod tests {
         use super::apply_shortcut_choices;

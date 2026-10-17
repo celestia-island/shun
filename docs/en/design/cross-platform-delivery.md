@@ -39,7 +39,9 @@ exercised by the registration test suite on a real machine.
 
 Resolved from the policy (`always` | `never` | `ask`, the NSIS checkbox
 convention — the egui wizard shows a default-checked toggle for `ask`,
-headless runs answer checked) and written beside the start-menu one.
+headless runs resolve it by presence: an existing launcher is refreshed
+in place, a missing one is not invented) and written beside the
+start-menu one.
 The desktop is resolved via **`SHGetKnownFolderPath(FOLDERID_Desktop)`**
 — never `%USERPROFILE%\Desktop`, which is wrong whenever the desktop is
 redirected (OneDrive, domain policies). Uninstall removes it

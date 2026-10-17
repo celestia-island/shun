@@ -1,8 +1,8 @@
 //! Done-page shortcut application: the one place the user's shortcut
 //! choices take effect. The install flow itself creates none (the
 //! shared wizard driver pins both launcher answers to "no"), so the
-//! wizard's final confirmation — and the headless run's conventional
-//! defaults — land here.
+//! wizard's final confirmation — and the headless run's
+//! presence-resolved answers — land here.
 //!
 //! Link naming follows the ONE rule the whole surface shares: the
 //! product name stem ([`crate::targets::install::shortcut_stem`]), the
@@ -82,6 +82,21 @@ pub fn apply_shortcut_choices(
     }
 }
 
+/// Whether a launcher for `product` already exists in the per-user
+/// Start-menu `Programs` folder — the surface [`apply_shortcut_choices`]
+/// writes. The headless `ask` default resolves by this: refresh what
+/// exists, invent nothing.
+pub fn start_menu_shortcut_exists(product: &str) -> bool {
+    start_menu_link(&shortcut_stem(product)).is_file()
+}
+
+/// Whether a launcher for `product` already exists on the desktop (the
+/// known folder) — the surface [`apply_shortcut_choices`] writes. See
+/// [`start_menu_shortcut_exists`] for the resolution contract.
+pub fn desktop_shortcut_exists(product: &str) -> bool {
+    desktop_link(&shortcut_stem(product)).is_file()
+}
+
 /// The `.lnk` file name for a main executable: the FILE-name stem with
 /// an `.lnk` suffix — a payload-relative `bin/app.exe` names the link
 /// `app.lnk`, not `bin/app.lnk` (the pre-unification naming — kept
@@ -151,7 +166,11 @@ fn desktop_dir() -> PathBuf {
 }
 
 /// Creates or removes one `.lnk`, recording the path in `changed` when
-/// the filesystem actually changes. Creation stamps the app's AUMID on
+/// the filesystem actually changes. `want` always (re)writes the link —
+/// an existing launcher is refreshed in place, so a moved install
+/// directory or a changed AUMID cannot leave stale bytes pointing at
+/// the old target (`File::create` truncates, matching the registration
+/// pass's unconditional write). Creation stamps the app's AUMID on
 /// the link — best-effort: a failed stamp only warns. Both directions
 /// also delete the legacy `link` (the executable-stem name older
 /// shells wrote) when it names a different file, so an upgraded install
@@ -165,18 +184,16 @@ fn apply_shortcut(
     changed: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     if want {
-        if !link.is_file() {
-            if let Some(parent) = link.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
-            }
-            mslnk::ShellLink::new(exe)
-                .and_then(|l| l.create_lnk(link))
-                .map_err(|e| format!("create shortcut: {e}"))?;
-            if let Err(e) = crate::targets::aumid::stamp(link, aumid) {
-                eprintln!("shun: AUMID stamp on {}: {e}", link.display());
-            }
-            changed.push(link.to_path_buf());
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
         }
+        mslnk::ShellLink::new(exe)
+            .and_then(|l| l.create_lnk(link))
+            .map_err(|e| format!("create shortcut: {e}"))?;
+        if let Err(e) = crate::targets::aumid::stamp(link, aumid) {
+            eprintln!("shun: AUMID stamp on {}: {e}", link.display());
+        }
+        changed.push(link.to_path_buf());
         // Best-effort sweep: the legacy link may not exist at all, and a
         // failure to remove it must not fail the creation.
         if let Some(legacy) = legacy

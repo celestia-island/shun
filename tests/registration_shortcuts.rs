@@ -571,6 +571,148 @@ mod registration {
         drop(guard); // the Drop uninstall is tolerant of the cleaned state
     }
 
+    /// The presence probes the headless `ask` resolution keys on track
+    /// the done-page application exactly: absent before any launcher
+    /// exists (the state a silent update resolves against when the user
+    /// deleted — or never had — the launchers), present after an accept,
+    /// absent again after a decline.
+    #[test]
+    fn presence_helpers_follow_the_done_page_application() {
+        let product = "ShunDemo-Test-Presence";
+        let aumid = "celestia-island.ShunDemo-Test-Presence";
+        let dest = tempfile::tempdir().unwrap();
+        std::fs::write(dest.path().join("app.exe"), b"stub").unwrap();
+        let dir = dest.path().display().to_string();
+
+        // Best-effort cleanup so a red assertion cannot leave launchers
+        // behind on the real surfaces.
+        struct Sweep<'a>(&'a str, &'a str, &'a str);
+        impl Drop for Sweep<'_> {
+            fn drop(&mut self) {
+                let _ = shun::targets::shortcuts::apply_shortcut_choices(
+                    self.0,
+                    self.1,
+                    "app.exe",
+                    Some(false),
+                    Some(false),
+                    self.2,
+                );
+            }
+        }
+        let _sweep = Sweep(aumid, product, &dir);
+
+        let desktop_writable = desktop_accepts_lnk();
+        assert!(
+            !shun::targets::shortcuts::start_menu_shortcut_exists(product),
+            "absent before anything applied"
+        );
+        if desktop_writable {
+            assert!(!shun::targets::shortcuts::desktop_shortcut_exists(product));
+        }
+
+        shun::targets::shortcuts::apply_shortcut_choices(
+            aumid,
+            product,
+            "app.exe",
+            Some(true),
+            Some(true),
+            &dir,
+        )
+        .unwrap();
+        assert!(shun::targets::shortcuts::start_menu_shortcut_exists(
+            product
+        ));
+        if desktop_writable {
+            assert!(shun::targets::shortcuts::desktop_shortcut_exists(product));
+        }
+
+        shun::targets::shortcuts::apply_shortcut_choices(
+            aumid,
+            product,
+            "app.exe",
+            Some(false),
+            Some(false),
+            &dir,
+        )
+        .unwrap();
+        assert!(!shun::targets::shortcuts::start_menu_shortcut_exists(
+            product
+        ));
+        if desktop_writable {
+            assert!(!shun::targets::shortcuts::desktop_shortcut_exists(product));
+        }
+    }
+
+    /// Accepting rewrites an existing launcher instead of leaving it
+    /// stale: a kept link must follow the CURRENT install location, so a
+    /// silent update that lands in a different directory (or an AUMID
+    /// change) cannot leave bytes pointing at the old target behind.
+    #[test]
+    fn shortcut_accept_refreshes_an_existing_link_in_place() {
+        let com_works = shell_com_works();
+        let product = "ShunDemo-Test-Refresh";
+        let aumid = "celestia-island.ShunDemo-Test-Refresh";
+        let first = tempfile::tempdir().unwrap();
+        std::fs::write(first.path().join("app.exe"), b"stub-a").unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(second.path().join("app.exe"), b"stub-b").unwrap();
+
+        struct Sweep<'a>(&'a str, &'a str, &'a str);
+        impl Drop for Sweep<'_> {
+            fn drop(&mut self) {
+                let _ = shun::targets::shortcuts::apply_shortcut_choices(
+                    self.0,
+                    self.1,
+                    "app.exe",
+                    Some(false),
+                    Some(false),
+                    self.2,
+                );
+            }
+        }
+        let _sweep = Sweep(aumid, product, &second.path().display().to_string());
+
+        shun::targets::shortcuts::apply_shortcut_choices(
+            aumid,
+            product,
+            "app.exe",
+            Some(false),
+            Some(true),
+            &first.path().display().to_string(),
+        )
+        .unwrap();
+        assert!(shun::targets::shortcuts::start_menu_shortcut_exists(
+            product
+        ));
+        let before = std::fs::read(start_menu_lnk(product)).unwrap();
+
+        // Re-accept against the second directory: the link is rewritten,
+        // not skipped over.
+        shun::targets::shortcuts::apply_shortcut_choices(
+            aumid,
+            product,
+            "app.exe",
+            Some(false),
+            Some(true),
+            &second.path().display().to_string(),
+        )
+        .unwrap();
+        let after = std::fs::read(start_menu_lnk(product)).unwrap();
+        assert_ne!(
+            before, after,
+            "an existing link is rewritten, not left stale"
+        );
+        if com_works {
+            let view = read_shortcut_via_shell(&start_menu_lnk(product));
+            assert_eq!(
+                view.target,
+                second.path().join("app.exe").display().to_string(),
+                "the refreshed link follows the current install location"
+            );
+            assert_eq!(view.working_dir, second.path().display().to_string());
+        }
+    }
+
     /// The AUMID is stamped on the shortcut through the Shell property
     /// store — the identity Windows uses for taskbar grouping and
     /// user-initiated pinning (there is no programmatic pinning).

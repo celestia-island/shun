@@ -24,7 +24,7 @@ url = "https://example.test/models.shun"   # 선택 첨부 리소스(라이트 �
 local = true                               # 등록 설치 (ARP, 제거 프로그램, 바로 가기)
 portable = true                            # 휴대용 모드 (.shun-portable 마커, 레지스트리 미사용)
 portable-marker = ".shun-portable"          # 휴대용 복사본에 기록되는 마커 파일 이름 (앱이 자체 마커를 감지하면 재정의)
-desktop-shortcut = "ask"                   # always | never | ask(마법사 체크박스, 기본 선택)
+desktop-shortcut = "ask"                   # always | never | ask(마법사 체크박스, 기본 선택; 헤드리스 실행은 ask를 바로 가기 존재 여부로 해석)
 start-menu-shortcut = "always"             # always | never | ask(기본값 always, 묻는 것은 데스크톱 쪽)
 scope = "ask"                              # user(기본값) | machine | ask
 deep-links = ["shundemo"]                  # 앱이 소유한 URL 스킴(myapp://…)
@@ -85,6 +85,19 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 | `license-sysl` | table | 없음 | SySL 라이선스와 공식 번역을 저장소에서 번들 |
 | `msix.logo-background` | 색상 | `transparent` | 투명 MSIX 로고 아래 깔리는 플레이트 색 |
 | `flash` | table | — | flash 타깃 선언 |
+
+## 바로 가기 정책
+
+`install.desktop-shortcut`와 `install.start-menu-shortcut`은 레인별로
+해석됩니다. 위자드 화면은 확인란을 보여줍니다(기본 선택 — NSIS 관례).
+헤드리스 레인(`--silent`)은 `ask`를 **존재**로 해석합니다: 이미 있는
+바로 가기는 그 자리에서 갱신되고, 없는 바로 가기는 새로 만들지
+않습니다. 조용한 업데이트가 사용자가 요청하지 않은 아이콘을 뿌려서는
+안 됩니다 — AV/EDR 휴리스틱이 정확히 그것을 지목하고, 사용자가 지운
+바로 가기는 지워진 채로 남아야 하기 때문입니다. `always` / `never`는
+모든 레인에서 답을 고정합니다. 명시적인 `--shortcut-desktop` /
+`--shortcut-menu` 플래그(업데이터 계약)는 모든 것보다 우선합니다.
+제거는 바로 가기를 무조건 지웁니다.
 
 ## 설치 후 실행
 

@@ -671,7 +671,7 @@ pub fn apply_finish(
 /// resolves the target's scope and relays the wizard language to the
 /// elevated copy, so it needs a full context — but the shortcut answers
 /// ride the relaunch flags (the elevated copy runs the headless lane,
-/// which applies its own conventional defaults), and the flow itself
+/// which re-resolves them from its own argv), and the flow itself
 /// never creates shortcuts. One construction, shared by every face.
 pub fn elevation_context(
     config: &ShunConfig,

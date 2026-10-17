@@ -30,7 +30,7 @@ files = ["latest", "app-setup.exe"]        # 解析到获胜源之下
 local = true                               # 注册安装（ARP、卸载器、快捷方式）
 portable = true                            # 便携模式（.shun-portable 标记，零注册表）
 portable-marker = ".shun-portable"          # 便携副本写入的标记文件名（应用检测自有标记时可覆盖）
-desktop-shortcut = "ask"                   # always | never | ask（向导复选框，默认勾选）
+desktop-shortcut = "ask"                   # always | never | ask（向导复选框，默认勾选；无头运行按快捷方式是否存在解析 ask）
 start-menu-shortcut = "always"             # always | never | ask（默认 always，向导只询问桌面那份）
 launch-after-install = "ask"               # always | never | ask（完成页复选框，默认勾选；无该选项的壳可固定取值）
 # default-dir = "%LOCALAPPDATA%\\Programs\\Wowsp"  # 覆盖默认安装位置（运行时展开 %VAR%/${VAR}）
@@ -94,6 +94,16 @@ require-removable = true                   # 拒绝非可移动设备
 | `license-sysl` | table | 无 | 从 SySL 仓库打包许可证及官方译文 |
 | `msix.logo-background` | 颜色 | `transparent` | 透明 MSIX 图标底下的底板色 |
 | `flash` | table | — | 声明烧写目标 |
+
+## 快捷方式策略
+
+`install.desktop-shortcut` 与 `install.start-menu-shortcut` 按轨道解析。
+向导各面显示复选框（默认勾选——NSIS 惯例）；无头轨道（`--silent`）按
+**存在性**解析 `ask`：已存在的快捷方式原位刷新，缺失的不凭空创建。静默
+更新绝不能撒出用户没有要过的图标——AV/EDR 启发式盯的正是这种行为，而且
+用户删掉的快捷方式必须保持删除。`always` / `never` 在所有轨道固定取值；
+显式 `--shortcut-desktop` / `--shortcut-menu` 旗标（更新器契约）压过
+一切。卸载无条件移除快捷方式。
 
 ## 安装后启动
 

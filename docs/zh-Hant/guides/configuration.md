@@ -23,7 +23,7 @@ url = "https://example.test/models.shun"   # 可選附件資源（精簡版在�
 local = true                               # 註冊安裝（ARP、解除安裝器、捷徑）
 portable = true                            # 可攜模式（.shun-portable 標記，零登錄檔）
 portable-marker = ".shun-portable"          # 可攜副本寫入的標記檔名（應用程式偵測自有標記時可覆寫）
-desktop-shortcut = "ask"                   # always | never | ask（精靈核取方塊，預設勾選）
+desktop-shortcut = "ask"                   # always | never | ask（精靈核取方塊，預設勾選；無頭執行按捷徑是否存在解析 ask）
 start-menu-shortcut = "always"             # always | never | ask（預設 always，精靈只詢問桌面那份）
 scope = "ask"                              # user（預設）| machine | ask
 deep-links = ["shundemo"]                  # 應用程式持有的 URL scheme（myapp://…）
@@ -83,6 +83,16 @@ require-removable = true                   # 拒絕非可移除裝置
 | `license-sysl` | table | 無 | 從 SySL 儲存庫打包授權與官方譯文 |
 | `msix.logo-background` | 顏色 | `transparent` | 透明 MSIX 圖示底下的底板色 |
 | `flash` | table | — | 宣告燒錄目標 |
+
+## 捷徑策略
+
+`install.desktop-shortcut` 與 `install.start-menu-shortcut` 按軌道解析。
+精靈各面顯示核取方塊（預設勾選——NSIS 慣例）；無頭軌道（`--silent`）按
+**存在性**解析 `ask`：已存在的捷徑原位重新整理，缺失的不憑空建立。靜默
+更新絕不能撒出使用者沒有要過的圖示——AV/EDR 啟發式盯的正是這種行為，
+而且使用者刪掉的捷徑必須保持刪除。`always` / `never` 在所有軌道固定
+取值；明示 `--shortcut-desktop` / `--shortcut-menu` 旗標（更新器契約）
+壓過一切。解除安裝無條件移除捷徑。
 
 ## 安裝後啟動
 

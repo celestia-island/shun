@@ -31,7 +31,7 @@ files = ["latest", "app-setup.exe"]        # resolved under the winning source
 local = true                               # registered install (ARP, uninstaller, shortcuts)
 portable = true                            # portable mode (.shun-portable marker, no registry)
 portable-marker = ".shun-portable"          # marker file name for portable copies (override when the app detects its own)
-desktop-shortcut = "ask"                   # always | never | ask (wizard checkbox, default checked)
+desktop-shortcut = "ask"                   # always | never | ask (wizard checkbox, default checked; headless resolves ask by launcher presence)
 start-menu-shortcut = "always"             # always | never | ask (default: always — the desktop one is the asked-about convenience)
 launch-after-install = "ask"               # always | never | ask (done-page checkbox, default checked; pin it for shells without one)
 # default-dir = "%LOCALAPPDATA%\\Programs\\Wowsp"  # override the default location (env-expanded %VAR%/${VAR})
@@ -96,6 +96,19 @@ require-removable = true                   # refuse non-removable devices
 | `license-sysl` | table | none | Bundle the SySL license + official translations from its repository |
 | `msix.logo-background` | color | `transparent` | Plate flattened under a transparent MSIX logo |
 | `flash` | table | — | Declares the flash target |
+
+## Shortcut policies
+
+`install.desktop-shortcut` and `install.start-menu-shortcut` resolve per
+lane. The wizard faces show checkboxes (default checked — the NSIS
+convention); the headless lane (`--silent`) resolves `ask` by
+**presence**: a launcher that already exists is refreshed in place, a
+missing one is not invented. A silent update must never spray icons the
+user did not ask for — AV/EDR heuristics flag exactly that, and a
+launcher the user deleted must stay deleted. `always` / `never` pin the
+answer in every lane; the explicit `--shortcut-desktop` /
+`--shortcut-menu` flags (the updater contract) win over everything.
+Uninstall removes launchers unconditionally.
 
 ## Launch after install
 

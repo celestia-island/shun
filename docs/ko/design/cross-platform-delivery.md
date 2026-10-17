@@ -37,8 +37,10 @@ Windows 11 실기에서 실제 `InstallFlow`를 실행하고, 그 결과를 Wind
 ### 바탕 화면 바로 가기 — `install.desktop-shortcut`
 
 정책(`always` | `never` | `ask`, NSIS 체크박스 관례 — egui 마법사는
-`ask`에 대해 기본 선택된 토글을 보여주고, 헤드리스 실행은 선택됨으로
-응답합니다)에서 해석되어 시작 메뉴 바로 가기 옆에 기록됩니다. 바탕
+`ask`에 대해 기본 선택된 토글을 보여주고, 헤드리스 실행은 그것을
+존재로 해석합니다: 이미 있는 바로 가기는 그 자리에서 갱신되고, 없는
+바로 가기는 새로 만들지 않습니다)에서 해석되어 시작 메뉴 바로 가기
+옆에 기록됩니다. 바탕
 화면은 **`SHGetKnownFolderPath(FOLDERID_Desktop)`**로 해석합니다 —
 바탕 화면이 리다이렉트될 때(OneDrive, 도메인 정책) 틀려지는
 `%USERPROFILE%\Desktop`은 결코 쓰지 않습니다. 제거는 무조건

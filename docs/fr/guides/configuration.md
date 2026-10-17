@@ -24,7 +24,7 @@ url = "https://example.test/models.shun"   # ressource jointe optionnelle (tél�
 local = true                               # installation enregistrée (ARP, désinstalleur, raccourcis)
 portable = true                            # mode portable (marqueur .shun-portable, sans registre)
 portable-marker = ".shun-portable"          # nom du fichier marqueur écrit pour les copies portables (à redéfinir si l'application détecte le sien)
-desktop-shortcut = "ask"                   # always | never | ask (case de l'assistant, cochée par défaut)
+desktop-shortcut = "ask"                   # always | never | ask (case de l'assistant, cochée par défaut ; headless résout ask selon la présence du raccourci)
 start-menu-shortcut = "always"             # always | never | ask (par défaut : always — la demande concerne le raccourci du bureau)
 scope = "ask"                              # user (par défaut) | machine | ask
 deep-links = ["shundemo"]                  # schémas d'URL détenus par l'app (myapp://…)
@@ -86,6 +86,21 @@ require-removable = true                   # refuser les périphériques non amo
 | `license-sysl` | table | aucune | regroupe la licence SySL + traductions officielles depuis son dépôt |
 | `msix.logo-background` | couleur | `transparent` | Couleur du plateau aplati sous un logo MSIX transparent |
 | `flash` | table | — | Déclare la cible flash |
+
+## Politiques de raccourcis
+
+`install.desktop-shortcut` et `install.start-menu-shortcut` se résolvent
+selon la voie. Les faces de l'assistant montrent des cases à cocher
+(cochées par défaut — la convention NSIS) ; la voie headless (`--silent`)
+résout `ask` par **présence** : un raccourci déjà existant est rafraîchi
+sur place, un raccourci manquant n'est pas inventé. Une mise à jour
+silencieuse ne doit jamais semer des icônes que l'utilisateur n'a pas
+demandées — les heuristiques AV/EDR flaggent exactement cela, et un
+raccourci supprimé par l'utilisateur doit rester supprimé. `always` /
+`never` épinglent la réponse dans toutes les voies ; les options
+explicites `--shortcut-desktop` / `--shortcut-menu` (le contrat du
+programme de mise à jour) l'emportent sur tout. La désinstallation
+retire les raccourcis inconditionnellement.
 
 ## Lancement après installation
 

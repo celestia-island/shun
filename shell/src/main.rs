@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{CommandFactory, Parser};
 use serde::Serialize;
-use shun::config::{ResolvedLicenseDoc, ShunConfig, TargetConfig, UiFace};
+use shun::config::{DesktopShortcutPolicy, ResolvedLicenseDoc, ShunConfig, TargetConfig, UiFace};
 use shun::env_probe::UiCapabilities;
 use shun::flow::FlowEvent;
 use shun::payload::ArchivePayload;
@@ -154,19 +154,24 @@ struct Cli {
     scope: Option<String>,
 
     /// Skip the conventional desktop shortcut (headless installs).
+    /// Legacy convention: an explicit `--shortcut-desktop` answer wins
+    /// over this.
     #[arg(long)]
     no_desktop: bool,
 
     /// Start-menu shortcut answer for headless installs (`0` skips — or
-    /// removes an existing launcher — `1` creates it; absent keeps the
-    /// always-on convention). This is the updater contract: a product's
-    /// updater passes the user's current choice so an in-place update
-    /// refreshes launchers instead of accumulating or dropping them.
+    /// removes an existing launcher — `1` creates it; absent resolves
+    /// the manifest policy: `always`/`never` pin, `ask` refreshes an
+    /// existing launcher and never invents one). This is the updater
+    /// contract: a product's updater passes the user's current choice
+    /// so an in-place update refreshes launchers instead of
+    /// accumulating or dropping them.
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=1))]
     shortcut_menu: Option<u8>,
 
     /// Desktop shortcut answer for headless installs (`0` removes, `1`
-    /// creates; absent falls back to the `--no-desktop` convention).
+    /// creates; absent resolves the manifest policy the same way
+    /// `--shortcut-menu` does, after the `--no-desktop` convention).
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=1))]
     shortcut_desktop: Option<u8>,
 
@@ -798,13 +803,33 @@ fn download_attachment(
 /// under UAC with the resolved answers before anything runs.
 fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Result<(), String> {
     // The explicit shortcut answers (updater contract) win over the
-    // `--no-desktop` convention; resolution happens once so the
-    // elevation gate and the post-install application agree.
-    let desktop_answer = cli
-        .shortcut_desktop
-        .map(|v| v != 0)
-        .unwrap_or(!cli.no_desktop);
-    let menu_answer = cli.shortcut_menu.map(|v| v != 0).unwrap_or(true);
+    // `--no-desktop` convention, which wins over the manifest policy;
+    // resolution happens once so the elevation gate and the
+    // post-install application agree. The `ask` policy resolves by
+    // PRESENCE — a launcher that already exists is refreshed in place,
+    // a missing one is not invented — so a silent update never sprays
+    // icons the user did not ask for (and a deleted launcher stays
+    // deleted).
+    let install_cfg = config
+        .targets
+        .iter()
+        .find_map(|t| match t {
+            TargetConfig::Install(cfg) => Some(cfg),
+            _ => None,
+        })
+        .cloned()
+        .unwrap_or_default();
+    let desktop_answer = resolve_headless_desktop_answer(
+        cli.shortcut_desktop,
+        cli.no_desktop,
+        install_cfg.desktop_shortcut,
+        shun::targets::shortcuts::desktop_shortcut_exists(&config.product.name),
+    );
+    let menu_answer = resolve_headless_menu_answer(
+        cli.shortcut_menu,
+        install_cfg.start_menu_shortcut,
+        shun::targets::shortcuts::start_menu_shortcut_exists(&config.product.name),
+    );
     let dir = cli
         .dir
         .clone()
@@ -960,6 +985,47 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
     Ok(())
 }
 
+/// Resolves the headless desktop-shortcut answer. Priority: the explicit
+/// updater answer, then the legacy `--no-desktop` skip, then the
+/// manifest policy — `ask` takes the launcher's presence, so a silent
+/// update refreshes what exists and invents nothing. Pure, so the
+/// priority matrix stays unit-testable.
+fn resolve_headless_desktop_answer(
+    explicit: Option<u8>,
+    no_desktop: bool,
+    policy: DesktopShortcutPolicy,
+    exists: bool,
+) -> bool {
+    match explicit {
+        Some(v) => v != 0,
+        None if no_desktop => false,
+        None => resolve_headless_policy_answer(policy, exists),
+    }
+}
+
+/// Resolves the headless start-menu-shortcut answer — the same contract
+/// as [`resolve_headless_desktop_answer`] without the legacy skip flag.
+fn resolve_headless_menu_answer(
+    explicit: Option<u8>,
+    policy: DesktopShortcutPolicy,
+    exists: bool,
+) -> bool {
+    match explicit {
+        Some(v) => v != 0,
+        None => resolve_headless_policy_answer(policy, exists),
+    }
+}
+
+/// The policy half of the headless resolution: `always`/`never` pin,
+/// `ask` follows the launcher's presence.
+fn resolve_headless_policy_answer(policy: DesktopShortcutPolicy, exists: bool) -> bool {
+    match policy {
+        DesktopShortcutPolicy::Always => true,
+        DesktopShortcutPolicy::Never => false,
+        DesktopShortcutPolicy::Ask => exists,
+    }
+}
+
 /// The uninstall through the shared event printer — pre-uninstall
 /// hooks and removal steps land on the console like the install's do.
 fn run_uninstall_events(
@@ -1005,7 +1071,8 @@ pub(crate) fn ensure_elevated_for(
     }
     // The raw shortcut answers ride along verbatim: the elevated
     // copy re-resolves them from its own argv, so losing one here
-    // would flip an explicit removal into the always-on default.
+    // would flip an explicit removal into the policy-resolved
+    // default.
     for raw in raw_shortcut_args {
         args.push(' ');
         args.push_str(raw);
@@ -2193,12 +2260,47 @@ mod tests {
         let parsed = cli(&["--silent", "--shortcut-menu=0", "--shortcut-desktop=1"]);
         assert_eq!(parsed.shortcut_menu, Some(0));
         assert_eq!(parsed.shortcut_desktop, Some(1));
-        // Absent flags keep the conventional resolution.
+        // Absent flags keep the policy-and-presence resolution.
         let plain = cli(&["--silent"]);
         assert_eq!(plain.shortcut_menu, None);
         assert_eq!(plain.shortcut_desktop, None);
         // Out-of-range answers are rejected, not silently clamped.
         assert!(Cli::try_parse_from(["shun-installer", "--silent", "--shortcut-menu=2",]).is_err());
+    }
+
+    #[test]
+    fn headless_shortcut_answers_resolve_by_policy_and_presence() {
+        use shun::config::DesktopShortcutPolicy as P;
+        // Explicit updater answers win over every convention.
+        assert!(resolve_headless_menu_answer(Some(1), P::Never, false));
+        assert!(!resolve_headless_menu_answer(Some(0), P::Always, true));
+        assert!(resolve_headless_desktop_answer(
+            Some(1),
+            true,
+            P::Never,
+            false
+        ));
+        assert!(!resolve_headless_desktop_answer(
+            Some(0),
+            false,
+            P::Always,
+            true
+        ));
+        // The legacy --no-desktop skip beats the policy.
+        assert!(!resolve_headless_desktop_answer(
+            None,
+            true,
+            P::Always,
+            true
+        ));
+        // always / never pin the answer regardless of presence.
+        assert!(resolve_headless_menu_answer(None, P::Always, false));
+        assert!(!resolve_headless_menu_answer(None, P::Never, true));
+        // ask resolves by presence: refresh what exists, invent nothing.
+        assert!(resolve_headless_menu_answer(None, P::Ask, true));
+        assert!(!resolve_headless_menu_answer(None, P::Ask, false));
+        assert!(resolve_headless_desktop_answer(None, false, P::Ask, true));
+        assert!(!resolve_headless_desktop_answer(None, false, P::Ask, false));
     }
 
     #[test]
