@@ -33,7 +33,7 @@ portable-marker = ".shun-portable"          # 便携副本写入的标记文件�
 desktop-shortcut = "ask"                   # always | never | ask（向导复选框，默认勾选；无头运行按快捷方式是否存在解析 ask）
 start-menu-shortcut = "always"             # always | never | ask（默认 always，向导只询问桌面那份）
 launch-after-install = "ask"               # always | never | ask（完成页复选框，默认勾选；无该选项的壳可固定取值）
-# default-dir = "%LOCALAPPDATA%\\Programs\\Wowsp"  # 覆盖默认安装位置（运行时展开 %VAR%/${VAR}）
+# default-dir = "%LOCALAPPDATA%\\Programs\\Wowsp"  # 覆盖默认安装位置（运行时展开 %VAR%/${VAR}）；已注册安装位置仍优先——见「安装位置解析」
 deep-links = ["shundemo"]                  # 应用持有的 URL scheme（myapp://…）
 aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生成
 icon = "assets/icon.png"                   # 载荷内启动器图标（Linux 的 Icon=）
@@ -125,6 +125,18 @@ require-removable = true                   # 拒绝非可移动设备
 产品名，可用 `install.root-dir-folder` 自定义。向导弹窗在选中或
 输入根目录的当下即改写路径框，展示的始终是真实目标；无界面的
 `--dir=D:\` 运行同样在流程内受此保护。
+
+## 安装位置解析
+
+一次运行的起始目标 —— 向导弹窗预选的路径，以及命令行未携带
+`--dir` 时无界面通道的安装目标 —— 遵循统一的优先级：产品的
+**已注册安装位置**（ARP 的 `InstallLocation`，先查 HKCU 再查
+HKLM）在其目录仍然存在时领跑候选链；其后是清单配置的
+`install.default-dir`，再后是常规候选链（每用户 appdata、
+Program Files、每个固定盘各一文件夹）。于是升级会落在上一版
+本实际所在的目录，而不是把自定义路径的安装搬迁到钉死的默认
+位置；显式 `--dir`（更新器契约）依然压倒一切。目录已不存在的
+注册位置会被忽略 —— 被删掉的安装不得锚定下一次安装。
 
 ## WebView2 策略
 

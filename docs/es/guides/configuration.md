@@ -131,6 +131,22 @@ en cuanto se elige o teclea una raíz, de modo que el destino mostrado
 es siempre el real; las ejecuciones headless `--dir=D:\` reciben la
 misma protección dentro del flujo.
 
+## Resolución de la ubicación de instalación
+
+El destino con el que arranca una ejecución — la ruta preseleccionada
+del asistente y el objetivo de la vía headless cuando la línea de
+comandos no lleva `--dir` — sigue una sola prioridad: la **ubicación de
+instalación registrada** del producto (la `InstallLocation` de ARP,
+HKCU antes que HKLM) encabeza la cadena mientras su directorio siga
+existiendo; después, la `install.default-dir` configurada y, por
+último, la cadena convencional de candidatos (appdata por usuario,
+Program Files, una carpeta por disco fijo). Así, una actualización
+aterriza donde ya vivía la versión anterior en lugar de reubicar una
+instalación con ruta personalizada en la ubicación fijada, y un
+`--dir` explícito (el contrato del actualizador) sigue imponiéndose a
+todo. Una ubicación registrada cuyo directorio ya no existe se ignora:
+una instalación borrada no debe anclar la siguiente.
+
 ## Estrategias WebView2
 
 | `type` | Lleva | Requiere | Notas |

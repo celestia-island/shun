@@ -34,7 +34,7 @@ portable-marker = ".shun-portable"          # marker file name for portable copi
 desktop-shortcut = "ask"                   # always | never | ask (wizard checkbox, default checked; headless resolves ask by launcher presence)
 start-menu-shortcut = "always"             # always | never | ask (default: always — the desktop one is the asked-about convenience)
 launch-after-install = "ask"               # always | never | ask (done-page checkbox, default checked; pin it for shells without one)
-# default-dir = "%LOCALAPPDATA%\\Programs\\Wowsp"  # override the default location (env-expanded %VAR%/${VAR})
+# default-dir = "%LOCALAPPDATA%\\Programs\\Wowsp"  # override the default location (env-expanded %VAR%/${VAR}); a registered install location still leads (see Install location resolution)
 deep-links = ["shundemo"]                  # URL schemes the app owns (myapp://...)
 aumid = "celestia-island.ShunDemo"         # default: generated from publisher + product
 icon = "assets/icon.png"                   # payload-relative launcher icon (Linux Icon=)
@@ -135,6 +135,21 @@ product name by default, customized via `install.root-dir-folder`. The
 wizard shells rewrite the path box the moment a root is picked or
 typed, so the displayed destination is always the real one; headless
 `--dir=D:\` runs get the same guard inside the flow.
+
+## Install location resolution
+
+The destination a run starts from — the wizard's preselected path, and
+the headless lane's target when no `--dir` rides the command line —
+follows one priority: the product's **registered install location**
+(ARP `InstallLocation`, HKCU before HKLM) leads while its directory
+still exists, then the configured `install.default-dir`, then the
+conventional candidate chain (per-user appdata, Program Files, one
+folder per fixed drive). An upgrade therefore lands where the previous
+version already lives instead of relocating a custom-path install to
+the pinned default, and an explicit `--dir` (the updater contract)
+still wins over everything. A registered location whose directory no
+longer exists is ignored — a deleted install must not pin the next
+one.
 
 ## WebView2 strategies
 
