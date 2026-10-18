@@ -14,6 +14,17 @@
 //! config document drives the three of them — see
 //! [`config::ShunConfig`].
 //!
+//! # Cargo features
+//!
+//! `online` (default) ships the networked payload source and the pairing
+//! gateway client; `cli` (default) ships the build CLI's extras; and
+//! `scripting` (default) ships the embedded duckscript interpreter behind
+//! manifest `script` hooks. Embedded consumers building with
+//! `default-features = false` keep none of the three — a lean dependency
+//! graph with no scripting runtime, and a manifest that still declares
+//! hooks then fails loudly at the flow boundary instead of silently
+//! skipping them.
+//!
 //! # Status
 //!
 //! `0.2.x`: the config schema, flow model, payload pipeline, and install
