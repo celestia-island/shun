@@ -830,10 +830,30 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
         install_cfg.start_menu_shortcut,
         shun::targets::shortcuts::start_menu_shortcut_exists(&config.product.name),
     );
-    let dir = cli
-        .dir
-        .clone()
-        .unwrap_or_else(|| shun::wizard::default_location_for(config));
+    // Upgrade-in-place: an explicit --dir always wins (the updater
+    // contract); a dir-less silent INSTALL targets the product's
+    // REGISTERED install location (ARP) when one still exists — never
+    // the manifest default, which would silently relocate a custom-path
+    // install to the pinned C: folder. The registered dir is taken even
+    // when the writability probe fails: an upgrade must fail loudly
+    // there, not fall back and land somewhere else. (The uninstall lane
+    // ignores `dir` — it always acts on the uninstaller's own folder.)
+    let registered_previous = (!cli.uninstall)
+        .then(|| shun::targets::install::registered_install_dir(&config.product.name))
+        .flatten();
+    let dir = match cli.dir.as_deref() {
+        Some(dir) => dir.trim().to_string(),
+        None => match &registered_previous {
+            Some(previous) => {
+                println!(
+                    "shun: no --dir given — upgrading the registered install at {}",
+                    previous.display()
+                );
+                previous.to_string_lossy().into_owned()
+            }
+            None => shun::wizard::default_location_for(config),
+        },
+    };
     let dir = shun::wizard::pad_root_dir(config, &dir);
     let portable = cli.mode == "portable";
     let machine = cli.scope.as_deref() == Some("machine");

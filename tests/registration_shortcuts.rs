@@ -1041,3 +1041,79 @@ mod registration {
         drop(guard);
     }
 }
+
+/// The ARP read-back that anchors upgrades to the registered install:
+/// the headless lane's dir-less fallback and the wizard's leading
+/// location candidate both resolve through `registered_install_dir`, so
+/// a dir-less silent upgrade targets the previous install's directory
+/// instead of relocating to the manifest default.
+#[cfg(windows)]
+mod registered_location {
+    use std::path::PathBuf;
+
+    use crate::common::{ctx, demo_payload};
+    use shun::flow::Flow;
+    use shun::targets::install::{
+        InstallContext, InstallFlow, WindowsRegistration, registered_install_dir, uninstall,
+    };
+
+    /// Runs a full local install for `product` into a caller-chosen
+    /// directory and unregisters it when the test (or a panic) is done.
+    struct Registered {
+        ctx: InstallContext,
+    }
+
+    impl Registered {
+        fn install(product: &str, install_dir: PathBuf) -> Self {
+            let context = ctx(product, install_dir, false);
+            let payload = demo_payload();
+            let flow = InstallFlow {
+                payload: &payload,
+                registration: &WindowsRegistration,
+                ctx: context.clone(),
+            };
+            flow.run(&mut |_| {}).unwrap();
+            Self { ctx: context }
+        }
+    }
+
+    impl Drop for Registered {
+        fn drop(&mut self) {
+            let _ = uninstall(&self.ctx, &WindowsRegistration);
+        }
+    }
+
+    #[test]
+    fn round_trips_the_custom_install_dir() {
+        let product = "ShunDemo-Reg-Loc";
+        let temp = tempfile::tempdir().unwrap();
+        let custom = temp.path().join("custom-location");
+        let guard = Registered::install(product, custom.clone());
+        // The registered answer is the custom dir, not any default.
+        assert_eq!(registered_install_dir(product), Some(custom));
+        drop(guard);
+        // Unregistered: nothing pins the next install's location.
+        assert_eq!(registered_install_dir(product), None);
+    }
+
+    #[test]
+    fn ignores_a_dead_registered_location() {
+        use winreg::RegKey;
+        use winreg::enums::HKEY_CURRENT_USER;
+
+        // Hand-written ARP shape with InstallLocation pointing at a
+        // directory that does not exist: a deleted install must not
+        // steer the next one.
+        let product = "ShunDemo-Reg-Dead";
+        let arp = shun::targets::install::arp_key_path(product);
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let (key, _disposition) = hkcu.create_subkey(&arp).unwrap();
+        let dead = tempfile::tempdir().unwrap().path().join("deleted-install");
+        key.set_value("InstallLocation", &dead.as_os_str()).unwrap();
+        assert_eq!(registered_install_dir(product), None);
+        // A relative path is refused even when it happens to resolve.
+        key.set_value("InstallLocation", &".").unwrap();
+        assert_eq!(registered_install_dir(product), None);
+        hkcu.delete_subkey(&arp).unwrap();
+    }
+}

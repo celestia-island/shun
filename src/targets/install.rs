@@ -739,6 +739,37 @@ pub fn arp_key_path(product: &str) -> String {
     )
 }
 
+/// The directory the product's currently registered install lives in,
+/// read back from ARP (`InstallLocation`, HKCU first — the per-user
+/// lane — then HKLM for machine-scope installs): the upgrade-in-place
+/// target the wizard defaults and the dir-less headless lane lead with.
+/// `None` when nothing is registered, the recorded location is not an
+/// absolute path, or the directory no longer exists — a deleted install
+/// must not pin the default.
+#[cfg(windows)]
+pub fn registered_install_dir(product: &str) -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
+
+    let arp = arp_key_path(product);
+    [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE]
+        .into_iter()
+        .find_map(|root| {
+            let key = winreg::RegKey::predef(root)
+                .open_subkey_with_flags(&arp, KEY_READ)
+                .ok()?;
+            let location: OsString = key.get_value("InstallLocation").ok()?;
+            let path = PathBuf::from(location);
+            (path.is_absolute() && path.is_dir()).then_some(path)
+        })
+}
+
+/// Non-Windows: no ARP registry to read an install location back from.
+#[cfg(not(windows))]
+pub fn registered_install_dir(_product: &str) -> Option<PathBuf> {
+    None
+}
+
 /// Windows registration backend (ARP, uninstaller self-copy, start-menu
 /// and desktop shortcuts, Explorer verbs, deep links) — per-user by
 /// default; `InstallScope::Machine` writes the same surfaces machine-

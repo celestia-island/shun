@@ -98,7 +98,7 @@ pub enum UninstallPhase {
 /// One writability-probed install-location candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirCandidate {
-    /// "appdata" | "program-files" | "drive".
+    /// "installed" | "default-dir" | "appdata" | "program-files" | "drive".
     pub kind: &'static str,
     pub path: String,
     pub writable: bool,
@@ -773,8 +773,9 @@ pub fn current_exe_dir() -> Option<PathBuf> {
 /// convention (`%LOCALAPPDATA%\<product>` first). Manifest-aware
 /// callers — the shell's command layer, the egui face,
 /// [`WizardCore::refresh_dir_defaults`] — go through
-/// [`location_defaults_for`], which additionally leads with a
-/// configured `install.default-dir` when the manifest pins one.
+/// [`location_defaults_for`], which additionally leads with the
+/// registered install location and a configured `install.default-dir`
+/// when either exists.
 pub fn location_defaults(product: &str) -> Vec<DirCandidate> {
     dir_candidates_for(product)
         .into_iter()
@@ -786,32 +787,54 @@ pub fn location_defaults(product: &str) -> Vec<DirCandidate> {
         .collect()
 }
 
-/// [`location_defaults`], manifest-aware: a configured
-/// `install.default-dir` (env-expanded, see [`expand_env_vars`])
-/// replaces the appdata candidate as the first and default location.
+/// [`location_defaults`], manifest-aware, upgrade-aware: the product's
+/// registered install location (ARP `InstallLocation`, when that
+/// directory still exists — see
+/// [`crate::targets::install::registered_install_dir`]) leads the
+/// chain, so an upgrade's preselected location is where the product
+/// already lives instead of the manifest pin. See
+/// [`location_defaults_with`] for the chain contract.
 pub fn location_defaults_for(config: &ShunConfig) -> Vec<DirCandidate> {
-    match configured_default_dir(config) {
-        Some(dir) => {
-            // The pin carries its own kind (both faces render the
-            // kind label; "appdata" would lie for off-appdata pins),
-            // and the conventional chain follows MINUS a path-equal
-            // twin — duplicate rows would double up in every picker.
-            let pinned = DirCandidate {
+    let previous = crate::targets::install::registered_install_dir(&config.product.name);
+    location_defaults_with(config, previous.as_deref())
+}
+
+/// [`location_defaults_for`]'s chain, hermetic over the previous-install
+/// input: `previous` (already existence-checked) leads, then a
+/// configured `install.default-dir` (env-expanded, see
+/// [`expand_env_vars`]), then the conventional chain — each MINUS a
+/// path-equal, case-insensitive twin (duplicate rows would double up in
+/// every picker).
+pub fn location_defaults_with(config: &ShunConfig, previous: Option<&Path>) -> Vec<DirCandidate> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut candidates = Vec::new();
+    if let Some(dir) = previous {
+        seen.push(dir.to_string_lossy().to_lowercase());
+        candidates.push(DirCandidate {
+            kind: "installed",
+            writable: crate::fs_probe::is_dir_writable(dir),
+            path: dir.to_string_lossy().into_owned(),
+        });
+    }
+    if let Some(dir) = configured_default_dir(config) {
+        // The pin carries its own kind (both faces render the
+        // kind label; "appdata" would lie for off-appdata pins).
+        let path = dir.to_string_lossy().to_lowercase();
+        if !seen.contains(&path) {
+            seen.push(path);
+            candidates.push(DirCandidate {
                 kind: "default-dir",
                 writable: crate::fs_probe::is_dir_writable(&dir),
                 path: dir.display().to_string(),
-            };
-            let pinned_path = pinned.path.to_lowercase();
-            let mut candidates = vec![pinned];
-            candidates.extend(
-                location_defaults(&config.product.name)
-                    .into_iter()
-                    .filter(|candidate| candidate.path.to_lowercase() != pinned_path),
-            );
-            candidates
+            });
         }
-        None => location_defaults(&config.product.name),
     }
+    candidates.extend(
+        location_defaults(&config.product.name)
+            .into_iter()
+            .filter(|candidate| !seen.contains(&candidate.path.to_lowercase())),
+    );
+    candidates
 }
 
 /// The default install location: the first writable candidate, else the
@@ -826,9 +849,18 @@ pub fn default_location(product: &str) -> String {
         .into_owned()
 }
 
-/// [`default_location`], manifest-aware (see [`location_defaults_for`]).
+/// [`default_location`], manifest- and upgrade-aware (see
+/// [`location_defaults_for`]): the first writable candidate of the
+/// chain, led by the registered install when one exists.
 pub fn default_location_for(config: &ShunConfig) -> String {
-    let candidates = location_defaults_for(config);
+    let previous = crate::targets::install::registered_install_dir(&config.product.name);
+    default_location_with(config, previous.as_deref())
+}
+
+/// [`default_location_for`], hermetic over the previous-install input
+/// (see [`location_defaults_with`]).
+pub fn default_location_with(config: &ShunConfig, previous: Option<&Path>) -> String {
+    let candidates = location_defaults_with(config, previous);
     candidates
         .iter()
         .find(|candidate| candidate.writable)
@@ -1118,7 +1150,11 @@ mod tests {
 
     /// A configured install.default-dir leads the candidate chain and
     /// becomes the default; an unconfigured manifest keeps the product
-    /// convention byte-for-byte.
+    /// convention byte-for-byte. Exercises the hermetic `_with` twins —
+    /// the registry-reading `location_defaults_for` is covered by the
+    /// ARP round-trip integration test (a machine's real installs would
+    /// otherwise leak into these assertions; ARP keys are
+    /// case-insensitive, so even the product NAME can collide).
     #[test]
     fn default_dir_leads_the_location_candidates() {
         // SAFETY: a SHUN_-namespaced test variable (its own name — the
@@ -1126,7 +1162,7 @@ mod tests {
         // in parallel).
         unsafe { std::env::set_var("SHUN_TEST_PIN", r"D:\Base") };
         let pinned = location_config(Some(r"%SHUN_TEST_PIN%\Programs\Wowsp"));
-        let candidates = location_defaults_for(&pinned);
+        let candidates = location_defaults_with(&pinned, None);
         // The pin carries its own kind; the conventional chain follows
         // minus a path-equal twin.
         assert_eq!(candidates[0].kind, "default-dir");
@@ -1141,7 +1177,7 @@ mod tests {
         // chain (a pin may point somewhere non-writable — a D:\ path on
         // Linux — in which case the conventional chain legitimately
         // wins; the structural contract is what both faces render).
-        let default = default_location_for(&pinned);
+        let default = default_location_with(&pinned, None);
         let expected = candidates
             .iter()
             .find(|candidate| candidate.writable)
@@ -1149,12 +1185,49 @@ mod tests {
             .or_else(|| candidates.first().map(|candidate| candidate.path.clone()));
         assert_eq!(Some(default), expected);
         assert_eq!(
-            location_defaults_for(&location_config(None)),
+            location_defaults_with(&location_config(None), None),
             location_defaults("Wowsp"),
             "no knob: identical to the product-based chain"
         );
         // SAFETY: test-scope cleanup, see the set above.
         unsafe { std::env::remove_var("SHUN_TEST_PIN") };
+    }
+
+    /// The registered install location leads the chain ahead of the
+    /// pinned default-dir, and a path-equal (case-insensitive) pin does
+    /// not double up behind it — an upgrade's preselected location is
+    /// where the product already lives.
+    #[test]
+    fn the_registered_install_leads_the_location_candidates() {
+        unsafe { std::env::set_var("SHUN_TEST_PREV", r"D:\Games") };
+        let pinned = location_config(Some(r"%SHUN_TEST_PREV%\Programs\Wowsp"));
+        // A previous install AWAY from the pin (the relocation case the
+        // headless lane guards: the upgrade must stay here, not jump to
+        // the pinned default).
+        let previous = Path::new(r"E:\Elsewhere\Wowsp");
+        let candidates = location_defaults_with(&pinned, Some(previous));
+        assert_eq!(candidates[0].kind, "installed");
+        assert_eq!(candidates[0].path, previous.to_string_lossy());
+        // The pin follows — a different path, same chain.
+        assert_eq!(candidates[1].kind, "default-dir");
+        // The pin twin-dedup is case-insensitive: a previous install at
+        // the pinned location leaves exactly one row (the "installed"
+        // one — the upgrade keeps its own kind label).
+        let deduped = location_defaults_with(&pinned, Some(Path::new(r"D:\Games\PROGRAMS\WOWSP")));
+        assert_eq!(
+            deduped
+                .iter()
+                .filter(|candidate| candidate.path.to_lowercase() == r"d:\games\programs\wowsp")
+                .count(),
+            1,
+            "no duplicated row for the registered install"
+        );
+        assert_eq!(deduped[0].kind, "installed");
+        // Without a pin the previous install still leads.
+        let unpinned = location_defaults_with(&location_config(None), Some(previous));
+        assert_eq!(unpinned[0].kind, "installed");
+        // SAFETY: test-scope cleanup, see the set above.
+        unsafe { std::env::remove_var("SHUN_TEST_PREV") };
     }
 
     fn core_with(config_json: &str) -> WizardCore {

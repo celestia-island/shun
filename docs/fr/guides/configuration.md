@@ -130,6 +130,23 @@ la zone de chemin dès qu'une racine est choisie ou saisie, afin que la
 destination affichée soit toujours la réelle ; les exécutions headless
 `--dir=D:\` bénéficient de la même garde dans le flux.
 
+## Résolution de l'emplacement d'installation
+
+La destination de départ d'une exécution — le chemin présélectionné
+de l'assistant et la cible de la voie headless quand la ligne de
+commande ne porte pas de `--dir` — suit une seule priorité : la
+**localisation d'installation enregistrée** du produit (l'
+`InstallLocation` ARP, HKCU avant HKLM) mène la chaîne tant que son
+répertoire existe encore, puis la `install.default-dir` configurée,
+puis la chaîne conventionnelle de candidats (appdata par utilisateur,
+Program Files, un dossier par disque fixe). Une mise à jour atterrit
+donc là où vivait déjà la version précédente au lieu de déplacer une
+installation au chemin personnalisé vers l'emplacement épinglé, et un
+`--dir` explicite (le contrat du moteur de mise à jour) l'emporte
+toujours sur tout. Une localisation enregistrée dont le répertoire
+n'existe plus est ignorée — une installation supprimée ne doit pas
+épingler la suivante.
+
 ## Stratégies WebView2
 
 | `type` | Embarque | Exige | Notes |
