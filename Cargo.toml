@@ -1,7 +1,7 @@
 [package]
 name = "shun"
 description = "Flow-driven payload delivery runtime — installers, flashers, and portable modes"
-version = "0.6.26"
+version = "0.6.27"
 edition = "2024"
 rust-version = "1.85"
 authors = ["langyo <langyo.china@gmail.com>"]
@@ -14,8 +14,12 @@ publish = true
 exclude = ["docs/", "scripts/", ".github/", "assets/", "justfile", "rust-toolchain.toml"]
 
 [dependencies]
-duckscript = "0.10.0"
-duckscriptsdk = "0.11.1"
+# Script runner interpreters (feature `scripting`, default on). Optional
+# so embedded consumers (default-features = false) do not drag the
+# scripting runtime — and its transitive zip/ftp tree — into their
+# dependency graph at all.
+duckscript = { version = "0.10.0", optional = true }
+duckscriptsdk = { version = "0.11.1", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -35,8 +39,14 @@ image = { version = "^0.25", default-features = false, features = ["ico", "png",
 pyo3 = { version = "^0.23", optional = true, features = ["auto-initialize"] }
 
 [features]
-default = ["online", "cli"]
+default = ["online", "cli", "scripting"]
 online = ["dep:ureq"]
+# The embedded script runners (duckscript) behind manifest script
+# hooks — see docs/en/design/scripting.md. Default on (the CLI and
+# the shell build with it); embedded consumers building
+# default-features = false stay lean, and a manifest that still
+# declares hooks fails loudly instead of silently skipping them.
+scripting = ["dep:duckscript", "dep:duckscriptsdk"]
 # The `shun` CLI binary: artifact builder, packer, icon tooling, signing.
 cli = ["dep:clap", "dep:image", "online"]
 # Embedding probe for the optional Python runtime (design note:
@@ -94,7 +104,7 @@ resolver = "2"
 members = ["shell", "demo-app"]
 
 [workspace.package]
-version = "0.6.26"
+version = "0.6.27"
 edition = "2024"
 rust-version = "1.85"
 authors = ["langyo <langyo.china@gmail.com>"]

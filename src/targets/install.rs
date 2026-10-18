@@ -504,12 +504,26 @@ pub fn run_phase_hooks(
     on_event: &mut dyn FnMut(FlowEvent),
     read: &dyn Fn(&Path) -> Option<Vec<u8>>,
 ) -> Result<(), ShunError> {
-    use crate::flow::FlowLog;
-    use duckscript::types::runtime::Context as DuckContext;
-
     let Some(hooks) = &config.script else {
         return Ok(());
     };
+    run_script_hooks(phase, hooks, ctx, on_event, read)
+}
+
+/// The scripted lane (feature `scripting`, default on): each matching
+/// hook runs on the embedded duckscript interpreter with the wizard
+/// language exported (`SHUN_LANGUAGE`).
+#[cfg(feature = "scripting")]
+fn run_script_hooks(
+    phase: &str,
+    hooks: &crate::config::ScriptHooksConfig,
+    ctx: &InstallContext,
+    on_event: &mut dyn FnMut(FlowEvent),
+    read: &dyn Fn(&Path) -> Option<Vec<u8>>,
+) -> Result<(), ShunError> {
+    use crate::flow::FlowLog;
+    use duckscript::types::runtime::Context as DuckContext;
+
     if hooks.runner != "duckscript" {
         return Err(ShunError::Config(format!(
             "unsupported script runner: {} (only `duckscript` ships)",
@@ -542,6 +556,29 @@ pub fn run_phase_hooks(
                 command: hook.script.clone(),
             },
         });
+    }
+    Ok(())
+}
+
+/// The featureless lane: a manifest declaring hooks against a build
+/// without the `scripting` feature is a configuration error, never a
+/// silent skip — the flow would lie about what ran (see
+/// [`run_phase_hooks`]' contract above).
+#[cfg(not(feature = "scripting"))]
+fn run_script_hooks(
+    phase: &str,
+    hooks: &crate::config::ScriptHooksConfig,
+    _ctx: &InstallContext,
+    _on_event: &mut dyn FnMut(FlowEvent),
+    _read: &dyn Fn(&Path) -> Option<Vec<u8>>,
+) -> Result<(), ShunError> {
+    let _ = phase;
+    if !hooks.hooks.is_empty() {
+        return Err(ShunError::Config(
+            "script hooks need the `scripting` cargo feature (default on; embedded \
+             builds with default-features = false must enable it)"
+                .into(),
+        ));
     }
     Ok(())
 }
