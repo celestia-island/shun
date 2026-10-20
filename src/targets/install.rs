@@ -14,7 +14,7 @@ use walkdir::WalkDir;
 
 use crate::config::InstallConfig;
 use crate::error::ShunError;
-use crate::flow::{Flow, FlowEvent};
+use crate::flow::{Flow, FlowEvent, FlowPhase};
 // Only the Windows registration streams warning records; the import
 // would be unused (and fatal under -D warnings) on other targets.
 #[cfg(windows)]
@@ -625,15 +625,26 @@ impl Flow for InstallFlow<'_> {
         std::fs::write(staging_dir.join(MANIFEST_PATH), manifest)?;
 
         // Atomic swap: the final directory either has the complete
-        // payload + manifest, or it does not exist at all.
+        // payload + manifest, or it does not exist at all. An existing
+        // installation is replaced by moving it aside first so the
+        // rename is a single atomic step — unless a survivor of the
+        // stopped app still holds the directory (a taskkilled host
+        // leaves its WebView2 children alive for a moment; they inherit
+        // the install dir as their working directory, and Windows
+        // refuses to rename a directory any process is using). The swap
+        // retries within a bounded window, then degrades to an in-place
+        // merge so an unattended update never strands the install on
+        // the old version.
         if self.ctx.install_dir.exists() {
-            // An existing installation is replaced: move it aside first
-            // so the rename is a single atomic step.
             let backup = self.ctx.install_dir.with_extension("shun-old");
             let _ = std::fs::remove_dir_all(&backup);
-            std::fs::rename(&self.ctx.install_dir, &backup)?;
-            std::fs::rename(&staging_dir, &self.ctx.install_dir)?;
-            let _ = std::fs::remove_dir_all(&backup);
+            swap_or_merge_into_place(
+                &staging_dir,
+                &self.ctx.install_dir,
+                &backup,
+                SWAP_LOCK_RETRY_WINDOW,
+                on_event,
+            )?;
         } else {
             std::fs::create_dir_all(
                 self.ctx
@@ -657,6 +668,168 @@ impl Flow for InstallFlow<'_> {
         on_event(FlowEvent::Completed);
         Ok(())
     }
+}
+
+/// How long the atomic directory swap keeps retrying while a survivor
+/// of the stopped app (a WebView2 child that inherited the install dir
+/// as its working directory, say) still holds the rename back.
+const SWAP_LOCK_RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+/// Poll cadence inside [`SWAP_LOCK_RETRY_WINDOW`].
+const SWAP_LOCK_RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Moves `staging_dir` over `install_dir` as one atomic rename when
+/// nothing holds the directory; when a survivor keeps the directory
+/// rename-locked past `retry_window`, degrades to merging the staged
+/// files in place instead. Returns `true` when the atomic swap happened,
+/// `false` when the in-place merge did. The caller owns the `backup`
+/// slot's pre-clean; on the swap path this function clears it again.
+fn swap_or_merge_into_place(
+    staging_dir: &Path,
+    install_dir: &Path,
+    backup: &Path,
+    retry_window: std::time::Duration,
+    on_event: &mut dyn FnMut(FlowEvent),
+) -> Result<bool, ShunError> {
+    let deadline = std::time::Instant::now() + retry_window;
+    let mut announced_wait = false;
+    loop {
+        match std::fs::rename(install_dir, backup) {
+            Ok(()) => match std::fs::rename(staging_dir, install_dir) {
+                Ok(()) => {
+                    let _ = std::fs::remove_dir_all(backup);
+                    return Ok(true);
+                }
+                Err(_) => {
+                    // The staged side would not move — put the old tree
+                    // back and let the merge lane try file by file. If
+                    // even the restore fails (something recreated the
+                    // install dir inside the window), fail loudly: the
+                    // merge below would otherwise bury the only complete
+                    // copy of the old tree in the backup slot.
+                    if std::fs::rename(backup, install_dir).is_err() {
+                        return Err(ShunError::Io(std::io::Error::other(format!(
+                            "the previous install could not be restored from {}",
+                            backup.display()
+                        ))));
+                    }
+                    break;
+                }
+            },
+            // A lock collision is the expected shape of "a survivor
+            // still holds the directory": wait and retry. Anything else
+            // is real.
+            Err(e) if is_lock_collision(&e) => {}
+            Err(e) => return Err(e.into()),
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        if !announced_wait {
+            announced_wait = true;
+            on_event(FlowEvent::Progress {
+                phase: FlowPhase::Extract,
+                step: "Waiting for the previous install to unlock".into(),
+                percent: None,
+            });
+        }
+        std::thread::sleep(SWAP_LOCK_RETRY_POLL);
+    }
+    merge_staging_in_place(staging_dir, install_dir)?;
+    Ok(false)
+}
+
+/// The Windows raw errors that pin a directory rename: access denied
+/// (5), sharing violation (32) and lock violation (33). POSIX has no
+/// equivalent pin (a cwd-held directory renames fine), so non-Windows
+/// builds treat every rename failure as real and never retry.
+#[cfg(windows)]
+fn is_lock_collision(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(5) | Some(32) | Some(33))
+}
+
+#[cfg(not(windows))]
+fn is_lock_collision(_e: &std::io::Error) -> bool {
+    false
+}
+
+/// Degraded delivery for a rename-locked install directory: every staged
+/// file is moved onto its destination with the park-aside trick the
+/// payload lane's `replace_file` uses for a running executable (a held
+/// file can be renamed away but not overwritten in place), so the
+/// install directory itself is never renamed. This lane trades the
+/// atomic swap's all-or-nothing guarantee for completion: files the new
+/// payload no longer carries are swept afterwards by the caller's
+/// stale-file pass.
+fn merge_staging_in_place(staging_dir: &Path, install_dir: &Path) -> Result<(), ShunError> {
+    for entry in WalkDir::new(staging_dir) {
+        let entry = entry
+            .map_err(|e| ShunError::Io(std::io::Error::other(format!("walk staging: {e}"))))?;
+        let relative = entry.path().strip_prefix(staging_dir).map_err(|_| {
+            // WalkDir builds every path from the root it was given, so
+            // this is unreachable — but a foreign path must never become
+            // an escape hatch out of the install directory.
+            ShunError::Io(std::io::Error::other(format!(
+                "staged entry escapes the staging root: {}",
+                entry.path().display()
+            )))
+        })?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        let target = install_dir.join(relative);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)?;
+            continue;
+        }
+        std::fs::create_dir_all(target.parent().unwrap_or(install_dir))?;
+        if target.exists() {
+            let parked = park_file_aside(&target)?;
+            std::fs::rename(entry.path(), &target).map_err(|e| {
+                // Restore the parked original so a failed move does not
+                // leave the destination without its previous content.
+                let _ = std::fs::rename(&parked, &target);
+                ShunError::Io(e)
+            })?;
+            let _ = std::fs::remove_file(&parked);
+        } else {
+            std::fs::rename(entry.path(), &target)?;
+        }
+    }
+    let _ = std::fs::remove_dir_all(staging_dir);
+    Ok(())
+}
+
+/// Parks `target` aside under a `.shun-old-<ts>` sibling name so a staged
+/// file can take its place — the same convention `replace_file` parks a
+/// running executable under. Parked copies from earlier merges are
+/// swept first (same-directory siblings, prefix-matched): a file a
+/// survivor kept open through one update must not accumulate one parked
+/// corpse per update, and the parked copy's own deletion fails
+/// harmlessly while a process still holds it.
+fn park_file_aside(target: &Path) -> Result<PathBuf, ShunError> {
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let prefix = format!("{name}.shun-old-");
+    if let Some(dir) = target.parent() {
+        if let Ok(read_dir) = std::fs::read_dir(dir) {
+            for stale in read_dir.flatten() {
+                if stale.file_name().to_string_lossy().starts_with(&prefix) {
+                    let _ = std::fs::remove_file(stale.path());
+                }
+            }
+        }
+    }
+    let parked = target.with_file_name(format!(
+        "{prefix}{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::rename(target, &parked)?;
+    Ok(parked)
 }
 
 /// Removes an install delivered by [`InstallFlow`]: registration trace,
@@ -1731,5 +1904,133 @@ mod tests {
         let legacy = read_manifest(dir.path()).unwrap();
         assert_eq!(legacy.entries, manifest.entries);
         assert_eq!(legacy.language, None);
+    }
+
+    /// Stages a two-file tree (one at the root, one nested) with the
+    /// given `marker` content, so the swap tests can tell old and new
+    /// trees apart.
+    fn stage_tree(root: &Path, marker: &str) {
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("README.txt"), marker).unwrap();
+        std::fs::write(root.join("bin").join("app.exe"), marker.as_bytes()).unwrap();
+    }
+
+    /// Holds a file inside `dir` open — the deterministic, in-process
+    /// stand-in for a lock survivor. Any open handle to a file inside a
+    /// directory pins the directory against renames exactly like the
+    /// field shape this fix exists for (a taskkilled host's WebView2
+    /// children keeping the install dir as their working directory):
+    /// the rename fails with a sharing violation no matter that the
+    /// directory's own metadata is untouched. Dropping the handle is
+    /// the survivor leaving.
+    #[cfg(windows)]
+    fn hold_directory(dir: &Path) -> std::fs::File {
+        std::fs::File::create(dir.join("survivor-hold.lock")).unwrap()
+    }
+
+    #[test]
+    fn unlocked_swap_replaces_the_tree_atomically() {
+        let tmp = tempfile::tempdir().unwrap();
+        let install_dir = tmp.path().join("app");
+        let staging_dir = tmp.path().join("app.shun-partial");
+        let backup = tmp.path().join("app.shun-old");
+        stage_tree(&install_dir, "old");
+        stage_tree(&staging_dir, "new");
+
+        let swapped = swap_or_merge_into_place(
+            &staging_dir,
+            &install_dir,
+            &backup,
+            std::time::Duration::from_millis(300),
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert!(swapped, "nothing holds the directory — the swap wins");
+        assert_eq!(
+            std::fs::read_to_string(install_dir.join("README.txt")).unwrap(),
+            "new"
+        );
+        assert!(!staging_dir.exists(), "the staged tree moved in");
+        assert!(!backup.exists(), "the backup was swept");
+    }
+
+    /// The two held-directory lanes, run back to back: a survivor that
+    /// stays put degrades to the in-place merge, and one that goes away
+    /// lets the retry window complete the atomic swap after all.
+    #[cfg(windows)]
+    #[test]
+    fn held_directory_degrades_then_recovers() {
+        // ── A survivor that never leaves: the degraded merge wins. ──────
+        let tmp = tempfile::tempdir().unwrap();
+        let install_dir = tmp.path().join("app");
+        let staging_dir = tmp.path().join("app.shun-partial");
+        let backup = tmp.path().join("app.shun-old");
+        stage_tree(&install_dir, "old");
+        stage_tree(&staging_dir, "new");
+        let _survivor = hold_directory(&install_dir);
+
+        let swapped = swap_or_merge_into_place(
+            &staging_dir,
+            &install_dir,
+            &backup,
+            std::time::Duration::from_millis(300),
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert!(!swapped, "the survivor holds the rename — the merge wins");
+        assert_eq!(
+            std::fs::read_to_string(install_dir.join("README.txt")).unwrap(),
+            "new"
+        );
+        assert_eq!(
+            std::fs::read(install_dir.join("bin").join("app.exe")).unwrap(),
+            b"new".to_vec(),
+            "nested files merge too"
+        );
+        assert!(!staging_dir.exists(), "the staged tree was consumed");
+        assert!(
+            install_dir.join("README.txt").exists(),
+            "the directory itself was never renamed away"
+        );
+        assert!(
+            install_dir.join("survivor-hold.lock").exists(),
+            "files the payload does not carry are left alone"
+        );
+
+        // ── The survivor leaves mid-retry: the atomic swap recovers. ────
+        let install_dir = tmp.path().join("app2");
+        let staging_dir = tmp.path().join("app2.shun-partial");
+        let backup = tmp.path().join("app2.shun-old");
+        stage_tree(&install_dir, "old");
+        stage_tree(&staging_dir, "new");
+        let survivor = hold_directory(&install_dir);
+        // Run the swap on a helper thread so the test can end the
+        // survivor while the retry loop is mid-window — the shape a
+        // WebView2 subtree settling after its killed host produces.
+        let swap = std::thread::spawn(move || {
+            swap_or_merge_into_place(
+                &staging_dir,
+                &install_dir,
+                &backup,
+                std::time::Duration::from_secs(10),
+                &mut |_| {},
+            )
+            .unwrap()
+        });
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        drop(survivor);
+        assert!(
+            swap.join().unwrap(),
+            "the lock releases inside the retry window"
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("app2").join("README.txt")).unwrap(),
+            "new"
+        );
+        assert!(!tmp.path().join("app2.shun-old").exists());
+
+        drop(_survivor);
     }
 }
