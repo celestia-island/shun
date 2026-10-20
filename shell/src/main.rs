@@ -1885,9 +1885,12 @@ async fn pairing_request(
             // enforcement); propagate it here until the pairing follow-up
             // lands its own call-site shape (this hunk is droppable).
             let client = shun::pairing::PairingClient::new(&gateway)?;
+            // The installer's self-profile rides with the mint so the
+            // panel's inspect step can show what is asking to enroll.
+            let sys = get_device_sys();
             tauri::async_runtime::spawn_blocking(move || {
                 client
-                    .request(&args.node_id, args.name.as_deref(), args.tier)
+                    .request_sys(&args.node_id, args.name.as_deref(), args.tier, &sys)
                     .map(|code| PairingCodeView {
                         code: code.code,
                         expires_in: code.expires_in,
@@ -2039,6 +2042,72 @@ async fn pairing_record(
     }
 }
 
+/// The installer's self-reported system profile for the pairing
+/// inspect step: the panel's step-two preview renders this verbatim.
+/// Stdlib-only (no sysinfo dep): OS/arch from the compile-time consts,
+/// CPU count from the runtime, memory from the OS-appropriate file.
+/// Everything is best-effort — a missing value is simply omitted and
+/// the panel skips its row.
+#[tauri::command]
+fn get_device_sys() -> serde_json::Value {
+    let mut sys = serde_json::Map::new();
+    sys.insert("os".into(), format_os().into());
+    if let Some(v) = format!("{}.{}", env!("CARGO_PKG_RUST_VERSION"), "")
+        .is_empty()
+        .then_some(None)
+        .flatten()
+    {
+        let _: Option<String> = v;
+    }
+    sys.insert("arch".into(), std::env::consts::ARCH.into());
+    sys.insert(
+        "cpu_cores".into(),
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0)
+            .into(),
+    );
+    if let Some(gb) = total_memory_gb() {
+        sys.insert("memory_gb".into(), gb.into());
+    }
+    if let Some(host) = nonempty(
+        std::env::var("COMPUTERNAME")
+            .or_else(|_| std::env::var("HOSTNAME"))
+            .ok(),
+    ) {
+        sys.insert("hostname".into(), host.into());
+    }
+    serde_json::Value::Object(sys)
+}
+
+/// The human OS label: the compile-time family plus, on Windows, the
+/// release from the registry-free `winver` fallback (the manifest's
+/// product name is enough for the preview).
+fn format_os() -> String {
+    match std::env::consts::OS {
+        "windows" => "Windows".into(),
+        "macos" => "macOS".into(),
+        "linux" => "Linux".into(),
+        other => other.into(),
+    }
+}
+
+/// Total physical memory in whole GB (best-effort `/proc/meminfo` on
+/// Linux; `GlobalMemoryStatusEx` on Windows via the existing
+/// windows-sys dep — but keeping this stdlib-only, so Windows reads the
+/// same value the pane already knows: none, and the panel just skips
+/// the row).
+fn total_memory_gb() -> Option<u64> {
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = info.lines().find(|l| l.starts_with("MemTotal:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb / 1_048_576)
+}
+
+fn nonempty(s: Option<String>) -> Option<String> {
+    s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
 /// The machine's hostname: the device-name field's placeholder (and the
 /// pane's prefill source on hosts where the saved identity has no name).
 #[tauri::command]
@@ -2174,6 +2243,7 @@ fn run_shell(
             start_install,
             download_attachment,
             pairing_request,
+            get_device_sys,
             pairing_await,
             pairing_record,
             pairing_claim,

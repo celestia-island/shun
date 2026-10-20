@@ -107,12 +107,28 @@ impl PairingClient {
         name: Option<&str>,
         tier: Option<u8>,
     ) -> Result<PairingCode, String> {
+        self.request_sys(node_id, name, tier, &serde_json::Value::Null)
+    }
+
+    /// [`PairingClient::request`] with the installer's self-reported
+    /// system profile attached — the panel's inspect step renders it
+    /// while the operator decides.
+    pub fn request_sys(
+        &self,
+        node_id: &str,
+        name: Option<&str>,
+        tier: Option<u8>,
+        sys: &serde_json::Value,
+    ) -> Result<PairingCode, String> {
         let mut params = serde_json::json!({ "node_id": node_id });
         if let Some(name) = name {
             params["name"] = serde_json::json!(name);
         }
         if let Some(tier) = tier {
             params["tier"] = serde_json::json!(tier);
+        }
+        if sys.is_object() {
+            params["sys"] = sys.clone();
         }
         let answer = self.post("pairing.request", &params)?;
         let code = answer["code"]
@@ -254,6 +270,34 @@ mod tests {
             client.endpoint(),
             format!("{}/api/ws", base.trim_end_matches('/')),
             "the endpoint is the /api/ws JSON-RPC route"
+        );
+    }
+
+    #[test]
+    fn request_sys_attaches_the_system_profile() {
+        let (base, seen) =
+            mock(r#"{"jsonrpc":"2.0","id":1,"result":{"code":"7QK2M4XP","expires_in":300}}"#);
+        let client = PairingClient::new(&base).unwrap();
+        let sys = serde_json::json!({ "os": "windows", "profile": "installer" });
+        client
+            .request_sys("node-1", Some("Corridor dryer"), Some(2), &sys)
+            .unwrap();
+        let request = seen.join().unwrap();
+        assert_eq!(request["params"]["sys"], sys, "sys rides with the mint");
+    }
+
+    #[test]
+    fn request_sys_skips_non_object_profiles() {
+        let (base, seen) = mock(r#"{"result":{"code":"AAAA","expires_in":60}}"#);
+        PairingClient::new(&base)
+            .unwrap()
+            .request_sys("node-1", None, None, &serde_json::Value::Null)
+            .unwrap();
+        let params = seen.join().unwrap()["params"].clone();
+        assert_eq!(
+            params.as_object().unwrap().len(),
+            1,
+            "a non-object sys profile is not sent"
         );
     }
 
