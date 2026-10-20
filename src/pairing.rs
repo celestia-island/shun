@@ -274,6 +274,34 @@ mod tests {
     }
 
     #[test]
+    fn request_sys_attaches_the_system_profile() {
+        let (base, seen) =
+            mock(r#"{"jsonrpc":"2.0","id":1,"result":{"code":"7QK2M4XP","expires_in":300}}"#);
+        let client = PairingClient::new(&base).unwrap();
+        let sys = serde_json::json!({ "os": "windows", "profile": "installer" });
+        client
+            .request_sys("node-1", Some("Corridor dryer"), Some(2), &sys)
+            .unwrap();
+        let request = seen.join().unwrap();
+        assert_eq!(request["params"]["sys"], sys, "sys rides with the mint");
+    }
+
+    #[test]
+    fn request_sys_skips_non_object_profiles() {
+        let (base, seen) = mock(r#"{"result":{"code":"AAAA","expires_in":60}}"#);
+        PairingClient::new(&base)
+            .unwrap()
+            .request_sys("node-1", None, None, &serde_json::Value::Null)
+            .unwrap();
+        let params = seen.join().unwrap()["params"].clone();
+        assert_eq!(
+            params.as_object().unwrap().len(),
+            1,
+            "a non-object sys profile is not sent"
+        );
+    }
+
+    #[test]
     fn request_omits_unset_optionals() {
         let (base, seen) = mock(r#"{"result":{"code":"AAAA","expires_in":60}}"#);
         PairingClient::new(&base)
