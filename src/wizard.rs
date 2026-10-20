@@ -18,7 +18,9 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{InstallConfig, ShunConfig, TargetConfig};
 use crate::flow::{Flow, FlowEvent, FlowLog, FlowPhase};
-use crate::payload::{ArchivePayload, MANIFEST_PATH, PayloadEntry, entry_path_is_unsafe};
+use crate::payload::{
+    ArchivePayload, MANIFEST_PATH, PayloadEntry, PayloadSource, entry_path_is_unsafe,
+};
 use crate::targets::install::{
     InstallContext, InstallFlow, UNINSTALLER_NAME, WindowsRegistration, WizardAnswers,
     default_aumid, nest_root_dir, read_manifest, uninstall,
@@ -528,7 +530,12 @@ pub fn run_install(
     };
     let mut forwarding = |event: FlowEvent| on_event(&event);
     flow.run(&mut forwarding).map_err(|e| e.to_string())?;
-    let stale = remove_stale_payload_files(&install_dir, &previous);
+    let current: std::collections::HashSet<std::path::PathBuf> = payload
+        .manifest()
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect();
+    let stale = remove_stale_payload_files(&install_dir, &previous, &current);
     if stale > 0 {
         on_event(&FlowEvent::Progress {
             phase: FlowPhase::Extract,
@@ -1001,19 +1008,36 @@ fn is_installer_artifact(path: &Path) -> bool {
 }
 
 /// The on-disk payload manifest a previous install left behind.
+/// `read_manifest` accepts both the current `InstallManifest` wrapper
+/// and the pre-0.4.1 bare entry list — a direct `Vec<PayloadEntry>`
+/// parse here would read every modern manifest as empty and silently
+/// disable the stale-file sweep (exactly what happened between 0.4.1
+/// and this fix).
 fn read_installed_manifest(install_dir: &Path) -> Option<Vec<PayloadEntry>> {
-    let bytes = std::fs::read(install_dir.join(MANIFEST_PATH)).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    read_manifest(install_dir)
+        .ok()
+        .map(|manifest| manifest.entries)
 }
 
 /// Deletes the files the PREVIOUS payload delivered that the new one no
 /// longer carries; best-effort, run only after a successful flow.
-fn remove_stale_payload_files(install_dir: &Path, previous: &[PayloadEntry]) -> usize {
+/// Entries the current payload still delivers are skipped by path: the
+/// sweep runs after the delivery landed, so removing them would delete
+/// freshly installed files (both the swap and the degraded merge lane
+/// pass through here).
+fn remove_stale_payload_files(
+    install_dir: &Path,
+    previous: &[PayloadEntry],
+    current: &std::collections::HashSet<PathBuf>,
+) -> usize {
     if previous.is_empty() {
         return 0;
     }
     let mut removed = 0usize;
     for entry in previous {
+        if current.contains(&entry.path) {
+            continue;
+        }
         let path = Path::new(&entry.path);
         if entry_path_is_unsafe(path) || is_installer_artifact(path) {
             continue;
@@ -1076,6 +1100,67 @@ fn log_line_of(record: &FlowLog) -> Option<(LogKind, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_sweep_reads_wrapped_manifests_and_spares_current_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        // The post-0.4.1 wrapper shape: a direct Vec<PayloadEntry> parse
+        // reads this as empty and silently disables the sweep (the bug
+        // this pins).
+        let manifest = crate::targets::install::InstallManifest {
+            language: None,
+            entries: vec![
+                PayloadEntry {
+                    path: PathBuf::from("kept.txt"),
+                    size: 1,
+                    sha256: "a".into(),
+                },
+                PayloadEntry {
+                    path: PathBuf::from("dropped.txt"),
+                    size: 1,
+                    sha256: "b".into(),
+                },
+                PayloadEntry {
+                    // The platform's uninstaller name (uninstall.exe on
+                    // Windows, bare `uninstall` elsewhere) — the sweep
+                    // must recognize it as an installer artifact.
+                    path: PathBuf::from(crate::targets::install::UNINSTALLER_NAME),
+                    size: 1,
+                    sha256: "c".into(),
+                },
+            ],
+        };
+        std::fs::write(
+            dir.join(MANIFEST_PATH),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.join("kept.txt"), "k").unwrap();
+        std::fs::write(dir.join("dropped.txt"), "d").unwrap();
+        std::fs::write(dir.join(crate::targets::install::UNINSTALLER_NAME), "u").unwrap();
+
+        let previous = read_installed_manifest(dir).unwrap();
+        assert_eq!(
+            previous.len(),
+            3,
+            "the wrapper manifest parses — the pre-fix Vec parse read it as empty"
+        );
+        let current: std::collections::HashSet<PathBuf> =
+            [PathBuf::from("kept.txt")].into_iter().collect();
+        let removed = remove_stale_payload_files(dir, &previous, &current);
+
+        assert_eq!(removed, 1, "only the dropped entry goes");
+        assert!(dir.join("kept.txt").exists(), "current-payload files stay");
+        assert!(
+            !dir.join("dropped.txt").exists(),
+            "dropped entries are swept"
+        );
+        assert!(
+            dir.join(crate::targets::install::UNINSTALLER_NAME).exists(),
+            "installer artifacts are never swept"
+        );
+    }
 
     /// A minimal config with an optional install.default-dir — the
     /// knob under test; everything else stays at the defaults.
