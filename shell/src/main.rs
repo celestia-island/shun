@@ -2145,13 +2145,6 @@ async fn pairing_record(
 fn get_device_sys() -> serde_json::Value {
     let mut sys = serde_json::Map::new();
     sys.insert("os".into(), format_os().into());
-    if let Some(v) = format!("{}.{}", env!("CARGO_PKG_RUST_VERSION"), "")
-        .is_empty()
-        .then_some(None)
-        .flatten()
-    {
-        let _: Option<String> = v;
-    }
     sys.insert("arch".into(), std::env::consts::ARCH.into());
     sys.insert(
         "cpu_cores".into(),
