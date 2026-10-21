@@ -226,6 +226,7 @@ log-level = "all"          # all（預設）| files | scripts | off
 log-order = "newest"      # newest（預設，最新在頂）| oldest（追加在尾部）
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # 本產品殼可呈現的介面（預設三項全開）
+silent-progress = false   # 為 --silent 執行顯示被動進度小窗（預設關閉）
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -237,6 +238,7 @@ accent = [34, 211, 238]    # RGB 色頻——覆寫 --color-primary
 字串）是基底，無法停用。請求被停用的介面是錯誤；自動選擇會跳過
 被停用的面。
 
+`shell.silent-progress` 讓無頭通道帶上被動進度小窗：`--silent` 執行會額外渲染一個置頂小窗，同步 stdout 正在報告的內容（當前步驟、有進度時的百分比）——沒有頁面、沒有點擊，stdout 原樣不變。面向由更新器無人值守拉起安裝器的產品：慢機器上安裝不再被讀成「什麼都沒發生」，也就沒有人會把舊版本啟動進正在交換的目錄。沒有桌面工作階段的環境（服務、CI）自動保持純主控台。
 ### 精靈語言
 
 精靈會在**第一步**詢問語言：選擇器列出全部十個支援的語言，每項都以

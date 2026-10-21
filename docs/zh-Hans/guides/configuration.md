@@ -234,6 +234,7 @@ log-level = "all"          # all（默认）| files | scripts | off
 log-order = "newest"      # newest（默认，最新在顶）| oldest（追加在尾部）
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # 本产品壳可呈现的界面（默认三项全开）
+silent-progress = false   # 为 --silent 运行显示被动进度小窗（默认关闭）
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -244,6 +245,7 @@ accent = [34, 211, 238]    # RGB 通道——覆盖 --color-primary
 `tui`；缺省即三项全开。headless CLI 面（`--silent`、ARP 卸载串）是
 基底，无法禁用。请求被禁用的界面是错误；自动选择会跳过被禁用的面。
 
+`shell.silent-progress` 让无头通道带上被动进度小窗：`--silent` 运行会额外渲染一个置顶小窗，同步 stdout 正在报告的内容（当前步骤、有进度时的百分比）——没有页面、没有点击，stdout 原样不变。面向由更新器无人值守拉起安装器的产品：慢机器上安装不再被读成“什么都没发生”，也就没有人会把旧版本启动进正在交换的目录。没有桌面会话的环境（服务、CI）自动保持纯控制台。
 ### 向导语言
 
 向导在**第一步**询问语言：选择器列出全部十个支持的语言，每项都以

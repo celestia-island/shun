@@ -966,6 +966,17 @@ pub struct ShellUiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_order: Option<LogOrder>,
 
+    /// Whether the headless lane (`--silent`, the ARP uninstall string)
+    /// also renders a passive progress window beside its stdout output.
+    /// Meant for unattended updaters: the spawned installer then shows
+    /// what it is doing on its own — no clicks added, stdout unchanged —
+    /// so a player waiting out a slow install never reads "nothing
+    /// happened" and launches the old build into the swap. The window
+    /// needs a desktop session; without one (services, CI) the lane
+    /// silently stays console-only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub silent_progress: bool,
+
     /// Interface faces this product's shell may present
     /// (`webview`/`egui`/`tui`). Absent = all three. The headless CLI
     /// face is the substrate (`--silent`, the ARP uninstall string) and
@@ -1861,6 +1872,28 @@ local = true
             PathBuf::from("payload-lite")
         );
         assert!(config.apply_variant("nope").is_err());
+    }
+
+    #[test]
+    fn silent_progress_parses_and_defaults_off() {
+        let draft: ShunMetadataDraft = toml::from_str(
+            r#"
+product = "app"
+payload = "payload"
+
+[shell]
+silent-progress = true
+"#,
+        )
+        .expect("draft parses");
+        let config = draft.into_config("app".into(), "1.0".into(), Path::new(""));
+        assert!(config.shell.as_ref().unwrap().silent_progress);
+
+        // Absent — the default every existing manifest relies on — is off.
+        let draft: ShunMetadataDraft =
+            toml::from_str("product = \"app\"\npayload = \"payload\"\n").unwrap();
+        let config = draft.into_config("app".into(), "1.0".into(), Path::new(""));
+        assert!(!config.shell.unwrap_or_default().silent_progress);
     }
 }
 

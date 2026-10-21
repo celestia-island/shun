@@ -245,6 +245,7 @@ log-level = "all"          # all(기본값) | files | scripts | off
 log-order = "newest"      # newest(기본값, 최신이 위) | oldest(끝에 추가)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # 이 제품 셸이 제공할 수 있는 화면(기본: 세 가지 모두)
+silent-progress = false   # --silent 실행에 수동 진행 창 표시(기본 꺼짐)
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -257,6 +258,7 @@ CLI 화면(`--silent`, ARP 제거 문자열)은 기반이라 비활성화할 수
 없습니다. 비활성화된 화면을 요청하면 오류가 나고, 자동 선택은
 비활성화된 화면을 건너뜁니다.
 
+`shell.silent-progress`는 헤드리스 경로에 수동 진행 창을 더합니다. `--silent` 실행은 stdout이 말하는 내용(현재 단계, 있는 경우 백분율)을 그대로 보여 주는 작은 항상 위 창도 렌더링합니다 — 페이지도 클릭도 없고 stdout은 그대로입니다. 업데이터가 무인으로 설치 관리자를 띄우는 제품을 위한 것입니다. 느린 머신에서 “아무 일도 없다”로 읽히지 않아, 교환 중인 디렉터리에 이전 빌드를 실행하는 일도 사라집니다. 데스크톱이 없는 세션(서비스, CI)은 조용히 콘솔 전용으로 남습니다.
 ### 위자드 언어
 
 위자드는 **첫 단계**에서 언어를 묻습니다. 지원하는 10개 로캘을 각각

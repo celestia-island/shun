@@ -113,7 +113,9 @@
       "warn_desktop_blocked": "无法创建桌面快捷方式",
       "warn_aumid_blocked": "无法登记应用标识",
       "log_write": "写入",
-      "log_reuse": "复用"
+      "log_reuse": "复用",
+      "silent_install_heading": "正在安装 %PRODUCT%…",
+      "silent_uninstall_heading": "正在卸载 %PRODUCT%…"
     },
     "zh-Hant": {
       "step_language": "安裝語言",
@@ -203,7 +205,9 @@
       "warn_desktop_blocked": "無法建立桌面捷徑",
       "warn_aumid_blocked": "無法登錄應用程式識別",
       "log_write": "寫入",
-      "log_reuse": "重用"
+      "log_reuse": "重用",
+      "silent_install_heading": "正在安裝 %PRODUCT%…",
+      "silent_uninstall_heading": "正在解除安裝 %PRODUCT%…"
     },
     "en": {
       "step_language": "Language",
@@ -293,7 +297,9 @@
       "warn_desktop_blocked": "Could not create the desktop shortcut",
       "warn_aumid_blocked": "Could not stamp the app identity",
       "log_write": "write",
-      "log_reuse": "reuse"
+      "log_reuse": "reuse",
+      "silent_install_heading": "Installing %PRODUCT%…",
+      "silent_uninstall_heading": "Uninstalling %PRODUCT%…"
     },
     "ru": {
       "step_language": "Язык",
@@ -383,7 +389,9 @@
       "warn_desktop_blocked": "Не удалось создать ярлык на рабочем столе",
       "warn_aumid_blocked": "Не удалось зарегистрировать идентификатор приложения",
       "log_write": "запись",
-      "log_reuse": "повтор"
+      "log_reuse": "повтор",
+      "silent_install_heading": "Установка %PRODUCT%…",
+      "silent_uninstall_heading": "Удаление %PRODUCT%…"
     },
     "ja": {
       "step_language": "言語",
@@ -473,7 +481,9 @@
       "warn_desktop_blocked": "デスクトップショートカットを作成できません",
       "warn_aumid_blocked": "アプリ識別子を登録できません",
       "log_write": "書き込み",
-      "log_reuse": "再利用"
+      "log_reuse": "再利用",
+      "silent_install_heading": "%PRODUCT% をインストールしています…",
+      "silent_uninstall_heading": "%PRODUCT% をアンインストールしています…"
     },
     "ko": {
       "step_language": "언어",
@@ -563,7 +573,9 @@
       "warn_desktop_blocked": "바로 가기를 만들 수 없습니다",
       "warn_aumid_blocked": "앱 ID를 등록할 수 없습니다",
       "log_write": "쓰기",
-      "log_reuse": "재사용"
+      "log_reuse": "재사용",
+      "silent_install_heading": "%PRODUCT% 설치 중…",
+      "silent_uninstall_heading": "%PRODUCT% 제거 중…"
     },
     "fr": {
       "step_language": "Langue",
@@ -653,7 +665,9 @@
       "warn_desktop_blocked": "Impossible de créer le raccourci bureau",
       "warn_aumid_blocked": "Impossible d'enregistrer l'identité de l'appli",
       "log_write": "écriture",
-      "log_reuse": "réutilisé"
+      "log_reuse": "réutilisé",
+      "silent_install_heading": "Installation de %PRODUCT%…",
+      "silent_uninstall_heading": "Désinstallation de %PRODUCT%…"
     },
     "es": {
       "step_language": "Idioma",
@@ -743,7 +757,9 @@
       "warn_desktop_blocked": "No se pudo crear el acceso directo del escritorio",
       "warn_aumid_blocked": "No se pudo registrar la identidad de la app",
       "log_write": "escritura",
-      "log_reuse": "reutilizado"
+      "log_reuse": "reutilizado",
+      "silent_install_heading": "Instalando %PRODUCT%…",
+      "silent_uninstall_heading": "Desinstalando %PRODUCT%…"
     },
     "de": {
       "step_language": "Sprache",
@@ -833,7 +849,9 @@
       "warn_desktop_blocked": "Desktop-Verknüpfung konnte nicht erstellt werden",
       "warn_aumid_blocked": "App-Identität konnte nicht registriert werden",
       "log_write": "schreiben",
-      "log_reuse": "wiederverwendet"
+      "log_reuse": "wiederverwendet",
+      "silent_install_heading": "%PRODUCT% wird installiert…",
+      "silent_uninstall_heading": "%PRODUCT% wird deinstalliert…"
     },
     "pt": {
       "step_language": "Idioma",
@@ -923,7 +941,9 @@
       "warn_desktop_blocked": "Não foi possível criar o atalho da área de trabalho",
       "warn_aumid_blocked": "Não foi possível registrar a identidade do app",
       "log_write": "gravação",
-      "log_reuse": "reutilizado"
+      "log_reuse": "reutilizado",
+      "silent_install_heading": "A instalar o %PRODUCT%…",
+      "silent_uninstall_heading": "A desinstalar o %PRODUCT%…"
     }
   }
 }
