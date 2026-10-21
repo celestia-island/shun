@@ -258,6 +258,7 @@ log-level = "all"          # all（既定）| files | scripts | off
 log-order = "newest"      # newest（既定、最新が上）| oldest（末尾に追加）
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # この製品のシェルが提示できる画面（既定は 3 つすべて）
+silent-progress = false   # --silent 実行に受動的な進行ウィンドウを表示（既定は無効）
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -270,6 +271,7 @@ CLI 面（`--silent`、ARP のアンインストール文字列）は基盤で�
 無効化できません。無効化された画面の要求はエラー、自動選択は
 無効化された画面をスキップします。
 
+`shell.silent-progress` はヘッドレス経路に受動的な進行ウィンドウを加えます。`--silent` 実行は stdout が語る内容（現在のステップ、ある場合は進捗率）を映す小さな常時前面ウィンドウも表示します——ページもクリックも増えず、stdout は変わりません。アップデータが無人でインストーラを起動する製品向けです。遅いマシンで「何も起きていない」と読まれなくなり、交換中のディレクトリへ旧ビルドを起動してしまう人もいなくなります。デスクトップのないセッション（サービス、CI）は静かにコンソールのみのままです。
 ### ウィザードの言語
 
 ウィザードは**最初のステップ**で言語を尋ねます。10 言語のロケールを

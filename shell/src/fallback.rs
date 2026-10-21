@@ -762,6 +762,10 @@ struct Texts {
     /// picked before the wizard language is chosen).
     splash_message: String,
     splash_abort: String,
+    /// The silent lane's passive window headings (system-locale; see
+    /// passive.rs) — `%PRODUCT%` spliced by the caller.
+    silent_install_heading: String,
+    silent_uninstall_heading: String,
     /// The fatal-init box's body (system-locale).
     fatal_init: String,
     /// The install-step runtime consent ask (title/body/yes/skip).
@@ -884,6 +888,36 @@ pub(crate) fn fatal_init_string() -> String {
     let tag = system_locale_tag().unwrap_or_default();
     let texts = strings.texts(&strings.resolve_system_locale(&tag));
     texts.fatal_init.clone()
+}
+
+/// Every localized line the silent lane's passive window shows, resolved
+/// from the SYSTEM locale (the wizard language is an in-wizard choice a
+/// `--silent` run never makes): the install/uninstall heading
+/// (`%PRODUCT%` already spliced), the done and failed lines, and the
+/// failure pane's close button.
+pub(crate) struct SilentStrings {
+    pub(crate) install_heading: String,
+    pub(crate) uninstall_heading: String,
+    pub(crate) done: String,
+    pub(crate) done_uninstall: String,
+    pub(crate) failed: String,
+    pub(crate) failed_uninstall: String,
+    pub(crate) close: String,
+}
+
+pub(crate) fn silent_strings() -> SilentStrings {
+    let strings = wizard_strings();
+    let tag = system_locale_tag().unwrap_or_default();
+    let texts = strings.texts(&strings.resolve_system_locale(&tag));
+    SilentStrings {
+        install_heading: texts.silent_install_heading.clone(),
+        uninstall_heading: texts.silent_uninstall_heading.clone(),
+        done: texts.done_title.clone(),
+        done_uninstall: texts.done_uninstall.clone(),
+        failed: texts.failed.clone(),
+        failed_uninstall: texts.failed_uninstall.clone(),
+        close: texts.step_done.clone(),
+    }
 }
 
 fn wizard_strings() -> &'static WizardStrings {

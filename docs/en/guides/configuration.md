@@ -262,6 +262,7 @@ log-level = "all"          # all (default) | files | scripts | off
 log-order = "newest"    # newest (default, latest on top) | oldest (append at tail)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # faces this product may present (default: all three)
+silent-progress = false   # passive progress window over --silent runs (default off)
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -274,6 +275,7 @@ headless CLI face (`--silent`, the ARP uninstall string) is the
 substrate and cannot be disabled. Requesting a disabled face is an
 error; auto-selection skips disabled faces.
 
+`shell.silent-progress` opts the headless lane into a passive progress window: a `--silent` run then also renders a small always-on-top window mirroring what stdout says (the running step, the percent when the step has one) — no pages, no clicks, stdout unchanged. Meant for products whose updater spawns the installer unattended: on a slow machine the install stops reading as "nothing happened", so nobody launches the old build into the directory mid-swap. Sessions without a desktop (services, CI) silently stay console-only.
 ### Wizard language
 
 The wizard asks for its language on the **first step**: a selector

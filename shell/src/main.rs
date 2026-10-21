@@ -25,6 +25,7 @@ mod callout;
 mod diag;
 mod fallback;
 mod markdown;
+mod passive;
 #[cfg(windows)]
 mod screenshot;
 mod splash;
@@ -802,6 +803,19 @@ fn download_attachment(
 /// events printed to the attached console. Machine scope re-launches
 /// under UAC with the resolved answers before anything runs.
 fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Result<(), String> {
+    run_headless_with_tap(cli, config, payload, &mut |_| ())
+}
+
+/// [`run_headless`] with a step-level tap for the silent lane's
+/// optional passive window (`[shell] silent-progress`, see passive.rs):
+/// every headline and progress step the console sees also reaches
+/// `tap`, while stdout stays byte-for-byte the same.
+fn run_headless_with_tap(
+    cli: &Cli,
+    config: &ShunConfig,
+    payload: &ArchivePayload,
+    tap: &mut dyn FnMut(passive::PassiveNote),
+) -> Result<(), String> {
     // The explicit shortcut answers (updater contract) win over the
     // `--no-desktop` convention, which wins over the manifest policy;
     // resolution happens once so the elevation gate and the
@@ -849,6 +863,10 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
                     "shun: no --dir given — upgrading the registered install at {}",
                     previous.display()
                 );
+                tap(passive::PassiveNote::Note(format!(
+                    "upgrading the registered install at {}",
+                    previous.display()
+                )));
                 previous.to_string_lossy().into_owned()
             }
             None => shun::wizard::default_location_for(config),
@@ -889,8 +907,12 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
                 println!("{line}");
             }
         }
-        shun::flow::FlowEvent::Progress { step, .. } if !step.is_empty() => {
+        shun::flow::FlowEvent::Progress { step, percent, .. } if !step.is_empty() => {
             println!("… {step}");
+            tap(passive::PassiveNote::Step {
+                step: step.clone(),
+                percent: *percent,
+            });
         }
         _ => {}
     };
@@ -929,7 +951,11 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
         // one per 4 MiB otherwise.
         match event {
             crate::RuntimeEvent::DownloadStart => {
-                println!("shun: no WebView2 runtime — downloading the Evergreen installer")
+                println!("shun: no WebView2 runtime — downloading the Evergreen installer");
+                tap(passive::PassiveNote::Step {
+                    step: "Downloading the WebView2 runtime…".into(),
+                    percent: Some(0),
+                });
             }
             crate::RuntimeEvent::Download(so_far, total) => match total {
                 Some(total) => {
@@ -937,6 +963,10 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
                     if tenth > last_tenth {
                         last_tenth = tenth;
                         println!("shun: downloading the WebView2 runtime… {}%", tenth * 10);
+                        tap(passive::PassiveNote::Step {
+                            step: "Downloading the WebView2 runtime…".into(),
+                            percent: Some((tenth * 10) as u8),
+                        });
                     }
                 }
                 None => {
@@ -950,10 +980,17 @@ fn run_headless(cli: &Cli, config: &ShunConfig, payload: &ArchivePayload) -> Res
                 }
             },
             crate::RuntimeEvent::InstallStart => {
-                println!("shun: running the downloaded Evergreen installer silently")
+                println!("shun: running the downloaded Evergreen installer silently");
+                tap(passive::PassiveNote::Step {
+                    step: "Installing the WebView2 runtime…".into(),
+                    percent: None,
+                });
             }
             crate::RuntimeEvent::InstallRetryElevated => {
-                println!("shun: the Evergreen installer failed unelevated — retrying through UAC")
+                println!("shun: the Evergreen installer failed unelevated — retrying through UAC");
+                tap(passive::PassiveNote::Note(
+                    "The Evergreen installer is retrying through UAC…".into(),
+                ));
             }
             crate::RuntimeEvent::Done(ready, code) => {
                 if ready {
@@ -1261,11 +1298,54 @@ pub(crate) fn stage_fixed_runtime(
 
 // ── Entry ────────────────────────────────────────────────────────────────
 
+/// Windows refuses to rename a directory any process holds as its
+/// working directory, and this shell is routinely spawned BY an
+/// updater FROM INSIDE the install directory — an installer parked on
+/// its own CWD then fights the very swap it performs (targets::install
+/// retries the rename through its whole lock window and degrades to
+/// the file-by-file merge). Park the process on the temp dir before
+/// any face runs, so neither this process nor the WebView2 children
+/// the GUI faces spawn can pin the install target. The only
+/// CWD-relative inputs are the path flags — absolutized against the
+/// ORIGINAL cwd first, so a relative `--dir` keeps meaning what the
+/// spawner meant. (A relative path typed into the GUI's location pane
+/// is untouched by this: it resolves against the wizard's launch
+/// folder today, junk input either way.)
+fn park_cwd_off_targets(cli: &mut Cli) {
+    let original = std::env::current_dir().ok();
+    if let (Some(base), Some(dir)) = (&original, cli.dir.take()) {
+        cli.dir = Some(absolutize(dir, base));
+    }
+    if let (Some(base), Some(shot)) = (&original, cli.screenshot.take()) {
+        cli.screenshot = Some(if shot.is_relative() {
+            base.join(shot)
+        } else {
+            shot
+        });
+    }
+    if let Err(err) = std::env::set_current_dir(std::env::temp_dir()) {
+        // Best-effort hardening: an exotic environment without a
+        // usable temp CWD keeps the inherited one and pays the retry
+        // window at worst.
+        diag!("shun: could not park the working directory ({err})");
+    }
+}
+
+/// Anchor a raw path argument against the pre-park working directory.
+fn absolutize(raw: String, base: &Path) -> String {
+    let path = Path::new(&raw);
+    if path.is_relative() {
+        base.join(path).to_string_lossy().into_owned()
+    } else {
+        raw
+    }
+}
+
 fn main() {
     // parse_from takes argv0 first — feed the program name before the
     // (normalized) real arguments, or the first flag would be eaten as
     // the binary name and every face flag silently ignored.
-    let cli = Cli::parse_from(
+    let mut cli = Cli::parse_from(
         std::iter::once("shun-installer".to_string())
             .chain(normalize_switches(std::env::args().skip(1))),
     );
@@ -1278,6 +1358,7 @@ fn main() {
     // `--no-gui` from cmd/PowerShell otherwise resolves to the help
     // text instead of the TUI.
     let _ = shun::env_probe::attach_parent_console();
+    park_cwd_off_targets(&mut cli);
     // Whether the webview face is a live candidate for this run — the
     // gate for the fixed-version runtime staging under the splash (a
     // run that can never take the webview face skips the copy-only
@@ -1408,7 +1489,19 @@ fn main() {
 
     match face {
         Face::Silent => {
-            if let Err(err) = run_headless(&cli, &config, &payload) {
+            // A product that opts into `[shell] silent-progress` gets
+            // the passive window over the same lane; every other
+            // caller (and every window-less session) runs untouched.
+            let result = if config
+                .shell
+                .as_ref()
+                .is_some_and(|shell| shell.silent_progress)
+            {
+                passive::run_silent_with_progress(&cli, &config, &payload)
+            } else {
+                run_headless(&cli, &config, &payload)
+            };
+            if let Err(err) = result {
                 crate::diag!("shun: {err}");
                 std::process::exit(1);
             }
@@ -2315,6 +2408,27 @@ mod tests {
         let mut argv = vec!["shun-installer".to_string()];
         argv.extend(normalize_switches(args.iter().map(|s| s.to_string())));
         Cli::parse_from(argv)
+    }
+
+    #[test]
+    fn path_flags_anchor_against_the_pre_park_cwd() {
+        // A relative --dir means the spawner's folder; the anchor keeps
+        // that meaning once the process parks itself on the temp dir.
+        // (Compared as paths: join preserves the input's separators. The
+        // absolute fixture is platform-spelled — a Windows drive path is
+        // not absolute on unix and vice versa.)
+        let (base, absolute) = if cfg!(windows) {
+            (Path::new(r"D:\Downloads"), r"D:\Target\App")
+        } else {
+            (Path::new("/tmp/downloads"), "/target/app")
+        };
+        let anchored = absolutize("sub/dir".into(), base);
+        assert_eq!(PathBuf::from(anchored), base.join("sub/dir"));
+        // Absolute input passes through untouched.
+        assert_eq!(absolutize(absolute.into(), base), absolute.to_string());
+        // A Windows drive-RELATIVE path (`D:sub`) is not `is_relative`
+        // by Rust's definition (it carries a prefix); anchoring it is
+        // out of scope — the headless contract passes absolute dirs.
     }
 
     #[cfg(windows)]

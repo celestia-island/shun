@@ -31,6 +31,7 @@ fn sample() -> ShunConfig {
         ],
         shell: Some(shun::config::ShellUiConfig {
             faces: None,
+            silent_progress: true,
             timeline: Some(shun::config::TimelineOrientation::Left),
             theme: Some(ThemeConfig {
                 background: None,

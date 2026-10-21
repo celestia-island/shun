@@ -264,6 +264,7 @@ log-level = "all"          # all (por defecto) | files | scripts | off
 log-order = "newest"      # newest (por defecto, el último arriba) | oldest (se añade al final)
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # caras que el shell de este producto puede presentar (por defecto: las tres)
+silent-progress = false   # ventana de progreso pasiva para --silent (desactivada por defecto)
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -276,6 +277,7 @@ CLI headless (`--silent`, la cadena de desinstalación ARP) es el
 sustrato y no se puede desactivar. Pedir una cara desactivada es un
 error; la selección automática omite las caras desactivadas.
 
+`shell.silent-progress` dota al carril headless de una ventana de progreso pasiva: una ejecución `--silent` también muestra una ventanita siempre visible que refleja lo que dice stdout (el paso actual, el porcentaje cuando existe) — sin páginas ni clics, stdout intacto. Pensado para productos cuyo actualizador lanza el instalador desatendido: en máquinas lentas la instalación ya no se lee como «no pasó nada», y nadie lanza la versión vieja sobre el directorio en pleno intercambio. Las sesiones sin escritorio (servicios, CI) permanecen en silencio solo consola.
 ### Idioma del asistente
 
 El asistente pregunta el idioma en el **primer paso**: un selector con
