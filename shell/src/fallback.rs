@@ -575,7 +575,10 @@ fn os_prefers_light() -> bool {
     true
 }
 
-fn resolve_theme(config: &ShunConfig) -> Theme {
+/// The theme resolution shared by the wizard's egui face and the silent
+/// lane's egui passive window: the manifest's `shell.theme` (mode pin +
+/// accent + background layers) over the OS light/dark side.
+pub(crate) fn resolve_theme(config: &ShunConfig) -> Theme {
     let shell = config.shell.clone().unwrap_or_default();
     let accent = shell.theme.as_ref().and_then(|theme| theme.accent);
     // A manifest background (solid or gradient) tints the base tokens:
@@ -891,10 +894,13 @@ pub(crate) fn fatal_init_string() -> String {
 }
 
 /// Every localized line the silent lane's passive window shows, resolved
-/// from the SYSTEM locale (the wizard language is an in-wizard choice a
-/// `--silent` run never makes): the install/uninstall heading
-/// (`%PRODUCT%` already spliced), the done and failed lines, and the
-/// failure pane's close button.
+/// from the SAVED WIZARD LANGUAGE when the player ever picked one, else
+/// the system locale (the webview passive page resolves the same chain —
+/// a `--silent` run never picks a language in-window): the
+/// install/uninstall heading (`%PRODUCT%` already spliced), the done and
+/// failed lines, the failure pane's close button, and the egui window's
+/// caption role word (安装器 / 卸载 — the same `titlebar_*` the wizard's
+/// bar shows).
 pub(crate) struct SilentStrings {
     pub(crate) install_heading: String,
     pub(crate) uninstall_heading: String,
@@ -903,12 +909,27 @@ pub(crate) struct SilentStrings {
     pub(crate) failed: String,
     pub(crate) failed_uninstall: String,
     pub(crate) close: String,
+    pub(crate) titlebar_installer: String,
+    pub(crate) titlebar_uninstall: String,
 }
 
-pub(crate) fn silent_strings() -> SilentStrings {
+/// The silent lane's locale: the remembered wizard choice (validated
+/// against the authored locale list), else the system locale — the same
+/// chain [`crate::os_window_title`] resolves the frame title through.
+fn silent_locale(strings: &WizardStrings, product: &str) -> String {
+    let saved = crate::load_prefs(&crate::local_appdata(), product)
+        .language
+        .filter(|code| strings.is_known(code));
+    match saved.or_else(system_locale_tag) {
+        Some(tag) => strings.resolve_system_locale(&tag),
+        None => strings.default.clone(),
+    }
+}
+
+pub(crate) fn silent_strings(product: &str) -> SilentStrings {
     let strings = wizard_strings();
-    let tag = system_locale_tag().unwrap_or_default();
-    let texts = strings.texts(&strings.resolve_system_locale(&tag));
+    let locale = silent_locale(strings, product);
+    let texts = strings.texts(&locale);
     SilentStrings {
         install_heading: texts.silent_install_heading.clone(),
         uninstall_heading: texts.silent_uninstall_heading.clone(),
@@ -916,7 +937,9 @@ pub(crate) fn silent_strings() -> SilentStrings {
         done_uninstall: texts.done_uninstall.clone(),
         failed: texts.failed.clone(),
         failed_uninstall: texts.failed_uninstall.clone(),
-        close: texts.step_done.clone(),
+        close: texts.un_close.clone(),
+        titlebar_installer: texts.titlebar_installer.clone(),
+        titlebar_uninstall: texts.titlebar_uninstall.clone(),
     }
 }
 
@@ -1705,9 +1728,10 @@ struct FallbackApp {
 /// widths every pane draws with, so all products and steps size alike.
 // Caption chrome, HkTitleBar parity: full-band-height 46pt plates in a
 // flat 32pt band — the native Windows 11 caption proportion, identical
-// to the webview face's SCSS (--hk-tb-height).
-const CAPTION_W: f32 = 46.0;
-const TITLEBAR_H: f32 = 32.0;
+// to the webview face's SCSS (--hk-tb-height). Shared with the silent
+// lane's egui passive window (passive.rs).
+pub(crate) const CAPTION_W: f32 = 46.0;
+pub(crate) const TITLEBAR_H: f32 = 32.0;
 const COMBO_W: f32 = 380.0;
 
 impl FallbackApp {
@@ -2670,10 +2694,10 @@ fn open_directory(path: &str) {
     let _ = std::process::Command::new(opener).arg(path).spawn();
 }
 
-/// Runs the fallback wizard. Does not return until the window closes.
 /// The viewport builder carrying the product logo as the window/taskbar
-/// icon — without it the egui face ships the default eframe "e".
-fn icon_viewport_builder(logo_kind: &str, logo_bytes: &[u8]) -> egui::ViewportBuilder {
+/// icon — without it the egui face ships the default eframe "e". Shared
+/// by the wizard's windows and the silent lane's egui passive window.
+pub(crate) fn icon_viewport_builder(logo_kind: &str, logo_bytes: &[u8]) -> egui::ViewportBuilder {
     if logo_kind == "none" || logo_bytes.is_empty() {
         return egui::ViewportBuilder::default();
     }
@@ -5397,15 +5421,13 @@ impl eframe::App for FallbackApp {
         // shadow until DWMWCP_ROUND lands. Apply it here — our OWN
         // window handle, not a title lookup (both faces share one
         // title, so a title poll would round the other instance's
-        // window).
+        // window). The same one-shot installs the winit-0.30 cross-DPI
+        // drag guard (see dpi_fix.rs).
         if !self.dwm_rounded {
             self.dwm_rounded = true;
             #[cfg(windows)]
             apply_dwm_rounding(frame);
-            // Keep `frame` live on the other hosts: the rounding call is
-            // Windows-only, but the trait signature is uniform.
-            #[cfg(not(windows))]
-            let _ = frame;
+            crate::dpi_fix::install(frame);
         }
         // The splash phase: the same window's first act, before the
         // wizard content exists (the payload is still decoding).

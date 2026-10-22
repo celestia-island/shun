@@ -23,6 +23,7 @@
 
 mod callout;
 mod diag;
+mod dpi_fix;
 mod fallback;
 mod markdown;
 mod passive;
@@ -45,7 +46,7 @@ use shun::env_probe::UiCapabilities;
 use shun::flow::FlowEvent;
 use shun::payload::ArchivePayload;
 use shun::wizard::{InstallRequest, WizardCore};
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, State};
 
 /// The resolved configuration, embedded by build.rs.
 const SHUN_CONFIG_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-config.json"));
@@ -2343,53 +2344,161 @@ fn run_shell(
             }
             #[cfg(not(windows))]
             let _ = (&screenshot, delay);
-            if let Some(window) = app.get_webview_window("installer") {
-                let _ = window.set_title(&native_title);
-                // Collapse the hidden non-client frame this window carries
-                // for its drop shadow, so the webview reaches every edge.
-                #[cfg(windows)]
-                if let Ok(hwnd) = window.hwnd() {
-                    window_frame::fill(hwnd.0 as _);
-                }
-                // The window/taskbar icon follows the manifest's product
-                // logo — the same bytes the egui face renders into its
-                // viewport — instead of the generic exe resource.
-                if let Some(rgba) = decode_logo_rgba(LOGO_BYTES) {
-                    let (width, height) = (rgba.width(), rgba.height());
-                    let _ = window
-                        .set_icon(tauri::image::Image::new_owned(
-                            rgba.into_raw(),
-                            width,
-                            height,
-                        ))
-                        .map_err(|e| crate::diag!("shun: window icon: {e}"));
-                }
-                // Frameless windows lose BOTH the rounded corners and
-                // the shadow until DWMWCP_ROUND lands — the same hint
-                // the egui face applies to its own window.
-                #[cfg(windows)]
-                if let Ok(hwnd) = window.hwnd() {
-                    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
-                    const DWMWCP_ROUND: u32 = 2;
-                    // SAFETY: plain dwmapi call with our own window
-                    // handle and a 4-byte attribute.
-                    unsafe {
-                        windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-                            hwnd.0,
-                            DWMWA_WINDOW_CORNER_PREFERENCE,
-                            &DWMWCP_ROUND as *const u32 as *const core::ffi::c_void,
-                            4,
-                        );
-                    }
-                }
-                // Release builds never surface the webview's own
-                // right-click menu — the wizard owns the whole surface
-                // (debug/dev builds keep it; see `webview_hardening`).
-                webview_hardening::attach(&window);
-            }
+            // The config declares no static window: each lane builds its
+            // own in setup (the wizard's 800×600 surface here, the silent
+            // lane's small passive window in run_passive_tauri), so one
+            // embedded bundle serves both without a phantom first window.
+            let window =
+                tauri::WebviewWindowBuilder::new(app, "installer", tauri::WebviewUrl::default())
+                    .title(&native_title)
+                    .inner_size(800.0, 600.0)
+                    .center()
+                    .resizable(false)
+                    .decorations(false)
+                    .shadow(true)
+                    .minimizable(true)
+                    .maximizable(false)
+                    .closable(true)
+                    .build()?;
+            polish_window(&window);
             Ok(())
         })
         .run(tauri::generate_context!())
+}
+
+/// The window dressing every shell window wears: the frameless window's
+/// full-surface reclaim + shadow re-anchor (`window_frame`), the
+/// manifest's product logo as the window/taskbar icon, the DWM rounded
+/// corners a frameless window otherwise loses, and the release-build
+/// right-click suppression.
+fn polish_window(window: &tauri::WebviewWindow) {
+    // Collapse the hidden non-client frame this window carries for its
+    // drop shadow, so the webview reaches every edge.
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        window_frame::fill(hwnd.0 as _);
+    }
+    // The window/taskbar icon follows the manifest's product logo — the
+    // same bytes the egui face renders into its viewport — instead of the
+    // generic exe resource.
+    if let Some(rgba) = decode_logo_rgba(LOGO_BYTES) {
+        let (width, height) = (rgba.width(), rgba.height());
+        let _ = window
+            .set_icon(tauri::image::Image::new_owned(
+                rgba.into_raw(),
+                width,
+                height,
+            ))
+            .map_err(|e| crate::diag!("shun: window icon: {e}"));
+    }
+    // Frameless windows lose BOTH the rounded corners and the shadow
+    // until DWMWCP_ROUND lands — the same hint the egui face applies to
+    // its own window.
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+        const DWMWCP_ROUND: u32 = 2;
+        // SAFETY: plain dwmapi call with our own window handle and a
+        // 4-byte attribute.
+        unsafe {
+            windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+                hwnd.0,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &DWMWCP_ROUND as *const u32 as *const core::ffi::c_void,
+                4,
+            );
+        }
+    }
+    // Release builds never surface the webview's own right-click menu —
+    // the shell owns the whole surface (debug/dev builds keep it; see
+    // `webview_hardening`).
+    webview_hardening::attach(window);
+}
+
+/// The silent lane's passive progress window on the WEBVIEW lane
+/// (`[shell] silent-progress`): a small always-on-top frameless window
+/// running the same embedded bundle in its passive act
+/// (`index.html?window=passive` — the hikari caption bar, the theme
+/// token stack, the hikari progress bar), while the headless install
+/// worker streams step notes to it over the `passive-progress` channel.
+/// `Ok` carries the install's own result (the window may have closed
+/// early — the install always runs to completion); `Err` means the
+/// webview lane never came up, and the caller degrades to the egui
+/// passive window.
+fn run_passive_tauri(
+    cli: Cli,
+    config: ShunConfig,
+    payload: ArchivePayload,
+) -> Result<Result<(), String>, tauri::Error> {
+    let uninstall_mode = cli.uninstall;
+    let screenshot = cli.screenshot.clone();
+    let delay = cli.screenshot_delay.unwrap_or(4000);
+    let native_title = os_window_title(&config, uninstall_mode);
+    let core = WizardCore::new(config.clone(), wizard_license_docs());
+    let result = tauri::Builder::default()
+        .manage({
+            let steps: Vec<shun::config::ResolvedStep> =
+                serde_json::from_str(SHUN_STEPS_JSON).expect("embedded wizard pipeline parses");
+            AppState {
+                core: std::sync::Mutex::new(core),
+                payload: payload.clone(),
+                uninstall_mode,
+                pairing: steps.into_iter().find_map(|s| s.pairing),
+                pairing_stage: std::sync::Mutex::new(None),
+            }
+        })
+        // The passive page is a mirror, not a wizard: it reads identity,
+        // logo, theme, the saved language and the lane's coalesced state
+        // (the mount-time replay for events that fired before its
+        // listener armed) — nothing that mutates.
+        .invoke_handler(tauri::generate_handler![
+            get_config,
+            get_logo,
+            is_uninstall_mode,
+            get_saved_language,
+            passive_state
+        ])
+        .setup(move |app| {
+            #[cfg(windows)]
+            if let Some(path) = &screenshot {
+                screenshot::schedule(app.handle().clone(), path.clone(), delay);
+            }
+            #[cfg(not(windows))]
+            let _ = (&screenshot, delay);
+            let window = tauri::WebviewWindowBuilder::new(
+                app,
+                "passive",
+                tauri::WebviewUrl::App("index.html?window=passive".into()),
+            )
+            .title(&native_title)
+            .inner_size(420.0, 240.0)
+            .center()
+            .always_on_top(true)
+            .resizable(false)
+            .decorations(false)
+            .shadow(true)
+            .minimizable(false)
+            .maximizable(false)
+            .closable(true)
+            .build()?;
+            polish_window(&window);
+            passive::attach_worker(app.handle().clone(), &cli, &config, &payload);
+            Ok(())
+        })
+        .run(tauri::generate_context!());
+    // The loop is down (the window closed — on its own after the done
+    // linger, by the user, or on the failure pane's close button). The
+    // install worker keeps its console-only contract: join it before the
+    // process reports the run's verdict.
+    result.map(|()| passive::join_worker())
+}
+
+/// The passive page's mount-time replay: the lane's coalesced state, for
+/// events that fired before the page's `passive-progress` listener
+/// armed (tauri events are not buffered).
+#[tauri::command]
+fn passive_state() -> Option<passive::PassiveEvent> {
+    passive::last_event()
 }
 
 #[cfg(test)]

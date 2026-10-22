@@ -234,6 +234,14 @@ export interface InstallerStrings {
     failedUninstall: string;
     failedRepair: string;
   };
+  /** The silent lane's passive progress window (what a `--silent` run of
+   *  a `silent-progress` product renders): the running heading, resolved
+   *  from the SYSTEM locale — a silent run never picks a wizard language.
+   *  `%PRODUCT%` is spliced by the consumer. */
+  silent: {
+    installHeading: string;
+    uninstallHeading: string;
+  };
   pathField: PathFieldStrings;
   pairing: PairingStrings;
 }
@@ -359,6 +367,10 @@ const zhHans: InstallerStrings = {
     doneRepair: "已完成修复",
     failedUninstall: "卸载失败",
     failedRepair: "修复失败",
+  },
+  silent: {
+    installHeading: "正在安装 %PRODUCT%…",
+    uninstallHeading: "正在卸载 %PRODUCT%…",
   },
   pathField: {
     browse: "浏览…",
@@ -500,6 +512,10 @@ const zhHant: InstallerStrings = {
     doneRepair: "已完成修復",
     failedUninstall: "解除安裝失敗",
     failedRepair: "修復失敗",
+  },
+  silent: {
+    installHeading: "正在安裝 %PRODUCT%…",
+    uninstallHeading: "正在解除安裝 %PRODUCT%…",
   },
   pathField: {
     browse: "瀏覽…",
@@ -644,6 +660,10 @@ const en: InstallerStrings = {
     failedUninstall: "Uninstall failed",
     failedRepair: "Repair failed",
   },
+  silent: {
+    installHeading: "Installing %PRODUCT%…",
+    uninstallHeading: "Uninstalling %PRODUCT%…",
+  },
   pathField: {
     browse: "Browse…",
     diskChip: "Drive",
@@ -783,6 +803,10 @@ const ru: InstallerStrings = {
     doneRepair: "Восстановление завершено",
     failedUninstall: "Не удалось удалить",
     failedRepair: "Не удалось восстановить",
+  },
+  silent: {
+    installHeading: "Установка %PRODUCT%…",
+    uninstallHeading: "Удаление %PRODUCT%…",
   },
   pathField: {
     browse: "Обзор…",
@@ -942,6 +966,10 @@ const ja: InstallerStrings = {
     failedUninstall: "アンインストールに失敗しました",
     failedRepair: "修復に失敗しました",
   },
+  silent: {
+    installHeading: "%PRODUCT% をインストールしています…",
+    uninstallHeading: "%PRODUCT% をアンインストールしています…",
+  },
   pathField: {
     browse: "参照…",
     diskChip: "ドライブ",
@@ -1094,6 +1122,10 @@ const ko: InstallerStrings = {
     doneRepair: "복구 완료",
     failedUninstall: "제거 실패",
     failedRepair: "복구 실패",
+  },
+  silent: {
+    installHeading: "%PRODUCT% 설치 중…",
+    uninstallHeading: "%PRODUCT% 제거 중…",
   },
   pathField: {
     browse: "찾아보기…",
@@ -1249,6 +1281,10 @@ const fr: InstallerStrings = {
     failedUninstall: "Échec de la désinstallation",
     failedRepair: "Échec de la réparation",
   },
+  silent: {
+    installHeading: "Installation de %PRODUCT%…",
+    uninstallHeading: "Désinstallation de %PRODUCT%…",
+  },
   pathField: {
     browse: "Parcourir…",
     diskChip: "Disque",
@@ -1403,6 +1439,10 @@ const es: InstallerStrings = {
     failedUninstall: "Error al desinstalar",
     failedRepair: "Error al reparar",
   },
+  silent: {
+    installHeading: "Instalando %PRODUCT%…",
+    uninstallHeading: "Desinstalando %PRODUCT%…",
+  },
   pathField: {
     browse: "Examinar…",
     diskChip: "Disco",
@@ -1555,6 +1595,10 @@ const de: InstallerStrings = {
     doneRepair: "Reparatur abgeschlossen",
     failedUninstall: "Deinstallation fehlgeschlagen",
     failedRepair: "Reparatur fehlgeschlagen",
+  },
+  silent: {
+    installHeading: "%PRODUCT% wird installiert…",
+    uninstallHeading: "%PRODUCT% wird deinstalliert…",
   },
   pathField: {
     browse: "Durchsuchen…",
@@ -1709,6 +1753,10 @@ const pt: InstallerStrings = {
     doneRepair: "Reparação concluída",
     failedUninstall: "Falha ao desinstalar",
     failedRepair: "Falha ao reparar",
+  },
+  silent: {
+    installHeading: "A instalar o %PRODUCT%…",
+    uninstallHeading: "A desinstalar o %PRODUCT%…",
   },
   pathField: {
     browse: "Procurar…",

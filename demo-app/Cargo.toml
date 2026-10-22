@@ -38,6 +38,13 @@ license = "../LICENSE"
 title = "Demo notice"
 path = "NOTICE.md"
 
+# The silent lane's passive progress window: the demo exercises the
+# unattended-update surface — a `--silent` run renders the small
+# always-on-top progress window (webview lane first, the styled egui
+# window as the floor) instead of running fully invisible.
+[package.metadata.shun.shell]
+silent-progress = true
+
 # Theme surface: page gradient, a slightly different rail plate, and
 # (documented, not enabled here — it would embed the bytes) the hikari
 # wallpaper chain with online candidates and an embedded fallback:
