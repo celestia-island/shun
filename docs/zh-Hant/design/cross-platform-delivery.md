@@ -116,6 +116,10 @@ Windows 把每個 scheme 註冊為 `HKCU\Software\Classes\<scheme>` 協定類
 - ARP 的 `UninstallString` 傳 `/uninstall`，而安裝 shell 的無頭
   解析只認 `--uninstall`——在 Windows 設定裡點「解除安裝」實際會開
   啟精靈而不是解除安裝。兩種拼寫現在都接受。
+- 手動雙擊安裝目錄裡的解除安裝器副本（`uninstall.exe`）時不帶任何
+  參數，它同樣會開啟安裝精靈——看上去像在邀請重灌正要移除的應用。
+  現在解除安裝器同名二進位的裸啟動預設進入解除安裝流程；帶顯式參數
+  的啟動仍由旗標決定行為。
 
 ## 3. Linux 與 macOS（執行時後端已實作；打包產物待續）
 

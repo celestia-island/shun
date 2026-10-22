@@ -144,7 +144,7 @@ para todos los usuarios) es un *modo* legítimo que algunos productos
 necesitan — se envió exactamente como eso: un opt-in deliberado
 (`install.scope`), nunca el valor por defecto. Véase la sección 6.
 
-### Hallazgos de robustez, ambos corregidos
+### Hallazgos de robustez, todos corregidos
 
 - Los nombres de producto con caracteres ilegales para nombres de
   archivo (`/\:*?"<>|`, puntos/espacios finales) se **sanitizan por
@@ -155,6 +155,14 @@ necesitan — se envió exactamente como eso: un opt-in deliberado
   headless del shell de instalación solo aceptaba `--uninstall` — hacer
   clic en «Desinstalar» en Configuración de Windows lanzaba el asistente
   en lugar de desinstalar. Ambas grafías ahora se analizan.
+- Un doble clic manual sobre la copia del desinstalador (`uninstall.exe`
+  en el directorio de instalación) no pasa ningún argumento, así que
+  también abría el asistente de instalación — lo que se leía como una
+  oferta de reinstalar la mismísima aplicación que se está eliminando.
+  Un lanzamiento sin argumentos del binario con nombre de desinstalador
+  ahora usa por defecto el flujo de desinstalación; los lanzamientos
+  con argumentos explícitos mantienen el comportamiento dirigido por
+  banderas.
 
 ## 3. Linux y macOS (backends de runtime implementados; las salidas de empaquetado, a continuación)
 

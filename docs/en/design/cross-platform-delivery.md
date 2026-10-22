@@ -135,7 +135,7 @@ is a legitimate *mode* some products need — it shipped as exactly
 that: a deliberate opt-in (`install.scope`), never the default. See
 section 6.
 
-### Robustness findings, both fixed
+### Robustness findings, all fixed
 
 - Product names with filename-illegal characters (`/\:*?"<>|`, trailing
   dots/spaces) are **stem-sanitized** for every filesystem and registry
@@ -145,6 +145,12 @@ section 6.
   shell's headless parser only accepted `--uninstall` — clicking
   "Uninstall" in Windows Settings launched the wizard instead of
   uninstalling. Both spellings now parse.
+- A manual double-click of the uninstaller copy (`uninstall.exe` in the
+  install directory) passes no arguments at all, so it too used to open
+  the install wizard — reading as an offer to reinstall the very app
+  being removed. A bare launch of the uninstaller-named binary now
+  defaults to the uninstall flow; explicitly-argumented launches keep
+  the flag-driven behavior.
 
 ## 3. Linux and macOS (runtime backends implemented; packaging
 ## outputs next)

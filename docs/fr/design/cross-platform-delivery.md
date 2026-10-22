@@ -147,7 +147,7 @@ raccourcis tous-utilisateurs) est un *mode* légitime dont certains
 produits ont besoin — il a été livré exactement ainsi : un opt-in
 délibéré (`install.scope`), jamais le défaut. Voir la section 6.
 
-### Constats de robustesse, les deux corrigés
+### Constats de robustesse, tous corrigés
 
 - Les noms de produits comportant des caractères illégaux pour des noms
   de fichiers (`/\:*?"<>|`, points/espaces finaux) sont **assainis sur
@@ -158,6 +158,14 @@ délibéré (`install.scope`), jamais le défaut. Voir la section 6.
   du shell d'installation n'acceptait que `--uninstall` — cliquer
   « Désinstaller » dans les Paramètres Windows lançait l'assistant au
   lieu de désinstaller. Les deux orthographes sont maintenant analysées.
+- Un double-clic manuel sur la copie du désinstalleur (`uninstall.exe`
+  dans le répertoire d'installation) ne passe aucun argument, donc il
+  ouvrait lui aussi l'assistant d'installation — ce qui se lisait comme
+  une offre de réinstaller l'application même que l'on est en train de
+  supprimer. Un lancement sans argument du binaire portant le nom du
+  désinstalleur emprunte désormais par défaut le flux de
+  désinstallation ; les lancements avec arguments explicites conservent
+  le comportement piloté par les drapeaux.
 
 ## 3. Linux et macOS (backends d'exécution implémentés ; artefacts de packaging ensuite)
 
