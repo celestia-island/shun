@@ -1719,6 +1719,11 @@ struct FallbackApp {
     /// the running/done/failed copy (the web phases repairing/repaired/
     /// repair_failed).
     repairing: bool,
+    /// The uninstall page's content-block height, recorded by the frame
+    /// that drew it: the vertical-centering seat needs a block height
+    /// egui won't give up front (see the uninstall branch of the pane
+    /// scope in `update`).
+    uninstall_block_h: Option<f32>,
     outcome: Option<Outcome>,
     entry: Option<PathBuf>,
     receiver: Receiver<WorkerMsg>,
@@ -1832,14 +1837,17 @@ impl FallbackApp {
                 return;
             }
             // The wizard takes over THIS window: grow it to the wizard
-            // size, unlock resizing, and recenter on the primary.
+            // size (the uninstall page's right-sized surface in
+            // uninstall mode), fix/unlock resizing accordingly, and
+            // recenter on the primary.
             self.stage = Stage::Configure;
+            let (size, min_size, resizable) = window_geometry(self.uninstall_mode);
             for command in [
-                egui::ViewportCommand::InnerSize(Vec2::new(800.0, 600.0)),
-                egui::ViewportCommand::MinInnerSize(Vec2::new(640.0, 560.0)),
-                egui::ViewportCommand::Resizable(true),
+                egui::ViewportCommand::InnerSize(Vec2::new(size[0], size[1])),
+                egui::ViewportCommand::MinInnerSize(Vec2::new(min_size[0], min_size[1])),
+                egui::ViewportCommand::Resizable(resizable),
                 egui::ViewportCommand::OuterPosition(crate::splash::center_on_primary(
-                    800.0, 600.0,
+                    size[0], size[1],
                 )),
             ] {
                 ctx.send_viewport_cmd(command);
@@ -1997,6 +2005,7 @@ impl FallbackApp {
             uninstall_mode,
             warn_missing_runtime,
             repairing: false,
+            uninstall_block_h: None,
             outcome: None,
             entry: None,
             receiver,
@@ -2685,6 +2694,18 @@ pub fn window_title(config: &ShunConfig, uninstall: bool) -> String {
     };
 }
 
+/// The window geometry a face run needs: `(size, min_size, resizable)`.
+/// The wizard gets its resizable 800×600 surface; the uninstall page —
+/// a third of the content — gets a right-sized fixed one (the same
+/// 560×380 the web face's uninstall lane builds with).
+fn window_geometry(uninstall: bool) -> ([f32; 2], [f32; 2], bool) {
+    if uninstall {
+        ([560.0, 380.0], [560.0, 380.0], false)
+    } else {
+        ([800.0, 600.0], [640.0, 560.0], true)
+    }
+}
+
 /// Opens a directory in the platform file manager.
 fn open_directory(path: &str) {
     #[cfg(windows)]
@@ -2735,11 +2756,16 @@ pub fn run(
     // Frameless like the hikari shell: the title bar below draws the
     // custom chrome (logo + caption + drag + close). This also keeps the
     // `--screenshot` capture aligned with the client area.
+    // The uninstall page carries a third of the wizard's content: give
+    // it a right-sized fixed surface (matching the web face's uninstall
+    // window) instead of the wizard's 800×600.
+    let (size, min_size, resizable) = window_geometry(uninstall);
     let options = eframe::NativeOptions {
         viewport: icon_viewport_builder(logo_kind, logo_bytes)
             .with_decorations(false)
-            .with_inner_size([800.0, 600.0])
-            .with_min_inner_size([640.0, 560.0]),
+            .with_inner_size(size)
+            .with_min_inner_size(min_size)
+            .with_resizable(resizable),
         ..Default::default()
     };
     let result = eframe::run_native(
@@ -2830,10 +2856,11 @@ pub(crate) fn run_gui(
                 app.debug_force_stage();
                 if !matches!(app.stage, Stage::Splash(_)) {
                     let ctx = cc.egui_ctx.clone();
+                    let (size, min_size, resizable) = window_geometry(app.uninstall_mode);
                     for command in [
-                        egui::ViewportCommand::InnerSize(Vec2::new(800.0, 600.0)),
-                        egui::ViewportCommand::MinInnerSize(Vec2::new(640.0, 560.0)),
-                        egui::ViewportCommand::Resizable(true),
+                        egui::ViewportCommand::InnerSize(Vec2::new(size[0], size[1])),
+                        egui::ViewportCommand::MinInnerSize(Vec2::new(min_size[0], min_size[1])),
+                        egui::ViewportCommand::Resizable(resizable),
                     ] {
                         ctx.send_viewport_cmd(command);
                     }
@@ -5063,10 +5090,30 @@ impl FallbackApp {
                         .color(theme.text_secondary),
                 );
                 ui.add_space(28.0);
-                // The action row, left-aligned at the column origin —
-                // the unified fixed-origin rule (the web row is
-                // flex-start now too). Content-sized ghost/solid plates.
+                // The action row, centered as a block (the web row is
+                // justify-center too): child-UI rows keep their
+                // full-width rect under a center-aligned parent, so the
+                // seat is a computed left inset over the same label
+                // metrics the plates below measure with.
+                let spacing = ui.spacing().item_spacing.x;
+                let plate_w = |ui: &egui::Ui, label: &str, size: f32| {
+                    ui.painter()
+                        .layout_no_wrap(
+                            label.to_owned(),
+                            egui::FontId::proportional(size),
+                            Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                        + 32.0
+                };
+                let row_w = plate_w(ui, texts.un_cancel.as_str(), 13.0)
+                    + plate_w(ui, with_product(&texts.un_repair).as_str(), 13.0)
+                    + plate_w(ui, with_product(&texts.uninstall).as_str(), 13.5)
+                    + spacing * 2.0;
+                let inset = ((ui.available_width() - row_w) / 2.0).max(0.0);
                 ui.horizontal(|ui| {
+                    ui.add_space(inset);
                     if ghost(ui, texts.un_cancel.as_str()) {
                         std::process::exit(0);
                     }
@@ -5546,6 +5593,35 @@ impl eframe::App for FallbackApp {
                 const PAD_T: f32 = 52.0;
                 const PAD_R: f32 = 48.0;
                 let outer = ui.max_rect();
+                // The standalone uninstaller page replaces the wizard
+                // panes entirely (one flow, every face): its content
+                // block rides the middle of the window — both axes —
+                // instead of parking at the wizard's fixed left origin
+                // (web-face parity). egui has no block-level align, so
+                // the vertical seat is measured: the first frame draws
+                // top-anchored and records the block height, every
+                // frame after offsets the block into the middle.
+                if self.uninstall_mode {
+                    let top_pad = self
+                        .uninstall_block_h
+                        .map_or(0.0, |h| ((outer.height() - h) / 2.0).max(0.0));
+                    let block = egui::UiBuilder::new()
+                        .max_rect(egui::Rect::from_min_max(
+                            pos2(outer.left(), outer.top() + top_pad),
+                            pos2(outer.right(), outer.bottom()),
+                        ))
+                        .layout(Layout::top_down(Align::Center));
+                    let drawn = ui.scope_builder(block, |ui| self.uninstall_view(ui));
+                    let height = drawn.response.rect.height();
+                    if self.uninstall_block_h != Some(height) {
+                        self.uninstall_block_h = Some(height);
+                        // The measured seat only exists from the next
+                        // frame on — ask for it instead of waiting for
+                        // input that may never come.
+                        ui.ctx().request_repaint();
+                    }
+                    return;
+                }
                 let content = egui::Rect::from_min_max(
                     pos2(outer.left() + PAD_L, outer.top() + PAD_T),
                     pos2(outer.right() - PAD_R, outer.bottom()),
@@ -5556,12 +5632,6 @@ impl eframe::App for FallbackApp {
                         .layout(Layout::top_down(Align::LEFT)),
                     |ui| {
                         ui.set_width(content.width());
-                        // The standalone uninstaller page replaces the
-                        // wizard panes entirely (one flow, every face).
-                        if self.uninstall_mode {
-                            self.uninstall_view(ui);
-                            return;
-                        }
                         if self.runtime_ask_pending {
                             self.runtime_ask_view(ui);
                         } else {
