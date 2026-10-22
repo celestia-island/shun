@@ -1,0 +1,71 @@
+/* The silent lane's passive progress window (index.html?window=passive):
+   the same token surface the wizard rides (theme.scss), a compact
+   centered column under the caption bar — logo, heading, the hikari
+   progress bar, the live step — with the failure variant holding the
+   error detail and a close button until dismissed. */
+
+.passive {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.passive-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  // The hikari caption bar is position:fixed — the pane's own top
+  // padding is the clearance (the wizard panes do the same with
+  // --hk-tb-height).
+  padding: calc(var(--hk-tb-height, 32px) + 6px) 40px 20px;
+  text-align: center;
+}
+
+.passive-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  margin-bottom: 14px;
+}
+
+.passive-heading {
+  margin: 0 0 16px;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: rgb(var(--color-text));
+}
+
+.passive-bar {
+  width: 100%;
+  max-width: 300px;
+}
+
+.passive-step {
+  margin: 12px 0 0;
+  min-height: 1.5em;
+  font-size: var(--text-sm);
+  color: var(--hi-color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.passive-failure {
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--hi-color-text-tertiary);
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+.passive-icon {
+  margin-bottom: 10px;
+}
+
+.passive-close {
+  margin-top: 16px;
+}

@@ -21,6 +21,9 @@ export default defineComponent({
     title: { type: String, default: "WoWSP" },
     subtitle: { type: String, default: "" },
     showMaximize: { type: Boolean, default: true },
+    /** Whether the minimize plate renders at all — a window that must
+     *  stay visible (the silent lane's passive mirror) passes false. */
+    showMinimize: { type: Boolean, default: true },
     /** Extra caption icon buttons rendered left of minimize — the
      *  theme toggle rides this (ids come back through `action`). */
     customActions: {
@@ -84,6 +87,7 @@ export default defineComponent({
           subtitle={props.subtitle}
           maximized={maximized.value}
           showMaximize={props.showMaximize}
+          showMinimize={props.showMinimize}
           customActions={props.customActions}
           onMinimize={() => win?.minimize().catch(() => {})}
           onClose={() => win?.close().catch(() => {})}

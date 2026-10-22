@@ -13,15 +13,17 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 /// Spawns the capture timer for the Tauri UI: waits `delay_ms` for the
-/// webview to settle, captures, saves, exits.
+/// webview to settle, captures, saves, exits. Whichever window this run
+/// opened — the wizard's `installer` or the silent lane's `passive`.
 pub fn schedule(app: AppHandle, path: PathBuf, delay_ms: u64) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         // tauri's HWND comes from the `windows` crate; windows-sys wants
         // the raw pointer.
         let hwnd = app
-            .get_webview_window("installer")
-            .and_then(|window| window.hwnd().ok())
+            .webview_windows()
+            .values()
+            .find_map(|window| window.hwnd().ok())
             .map(|hwnd| hwnd.0 as isize)
             .unwrap_or_default();
         run_capture(hwnd, &path);
