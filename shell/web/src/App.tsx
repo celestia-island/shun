@@ -15,6 +15,7 @@ import {
   HkScrollContainer,
   HkSelect,
   HkTimeline,
+  setLocale as setHikariLocale,
 } from "@celestia-island/hikari";
 import HkWallpaperBackdrop from "@celestia-island/hikari/components/HkWallpaperBackdrop";
 import {
@@ -187,6 +188,21 @@ export default defineComponent({
     // invoke (e.g. non-Tauri preview) keeps the system resolution.
     const locale = ref<InstallerLocale>(
       resolveSystemLocale(navigator.language),
+    );
+    // The hikari chrome follows the wizard's language: the title bar's
+    // caption tooltips (and any other preset-keyed hikari copy) resolve
+    // from the preset i18n context, so every locale this wizard shows —
+    // the system resolution, the saved-preference restore, the picker —
+    // pushes into hikari's setLocale. The wizard's locale ids are a
+    // strict subset of hikari's, so the value maps 1:1. Immediate: the
+    // system-resolved initial state must land before first paint too,
+    // not only the later switches.
+    watch(
+      locale,
+      (value) => {
+        void setHikariLocale(value);
+      },
+      { immediate: true },
     );
     const dir = ref("");
     // The hint under the path field: a semantic kind resolved to text at
