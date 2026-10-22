@@ -204,6 +204,36 @@ fn normalize_switches<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
         .collect()
 }
 
+/// Whether this launch should default to the uninstall flow because it
+/// is a bare (zero-argument) launch of the uninstaller copy. The
+/// uninstaller the installer drops beside the payload is this very
+/// binary renamed, and the ARP entry spells its intent out with
+/// `/uninstall` — only the manual double-click arrives with no
+/// arguments at all, leaving the exe's own name as the one signal of
+/// what the user asked for. Without this default such a launch renders
+/// the install wizard, which reads as offering to reinstall the app
+/// being removed. Any explicitly-argumented launch (the ARP spelling,
+/// a scripted `--silent`, `--dir`, …) keeps the flag-driven behavior.
+fn bare_launch_defaults_to_uninstall(exe: Option<&Path>, has_arguments: bool) -> bool {
+    !has_arguments
+        && exe
+            .and_then(Path::file_name)
+            .is_some_and(is_uninstaller_name)
+}
+
+/// Compares a file name against the uninstaller copy's name. The
+/// Windows filesystem is case-insensitive, so a differently-cased
+/// `UNINSTALL.EXE` (say, a restored backup) must match too.
+fn is_uninstaller_name(name: &std::ffi::OsStr) -> bool {
+    let uninstaller = shun::targets::install::UNINSTALLER_NAME;
+    if cfg!(windows) {
+        name.to_str()
+            .is_some_and(|name| name.eq_ignore_ascii_case(uninstaller))
+    } else {
+        name == std::ffi::OsStr::new(uninstaller)
+    }
+}
+
 /// The face this run renders.
 enum Face {
     /// The tauri2 webview GUI.
@@ -1350,6 +1380,17 @@ fn main() {
         std::iter::once("shun-installer".to_string())
             .chain(normalize_switches(std::env::args().skip(1))),
     );
+    // A manual double-click of the uninstaller copy carries no flag at
+    // all — default that bare launch to the uninstall flow the ARP
+    // entry requests explicitly (see bare_launch_defaults_to_uninstall).
+    if !cli.uninstall
+        && bare_launch_defaults_to_uninstall(
+            std::env::current_exe().ok().as_deref(),
+            std::env::args_os().nth(1).is_some(),
+        )
+    {
+        cli.uninstall = true;
+    }
     let config: ShunConfig =
         serde_json::from_str(SHUN_CONFIG_JSON).expect("embedded config decodes");
     let faces = faces_of(&config);
@@ -2565,6 +2606,40 @@ mod tests {
         let parsed = cli(&["/S", "/uninstall"]);
         assert!(parsed.silent);
         assert!(parsed.uninstall);
+    }
+
+    #[test]
+    fn bare_uninstaller_launch_defaults_to_uninstall() {
+        let root = if cfg!(windows) {
+            r"C:\Program Files\App"
+        } else {
+            "/opt/app"
+        };
+        let uninstaller = Path::new(root).join(shun::targets::install::UNINSTALLER_NAME);
+        // A bare launch of the uninstaller copy opens the uninstall
+        // face — the manual double-click carries no flag to ask for it.
+        assert!(bare_launch_defaults_to_uninstall(Some(&uninstaller), false));
+        // Any explicit argument keeps the flag-driven behavior: the ARP
+        // spelling sets the flag itself, and a scripted run of the same
+        // binary must not be hijacked into an uninstall by its name.
+        assert!(!bare_launch_defaults_to_uninstall(Some(&uninstaller), true));
+        // The setup artifact never carries the uninstaller's name.
+        let setup = Path::new(root).join("shun-setup.exe");
+        assert!(!bare_launch_defaults_to_uninstall(Some(&setup), false));
+        // No exe identity to read: keep the installer default.
+        assert!(!bare_launch_defaults_to_uninstall(None, false));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn uninstaller_name_match_ignores_windows_case() {
+        use std::ffi::OsStr;
+        assert!(is_uninstaller_name(OsStr::new("uninstall.exe")));
+        assert!(is_uninstaller_name(OsStr::new("UNINSTALL.EXE")));
+        assert!(is_uninstaller_name(OsStr::new("Uninstall.Exe")));
+        // Lookalikes must not match.
+        assert!(!is_uninstaller_name(OsStr::new("uninstaller.exe")));
+        assert!(!is_uninstaller_name(OsStr::new("uninstall.exe.bak")));
     }
 
     #[test]
