@@ -2348,10 +2348,18 @@ fn run_shell(
             // own in setup (the wizard's 800×600 surface here, the silent
             // lane's small passive window in run_passive_tauri), so one
             // embedded bundle serves both without a phantom first window.
+            // The uninstall page carries a third of the wizard's content
+            // — it gets its own right-sized surface instead of posing as
+            // an 800×600 wizard with a top-left sliver of content.
+            let (width, height) = if uninstall_mode {
+                (560.0, 380.0)
+            } else {
+                (800.0, 600.0)
+            };
             let window =
                 tauri::WebviewWindowBuilder::new(app, "installer", tauri::WebviewUrl::default())
                     .title(&native_title)
-                    .inner_size(800.0, 600.0)
+                    .inner_size(width, height)
                     .center()
                     .resizable(false)
                     .decorations(false)

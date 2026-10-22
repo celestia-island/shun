@@ -462,11 +462,24 @@ body {
 
 /* ── uninstall pane: standalone centered flow (no step rail) ──────── */
 
+// The pane owns the window under the title bar and centers its whole
+// content block — vertically AND horizontally, in every phase
+// (confirm, running, done, failed). The standalone page has no rail or
+// footer rhythm to honor: the wizard's fixed left origin parked a
+// third-of-the-content page into a top-left sliver (the `--center`
+// mechanism this pane was meant to ride died in the #46 reflow).
 .wizard-uninstall {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  // Symmetric insets: the wizard's 40/24 top/bottom bias is a
+  // left-anchored-page artifact that reads as off-center here.
+  padding: 40px 48px;
+
   .wizard-uninstall__actions {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: center;
     gap: 10px;
   }
 
