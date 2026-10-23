@@ -857,6 +857,38 @@ pub struct InstallConfig {
     /// level down (`root-dir-folder`, the product name by default).
     #[serde(default = "default_true")]
     pub forbid_drive_root: bool,
+
+    /// Refuse a fresh install into a non-empty directory. Default
+    /// `true`: delivering beside foreign files tangles the two
+    /// products — the update's atomic swap moves the WHOLE directory
+    /// aside and an uninstall sweep walks it, so cohabiting installs
+    /// endanger their neighbors. An upgrade (the on-disk manifest or
+    /// main executable present) always passes: its location decision
+    /// was made when it landed, and re-vetoing it would strand silent
+    /// updates. The [`Self::non_empty_allowlist`] junk names are
+    /// exempt, and `false` restores the pre-0.6.30 anything-goes lane.
+    #[serde(default = "default_true")]
+    pub forbid_non_empty: bool,
+
+    /// File names the non-empty refusal ignores (OS folder junk a user
+    /// cannot reasonably prevent): Windows Explorer's `desktop.ini` /
+    /// `Thumbs.db` and macOS `.DS_Store` by default. Names compare
+    /// case-insensitively; a directory holding nothing beyond them
+    /// counts as empty.
+    #[serde(default = "non_empty_allowlist_default")]
+    pub non_empty_allowlist: Vec<String>,
+
+    /// Declarative install-location rules — the data-driven sibling of
+    /// the `check-dir` script hook (see
+    /// docs/en/design/scripting.md): a rule lists trigger file names
+    /// and an action, and the shared directory validation enforces it
+    /// with the rule's own localized message, no payload script needed.
+    /// `block` rules veto FRESH installs only; `relocate` rules also
+    /// flag an existing install for a guided relocation (the silent
+    /// lane hands over to the wizard, which installs elsewhere and
+    /// sweeps only this product's files out of the old directory).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dir_rules: Vec<DirRuleConfig>,
 }
 
 impl Default for InstallConfig {
@@ -877,8 +909,81 @@ impl Default for InstallConfig {
             icon: None,
             root_dir_folder: None,
             forbid_drive_root: true,
+            forbid_non_empty: true,
+            non_empty_allowlist: non_empty_allowlist_default(),
+            dir_rules: Vec::new(),
         }
     }
+}
+
+/// One declarative install-location rule ([`InstallConfig::dir_rules`]):
+/// what marks a target directory as off-limits for this product, what
+/// to do about it, and the user-facing reason shown when it fires.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct DirRuleConfig {
+    /// File names whose presence as direct children of the target
+    /// directory triggers the rule (the same flat-stub convention the
+    /// WoWSP-style `check-dir` hooks use: `WorldOfWarships.exe`, say).
+    pub files: Vec<String>,
+
+    /// What a match does. See [`DirRuleAction`].
+    #[serde(default)]
+    pub action: DirRuleAction,
+
+    /// The English reason shown to the user verbatim when the rule
+    /// fires (the headless lane's fallback for every locale).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+
+    /// Per-locale reason overrides keyed by the wizard locale
+    /// (`zh-Hans`, `ru`, …); a matching entry wins over `message` —
+    /// the declarative replacement for a hook script's own
+    /// `SHUN_LANGUAGE` branching.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub message_locales: BTreeMap<String, String>,
+}
+
+impl DirRuleConfig {
+    /// The rule's user-facing reason for a run under `language`: the
+    /// exact wizard-locale entry wins, else the bare `message`, else
+    /// `None` (callers substitute their generic line).
+    pub fn message_for(&self, language: Option<&str>) -> Option<String> {
+        language
+            .and_then(|locale| self.message_locales.get(locale))
+            .cloned()
+            .or_else(|| self.message.clone())
+    }
+
+    /// Whether any trigger file sits directly inside `dir`.
+    pub fn matches(&self, dir: &std::path::Path) -> bool {
+        self.files.iter().any(|name| {
+            let name = name.trim();
+            !name.is_empty() && dir.join(name).is_file()
+        })
+    }
+}
+
+/// What a matching [`DirRuleConfig`] does to the location.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum DirRuleAction {
+    /// Veto the location for FRESH installs only. An install that
+    /// already lives there keeps updating in place — the never-strand
+    /// rule: a location disliked today must not strand the silent
+    /// updates of an install that landed there yesterday.
+    #[default]
+    Block,
+    /// The location is dangerous to SHARE with this product (the
+    /// update swap would move the whole directory aside and the
+    /// uninstall sweep would walk it). Fresh picks are vetoed like
+    /// `block`, and an existing install there is flagged for
+    /// relocation instead of updating in place: the silent lane hands
+    /// over to the interactive wizard (`--relocate-from`), which
+    /// installs elsewhere and then sweeps only this product's own
+    /// manifest-listed files out of the old directory — foreign files
+    /// stay untouched.
+    Relocate,
 }
 
 /// Who decides whether the desktop shortcut is created.
@@ -948,6 +1053,16 @@ fn default_true() -> bool {
 
 fn start_menu_shortcut_default() -> DesktopShortcutPolicy {
     DesktopShortcutPolicy::Always
+}
+
+/// The default [`InstallConfig::non_empty_allowlist`]: the OS folder
+/// junk Windows Explorer and macOS Finder drop into folders a user
+/// opens on the way to picking an install location.
+fn non_empty_allowlist_default() -> Vec<String> {
+    ["desktop.ini", "Thumbs.db", ".DS_Store"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
 }
 
 /// Runtime shell UI knobs.
@@ -3354,6 +3469,86 @@ root-dir-folder = "Wowsp CE"
         assert!(
             matches!(&config.targets[0], TargetConfig::Install(i) if i.root_dir_folder.is_none()),
             "the knob stays optional"
+        );
+    }
+
+    #[test]
+    fn dir_rules_parse_with_their_actions_and_locale_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "rules-demo"
+version = "0.1.0"
+
+[package.metadata.shun.install]
+non-empty-allowlist = ["desktop.ini", "readme.md"]
+
+[[package.metadata.shun.install.dir-rules]]
+files = ["WorldOfWarships.exe", "Korabli.exe"]
+action = "relocate"
+message = "This looks like the game folder."
+[package.metadata.shun.install.dir-rules.message-locales]
+zh-Hans = "这是游戏目录。"
+
+[[package.metadata.shun.install.dir-rules]]
+files = ["rival-tool.dat"]
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        let TargetConfig::Install(install) = &config.targets[0] else {
+            panic!("install target expected")
+        };
+
+        // The defaults: the non-empty guard is on with its junk list,
+        // and a rule without an action blocks.
+        assert!(install.forbid_non_empty);
+        assert_eq!(
+            install.non_empty_allowlist,
+            vec!["desktop.ini".to_string(), "readme.md".to_string()]
+        );
+        assert_eq!(install.dir_rules.len(), 2);
+
+        let relocate = &install.dir_rules[0];
+        assert_eq!(relocate.action, DirRuleAction::Relocate);
+        assert_eq!(relocate.files.len(), 2);
+        // The exact wizard locale wins, the bare message follows, and
+        // an unknown locale never fabricates a reason.
+        assert_eq!(
+            relocate.message_for(Some("zh-Hans")).as_deref(),
+            Some("这是游戏目录。")
+        );
+        assert_eq!(
+            relocate.message_for(Some("ru")).as_deref(),
+            Some("This looks like the game folder.")
+        );
+        assert_eq!(
+            relocate.message_for(None).as_deref(),
+            Some("This looks like the game folder.")
+        );
+
+        let bare = &install.dir_rules[1];
+        assert_eq!(bare.action, DirRuleAction::Block);
+        assert_eq!(bare.message_for(Some("zh-Hans")), None);
+
+        // An absent table leaves the default ruleset armed and empty.
+        let dir2 = tempfile::tempdir().unwrap();
+        let plain = dir2.path().join("Cargo.toml");
+        std::fs::write(
+            &plain,
+            "[package]\nname = \"plain-app\"\nversion = \"1.2.3\"\n",
+        )
+        .unwrap();
+        let config = ShunConfig::from_cargo_manifest(&plain).unwrap();
+        assert!(
+            matches!(&config.targets[0], TargetConfig::Install(i)
+                if i.dir_rules.is_empty() && i.forbid_non_empty
+                    && i.non_empty_allowlist.contains(&"Thumbs.db".to_string())),
+            "the built-in defaults stand in when no rules are declared"
         );
     }
 

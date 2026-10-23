@@ -277,6 +277,23 @@ impl WizardCore {
         self.state.candidates = candidates;
     }
 
+    /// The directory a relocation pass should move an existing install
+    /// out of: the first location candidate that already holds an
+    /// install of this product AND matches a `relocate`-action
+    /// `dir-rules` entry. Faces consult this once at startup — the
+    /// manual-rerun path, where the wizard's leading candidate IS the
+    /// flagged install (the registered location leads the chain) — and
+    /// seed the wizard straight into the location step with the
+    /// relocation notice. `None` when no candidate needs relocating;
+    /// the updater-driven path passes `--relocate-from` explicitly
+    /// instead.
+    pub fn relocation_candidate(&self) -> Option<String> {
+        location_defaults_for(&self.config)
+            .into_iter()
+            .find(|candidate| relocation_required(&self.config, &candidate.path, None).is_some())
+            .map(|candidate| candidate.path)
+    }
+
     /// Sets the shown path and probes its writability (the same test
     /// `run_install` gates on).
     pub fn set_dir(&mut self, dir: impl Into<String>) {
@@ -457,6 +474,13 @@ pub struct InstallRequest {
     /// gate — file `false`; the headless lane is the only `true` source
     /// after the UAC gate.
     pub machine: bool,
+    /// The previous install directory a relocation leaves behind (the
+    /// `--relocate-from` handover): after the flow lands in `dir`, only
+    /// this product's manifest-listed files are swept out of that
+    /// directory — foreign files stay untouched, and the directory
+    /// itself goes only once empty. `None` for plain installs and
+    /// in-place upgrades.
+    pub relocate_from: Option<String>,
 }
 
 /// Why an install directory cannot take the payload. The shared guard
@@ -475,10 +499,23 @@ pub enum DirCheckFault {
     /// The directory is a bare filesystem root and the manifest did not
     /// opt out of the root guard (`forbid-drive-root`, default on).
     DriveRoot,
+    /// The directory holds foreign files and the manifest did not opt
+    /// out of the non-empty guard (`forbid-non-empty`, default on) —
+    /// fresh installs refuse to tangle with a neighbor the update swap
+    /// and uninstall sweep would endanger.
+    NonEmpty,
     /// A `check-dir` script hook vetoed the location; the message is
     /// the script's own (it localizes via `SHUN_LANGUAGE`).
     Script {
         /// The veto reason, shown to the user verbatim.
+        message: String,
+    },
+    /// A declarative `dir-rules` entry matched the location (fresh
+    /// picks, or an existing install flagged for relocation); the
+    /// message is the rule's own (localized through its
+    /// `message-locales`).
+    Rule {
+        /// The reason, shown to the user verbatim.
         message: String,
     },
 }
@@ -496,21 +533,32 @@ impl DirCheckFault {
                  folder under it"
                     .into()
             }
+            DirCheckFault::NonEmpty => {
+                "the target folder is not empty — pick an empty folder (or clean it) so \
+                 nothing beside the install gets swept away later"
+                    .into()
+            }
             DirCheckFault::Script { message } => message.clone(),
+            DirCheckFault::Rule { message } => message.clone(),
         }
     }
 }
 
 /// Runs the install-directory guards every face and the headless lane
-/// share: the empty gate, the drive-root refusal (default on) and the
-/// manifest's `check-dir` script hooks — the latter two only for a
-/// FRESH install. A directory that already holds an install of this
-/// product (the on-disk manifest or the main executable) is an
-/// upgrade: its location decision was made when that install landed,
-/// and vetoing it now would strand silent updates (an updatable
-/// install in a vetoed location must stay updatable). The writability
-/// gate stays unconditional — an upgrade into an unwritable location
-/// must fail loudly, never relocate.
+/// share: the empty gate, the drive-root refusal (default on), the
+/// non-empty refusal (default on), the declarative `dir-rules` and the
+/// manifest's `check-dir` script hooks. The fresh-install guards — root,
+/// non-empty, `block` rules, hooks — stand down for an upgrade: a
+/// directory that already holds an install of this product (the on-disk
+/// manifest or the main executable) had its location decision made when
+/// it landed, and vetoing it now would strand silent updates (an
+/// updatable install in a vetoed location must stay updatable). The one
+/// exception is a `relocate` rule matching an existing install: the
+/// location is dangerous to SHARE (the update swap moves the whole
+/// directory aside), so the guard faults it and the silent lane hands
+/// over to the wizard's relocation pass instead of updating in place.
+/// The writability gate stays unconditional — an upgrade into an
+/// unwritable location must fail loudly, never relocate.
 ///
 /// Returns the first fault, or `None` when the location is clear. The
 /// `portable` flag and `language` reach the check-dir hooks as the
@@ -547,10 +595,107 @@ pub fn check_install_dir(
         return Some(DirCheckFault::NotWritable);
     }
     if upgrading {
+        // Only a `relocate` rule can fault an upgrade — a `block` rule
+        // must never strand the silent updates of an install that
+        // landed in its location before the rule existed.
+        return relocate_rule_message(config, path, language)
+            .map(|message| DirCheckFault::Rule { message });
+    }
+    // A fresh pick answers to every rule action — a `relocate` rule
+    // vetoes taking the location anew exactly like a `block` one.
+    if let Some(rule) = install
+        .iter()
+        .flat_map(|i| i.dir_rules.iter())
+        .find(|r| r.matches(path))
+    {
+        return Some(DirCheckFault::Rule {
+            message: rule
+                .message_for(language)
+                .unwrap_or_else(|| GENERIC_RULE_MESSAGE.into()),
+        });
+    }
+    // The most specific veto wins: a script hook's own reason beats
+    // the generic non-empty refusal below it.
+    if let Some(message) = run_check_dir_hooks(config, payload, &effective, language, portable) {
+        return Some(DirCheckFault::Script { message });
+    }
+    if install.is_none_or(|i| i.forbid_non_empty) && dir_has_content_beyond(path, install) {
+        return Some(DirCheckFault::NonEmpty);
+    }
+    None
+}
+
+/// The fallback reason when a `dir-rules` entry declares no message of
+/// its own (English, like every lib fallback).
+const GENERIC_RULE_MESSAGE: &str =
+    "a manifest install-location rule rejects this folder — pick another location";
+
+/// Whether an existing install of this product sits in a directory a
+/// `relocate`-action `dir-rules` entry flags. The silent lane asks this
+/// before updating in place (a flagged location would endanger the
+/// foreign files sharing it — the update swap moves the WHOLE directory
+/// aside) and hands over to the wizard's relocation pass instead.
+/// Returns the rule's reason for the handover line. `raw_dir` follows
+/// the same padding rules as [`check_install_dir`].
+pub fn relocation_required(
+    config: &ShunConfig,
+    raw_dir: &str,
+    language: Option<&str>,
+) -> Option<String> {
+    let dir = raw_dir.trim().trim_end_matches('\\').to_string();
+    if dir.is_empty() {
         return None;
     }
-    run_check_dir_hooks(config, payload, &effective, language, portable)
-        .map(|message| DirCheckFault::Script { message })
+    let install = install_target_of(config);
+    let forbid_root = install.is_none_or(|i| i.forbid_drive_root);
+    let effective = if forbid_root {
+        dir
+    } else {
+        pad_root_dir(config, &dir)
+    };
+    let path = Path::new(&effective);
+    let upgrading =
+        read_installed_manifest(path).is_some() || path.join(config_main_exe(config)).is_file();
+    if !upgrading {
+        return None;
+    }
+    relocate_rule_message(config, path, language)
+}
+
+/// The first `relocate`-action rule matching `path`, as its localized
+/// reason — the relocation pass shared by the upgrade lane of
+/// [`check_install_dir`] and [`relocation_required`].
+fn relocate_rule_message(
+    config: &ShunConfig,
+    path: &Path,
+    language: Option<&str>,
+) -> Option<String> {
+    install_target_of(config)?
+        .dir_rules
+        .iter()
+        .filter(|rule| rule.action == crate::config::DirRuleAction::Relocate)
+        .find(|rule| rule.matches(path))
+        .map(|rule| {
+            rule.message_for(language)
+                .unwrap_or_else(|| GENERIC_RULE_MESSAGE.into())
+        })
+}
+
+/// Whether `path` holds anything beyond the manifest's
+/// `non-empty-allowlist` junk names (compared case-insensitively). A
+/// missing directory counts as empty — the flow creates it.
+fn dir_has_content_beyond(path: &Path, install: Option<&crate::config::InstallConfig>) -> bool {
+    let Ok(read_dir) = std::fs::read_dir(path) else {
+        return false;
+    };
+    let allowlist = install
+        .map(|i| i.non_empty_allowlist.as_slice())
+        .unwrap_or_default();
+    read_dir.flatten().any(|entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy().to_lowercase();
+        !allowlist.iter().any(|junk| junk.to_lowercase() == name)
+    })
 }
 
 /// Runs the manifest's `check-dir` hooks (the payload-embedded
@@ -706,7 +851,71 @@ pub fn run_install(
         &|path| std::fs::read(install_dir.join(path)).ok(),
     )
     .map_err(|e| e.to_string())?;
+
+    // A relocation's final step: sweep this product's own files out of
+    // the abandoned directory. Only the old manifest's entries (plus
+    // the manifest, marker and copied uninstaller) go — foreign files
+    // sharing that directory stay untouched, and the directory itself
+    // is removed only once empty. The new install is already complete,
+    // so a leftover that refuses to delete (a locked old executable,
+    // say) is reported, never fatal.
+    if let Some(old) = request
+        .relocate_from
+        .as_deref()
+        .map(str::trim)
+        .filter(|old| !old.is_empty())
+    {
+        let old_path = PathBuf::from(old);
+        if !same_location(&old_path, &install_dir) {
+            if old_path.join(&main_exe).is_file() {
+                on_event(&FlowEvent::Progress {
+                    phase: FlowPhase::Prepare,
+                    step: format!("Stopping the previous {main_exe}"),
+                    percent: None,
+                });
+                stop_running_app(&old_path, &main_exe);
+            }
+            let marker = ctx.portable_marker.clone();
+            let step = match crate::targets::install::relocate_cleanup(&old_path, &marker) {
+                Ok(removed) => {
+                    format!("Removed {removed} file(s) from the previous location")
+                }
+                Err(e) => format!("Could not fully clean the previous location: {e}"),
+            };
+            on_event(&FlowEvent::Progress {
+                phase: FlowPhase::Register,
+                step,
+                percent: None,
+            });
+        }
+    }
     Ok(())
+}
+
+/// Whether two paths address the same location: a case-insensitive
+/// separator-normalized textual compare first (Windows paths, the
+/// common `--relocate-from` handover form), then a canonicalized
+/// compare when both sides exist. A relocation whose target IS its
+/// origin ran as a plain in-place upgrade — there is nothing to clean.
+fn same_location(a: &Path, b: &Path) -> bool {
+    let normalize = |path: &Path| -> String {
+        let mut text = path.to_string_lossy().replace('/', "\\");
+        while text.ends_with('\\') {
+            text.pop();
+        }
+        if cfg!(windows) {
+            text.to_lowercase()
+        } else {
+            text
+        }
+    };
+    if normalize(a) == normalize(b) {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// Drives the uninstall for the install dir this process sits in (the
@@ -1727,5 +1936,184 @@ end
         }
         assert_eq!(pad_root_dir(&config, root), padded);
         assert_eq!(pad_root_dir(&config, r"D:\Games"), r"D:\Games");
+    }
+
+    /// A fresh install refuses a non-empty target (the delivery must
+    /// never tangle with foreign files), the OS junk allowlist softens
+    /// it, and an existing install always passes — the never-strand
+    /// rule the fresh guards live under.
+    #[test]
+    fn non_empty_guard_refuses_foreign_content_but_not_junk_or_upgrades() {
+        let _guard = guard_env_lock();
+        let (config, payload) = guard_config("noop", true);
+
+        // A foreign file refuses the fresh install…
+        let foreign = tempfile::tempdir().unwrap();
+        std::fs::write(foreign.path().join("someone-elses.dat"), b"x").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &foreign.path().to_string_lossy(),
+                None,
+                false
+            ),
+            Some(DirCheckFault::NonEmpty)
+        );
+
+        // …the default allowlist's OS junk does not…
+        let junk = tempfile::tempdir().unwrap();
+        std::fs::write(junk.path().join("desktop.ini"), b"[.ShellClassInfo]").unwrap();
+        std::fs::write(junk.path().join("Thumbs.db"), b"x").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &junk.path().to_string_lossy(),
+                None,
+                false
+            ),
+            None
+        );
+
+        // …and neither does an existing install, however crowded the
+        // directory (its location decision was made when it landed).
+        let installed = tempfile::tempdir().unwrap();
+        std::fs::write(installed.path().join("Wowsp.exe"), b"MZ").unwrap();
+        std::fs::write(installed.path().join("someone-elses.dat"), b"x").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &installed.path().to_string_lossy(),
+                None,
+                false
+            ),
+            None
+        );
+
+        // The opt-out restores the pre-0.6.30 anything-goes lane.
+        let (mut relaxed, payload) = guard_config("noop", true);
+        if let Some(crate::config::TargetConfig::Install(install)) = relaxed.targets.first_mut() {
+            install.forbid_non_empty = false;
+        }
+        assert_eq!(
+            check_install_dir(
+                &relaxed,
+                &payload,
+                &foreign.path().to_string_lossy(),
+                None,
+                false
+            ),
+            None
+        );
+    }
+
+    /// The declarative rules: a `block` rule vetoes fresh picks only,
+    /// a `relocate` rule also flags an existing install (the silent
+    /// lane then hands over to the wizard), and the rule's own
+    /// localized message rides the fault.
+    #[test]
+    fn dir_rules_block_fresh_picks_and_relocate_flags_existing_installs() {
+        let _guard = guard_env_lock();
+        let (mut config, payload) = guard_config("noop", true);
+        if let Some(crate::config::TargetConfig::Install(install)) = config.targets.first_mut() {
+            install.dir_rules = vec![
+                crate::config::DirRuleConfig {
+                    files: vec!["WorldOfWarships.exe".into()],
+                    action: crate::config::DirRuleAction::Relocate,
+                    message: Some("the game folder".into()),
+                    message_locales: [("zh-Hans".to_string(), "这是游戏目录".to_string())]
+                        .into_iter()
+                        .collect(),
+                },
+                crate::config::DirRuleConfig {
+                    files: vec!["rival-tool.dat".into()],
+                    action: crate::config::DirRuleAction::Block,
+                    message: Some("a rival lives here".into()),
+                    message_locales: Default::default(),
+                },
+            ];
+        }
+
+        // A fresh pick into the game folder is vetoed by the FIRST
+        // matching rule, with the wizard-locale message.
+        let game = tempfile::tempdir().unwrap();
+        std::fs::write(game.path().join("WorldOfWarships.exe"), b"MZ").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &game.path().to_string_lossy(),
+                Some("zh-Hans"),
+                false
+            ),
+            Some(DirCheckFault::Rule {
+                message: "这是游戏目录".into()
+            })
+        );
+
+        // A `block` rule vetoes its fresh pick with its own message…
+        let rival = tempfile::tempdir().unwrap();
+        std::fs::write(rival.path().join("rival-tool.dat"), b"x").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &rival.path().to_string_lossy(),
+                None,
+                false
+            ),
+            Some(DirCheckFault::Rule {
+                message: "a rival lives here".into()
+            })
+        );
+
+        // …never an existing install: a location disliked today must
+        // not strand the silent updates of an install that landed
+        // there yesterday.
+        let rival_installed = tempfile::tempdir().unwrap();
+        std::fs::write(rival_installed.path().join("Wowsp.exe"), b"MZ").unwrap();
+        std::fs::write(rival_installed.path().join("rival-tool.dat"), b"x").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &rival_installed.path().to_string_lossy(),
+                None,
+                false
+            ),
+            None
+        );
+
+        // An existing install in the GAME folder is flagged for
+        // relocation — the one fresh-guard exception — through both
+        // the guard and the silent lane's relocation_required probe.
+        let legacy = tempfile::tempdir().unwrap();
+        std::fs::write(legacy.path().join("Wowsp.exe"), b"MZ").unwrap();
+        std::fs::write(legacy.path().join("WorldOfWarships.exe"), b"MZ").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &legacy.path().to_string_lossy(),
+                None,
+                false
+            ),
+            Some(DirCheckFault::Rule {
+                message: "the game folder".into()
+            })
+        );
+        assert_eq!(
+            relocation_required(&config, &legacy.path().to_string_lossy(), Some("zh-Hans")),
+            Some("这是游戏目录".to_string())
+        );
+
+        // A location with neither our install nor a rule stays plain —
+        // and relocation_required never fires where no install lives.
+        assert_eq!(
+            relocation_required(&config, &game.path().to_string_lossy(), None),
+            None
+        );
     }
 }
