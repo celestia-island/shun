@@ -446,7 +446,6 @@ impl eframe::App for PassiveApp {
         while let Ok(msg) = self.receiver.try_recv() {
             self.fold(msg);
         }
-<<<<<<< HEAD
         // The solar clock: the same five-minute re-check the wizard's
         // egui face runs — a long extraction crossing dusk flips the
         // mirror with it (a manifest pin stands the clock down).
@@ -455,7 +454,7 @@ impl eframe::App for PassiveApp {
         {
             self.solar_tick_at = Instant::now();
             self.theme = fallback::resolve_theme(&self.config);
-=======
+        }
         // A failed run grows its window once — the error landing needs
         // the room (see PASSIVE_FAIL_W); the compact mirror stays for
         // the running and success phases.
@@ -465,7 +464,6 @@ impl eframe::App for PassiveApp {
                 PASSIVE_FAIL_W,
                 PASSIVE_FAIL_H,
             )));
->>>>>>> 82994ff (✨ Render installer failures on the standard hikari error landing.)
         }
 
         let theme = self.theme;

@@ -1,9 +1,11 @@
-<<<<<<< HEAD
-import { computed, defineComponent, onBeforeUnmount, onMounted, ref } from "vue";
-import { CheckCircle2, XCircle } from "lucide-vue-next";
-import { HkButton, HkProgressBar } from "@celestia-island/hikari";
-=======
-import { computed, defineComponent, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  defineComponent,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import { CheckCircle2 } from "lucide-vue-next";
 import {
   HkButton,
@@ -12,7 +14,6 @@ import {
   HkProgressBar,
   setLocale,
 } from "@celestia-island/hikari";
->>>>>>> 82994ff (✨ Render installer failures on the standard hikari error landing.)
 
 import AppTitleBar from "./components/AppTitleBar";
 import { solarWantsDark, startSolarClock } from "./solar";

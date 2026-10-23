@@ -1711,13 +1711,21 @@ end
     /// leaves the typed path alone so the refusal is visible.
     #[test]
     fn pad_root_dir_follows_the_forbid_knob() {
+        // A bare root textually identical on every CI leg (the repo's
+        // other root tests use the same cfg split — `D:\` is a plain
+        // relative path on the POSIX side).
+        let (root, padded) = if cfg!(windows) {
+            (r"C:\", r"C:\Wowsp")
+        } else {
+            ("/", "/Wowsp")
+        };
         let mut config = location_config(None);
-        assert_eq!(pad_root_dir(&config, r"D:\"), r"D:\");
+        assert_eq!(pad_root_dir(&config, root), root);
         assert_eq!(pad_root_dir(&config, r"D:\Games"), r"D:\Games");
         if let Some(crate::config::TargetConfig::Install(install)) = config.targets.first_mut() {
             install.forbid_drive_root = false;
         }
-        assert_eq!(pad_root_dir(&config, r"D:\"), r"D:\Wowsp");
+        assert_eq!(pad_root_dir(&config, root), padded);
         assert_eq!(pad_root_dir(&config, r"D:\Games"), r"D:\Games");
     }
 }

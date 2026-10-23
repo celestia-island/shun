@@ -2580,9 +2580,8 @@ fn run_passive_tauri(
         // run_return comes back here on close (the done linger, the
         // caption X, the failure pane's button alike) and the caller
         // owns the process exit.
-        .and_then(|app| {
+        .map(|app| {
             app.run_return(|_handle, _event| {});
-            Ok(())
         });
     // The loop is down (the window closed — on its own after the done
     // linger, by the user, or on the failure pane's close button). The
