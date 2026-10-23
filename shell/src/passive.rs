@@ -231,6 +231,10 @@ struct PassiveApp {
     /// One-shot: the failure window has already been enlarged (the
     /// error landing needs the room the compact mirror lacks).
     failed_enlarged: bool,
+    /// When the enlarge landed — repaints are hammered for a short
+    /// window so the render surface catches up before the user sees
+    /// blank space.
+    enlarge_drive: Option<Instant>,
     /// The egui face's resolved theme: the manifest's `shell.theme`
     /// layers over the sun (`fallback::resolve_theme` — the same
     /// resolution the wizard's egui face ships).
@@ -269,7 +273,7 @@ const PASSIVE_H: f32 = 240.0;
 /// seat), so a failed run grows its window once — the running and
 /// success mirrors keep the compact footprint.
 const PASSIVE_FAIL_W: f32 = 640.0;
-const PASSIVE_FAIL_H: f32 = 460.0;
+const PASSIVE_FAIL_H: f32 = 400.0;
 
 impl PassiveApp {
     fn fold(&mut self, msg: LaneEvent) {
@@ -461,8 +465,13 @@ impl eframe::App for PassiveApp {
         // pixels: the logical ViewportCommand::InnerSize grows the
         // window without growing the render surface on DPI-scaled
         // displays, leaving the enlarged region transparent (dpi_fix).
+        // The physical resize lands synchronously but the surface and
+        // egui's layout catch up over the next few presents — hammer
+        // repaints for a short window so the blank stretch never
+        // becomes visible.
         if matches!(self.phase, Phase::Failed) && !self.failed_enlarged {
             self.failed_enlarged = true;
+            self.enlarge_drive = Some(Instant::now());
             #[cfg(windows)]
             crate::dpi_fix::resize_centered(
                 frame,
@@ -475,6 +484,14 @@ impl eframe::App for PassiveApp {
                 PASSIVE_FAIL_W,
                 PASSIVE_FAIL_H,
             )));
+        }
+        // The post-enlarge repaint hammer (see the resize above).
+        if let Some(started) = self.enlarge_drive {
+            if started.elapsed() < Duration::from_millis(600) {
+                ctx.request_repaint_after(Duration::from_millis(16));
+            } else {
+                self.enlarge_drive = None;
+            }
         }
 
         let theme = self.theme;
@@ -534,13 +551,12 @@ impl eframe::App for PassiveApp {
                     if let Phase::Failed = self.phase {
                         ui.add_space(10.0);
                         // The hikari error landing's details pane, egui-side:
-                        // the raw reason in a bordered standing frame —
-                        // wrapped, scrolled inside a fixed height, never
-                        // pushing the window around (the compact mirror's
-                        // single-line label truncated exactly here).
+                        // the raw reason in a bordered frame that hugs its
+                        // content up to a cap — a two-line reason never
+                        // floats in a tall empty box, a long one scrolls.
                         let detail = self.failure.clone().unwrap_or_default();
                         let frame_width = (ui.available_width() - 32.0).max(220.0);
-                        ui.allocate_ui(egui::vec2(frame_width, 168.0), |ui| {
+                        ui.allocate_ui(egui::vec2(frame_width, 0.0), |ui| {
                             egui::Frame::default()
                                 .fill(theme.surface)
                                 .stroke(Stroke::new(1.0f32, theme.border))
@@ -548,14 +564,17 @@ impl eframe::App for PassiveApp {
                                 .inner_margin(egui::Margin::same(10))
                                 .show(ui, |ui| {
                                     ui.set_min_width(ui.available_width());
-                                    egui::ScrollArea::vertical().show(ui, |ui| {
-                                        ui.set_min_width(ui.available_width());
-                                        ui.label(
-                                            RichText::new(detail.clone())
-                                                .size(11.5)
-                                                .color(theme.text_tertiary),
-                                        );
-                                    });
+                                    egui::ScrollArea::vertical()
+                                        .max_height(168.0)
+                                        .auto_shrink([false, true])
+                                        .show(ui, |ui| {
+                                            ui.set_min_width(ui.available_width());
+                                            ui.label(
+                                                RichText::new(detail.clone())
+                                                    .size(11.5)
+                                                    .color(theme.text_tertiary),
+                                            );
+                                        });
                                 });
                         });
                         ui.add_space(14.0);
@@ -731,6 +750,7 @@ fn run_silent_egui(
                 failure: None,
                 close_at: None,
                 failed_enlarged: false,
+                enlarge_drive: None,
                 theme,
                 config: config.clone(),
                 solar_pinned,
