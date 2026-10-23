@@ -39,7 +39,10 @@ shun 內建介面將以 duckscript 命令形式註冊：`shun_progress`、
 主程式即為升級——再否決會把靜默更新晾在半空）。鉤子把
 `SHUN_DIR_BLOCKED` 設為人類可讀的原因即可否決擬議位置；精靈原樣
 顯示該值，指令碼因此可透過 `SHUN_LANGUAGE` 做在地化。鉤子出錯時，
-檢查連同其錯誤文字一起失敗。`SHUN_INSTALL_DIR` 在該階段以正斜線
+檢查連同其錯誤文字一起失敗。宣告式 `[[…install.dir-rules]]` 表
+（見 configuration.md 的「安裝位置規則」一節）與 check-dir 階段
+並行執行、先於鉤子，自帶在地化文案；鉤子仍是規則表無法表達的
+邏輯的逃生口。`SHUN_INSTALL_DIR` 在該階段以正斜線
 形式到達——用 `get_env` 讀回（duckscript 的 `${…}` 展開的是指令碼
 變數而非處理程序環境），子路徑以 `/` 串接。
 

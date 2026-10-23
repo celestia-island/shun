@@ -48,7 +48,12 @@ en disco del producto o su ejecutable principal es una actualización
 Un gancho veta la ubicación propuesta asignando `SHUN_DIR_BLOCKED` a
 un motivo legible; el asistente muestra el valor tal cual, así que el
 script lo localiza mediante `SHUN_LANGUAGE`. Un gancho que da error
-tumba la comprobación con su texto de error. `SHUN_INSTALL_DIR` llega
+tumba la comprobación con su texto de error. La tabla declarativa
+`[[…install.dir-rules]]` (véase la sección Reglas de ubicación de
+instalación en configuration.md) corre junto a la fase check-dir,
+antes de los ganchos, con su propio mensaje localizado; los ganchos
+siguen siendo la válvula de escape para la lógica que una tabla de
+reglas no puede expresar. `SHUN_INSTALL_DIR` llega
 en forma de barra diagonal en esta fase — recupérala con `get_env`
 (el `${…}` de duckscript interpola variables de script, no el entorno
 del proceso) y une las rutas hijas con `/`.

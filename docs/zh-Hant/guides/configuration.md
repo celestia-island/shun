@@ -29,6 +29,14 @@ scope = "ask"                              # user（預設）| machine | ask
 deep-links = ["shundemo"]                  # 應用程式持有的 URL scheme（myapp://…）
 root-dir-folder = "ShunDemo"              # 僅舊墊層通道生效（forbid-drive-root = false）：裸磁碟根目錄下墊的資料夾（D:\ → D:\ShunDemo；預設取產品名）
 # forbid-drive-root = true                 # 直接拒絕裸磁碟根目錄目標（預設行為——見「根磁碟保護」）；false 恢復上面的墊層通道
+# forbid-non-empty = true                  # 全新安裝拒絕非空目錄（預設行為——見「安裝位置規則」）；false 恢復從前不設防的軌道
+# non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # 非空拒絕忽略的垃圾檔名（不區分大小寫）
+# [[package.metadata.shun.install.dir-rules]]  # 宣告式安裝位置規則（見「安裝位置規則」）
+# files = ["WorldOfWarships.exe"]              # 觸發檔名，按目標目錄的直接子項檢查
+# action = "block"                             # block（預設）| relocate
+# message = "This folder holds the game client."  # 英文原因，原樣顯示
+# [package.metadata.shun.install.dir-rules.message-locales]  # 按精靈語言覆寫（命中優先於 message）
+# zh-Hans = "该目录是游戏客户端。"
 
 [[package.metadata.shun.install.verbs]]    # 右鍵選單動詞（Explorer 動詞 / 桌面動作）
 key = "open-data"                          # 穩定的動詞 id
@@ -73,7 +81,7 @@ require-removable = true                   # 拒絕非可移除裝置
 | `logo` | path | — | 殼的 logo 資產（相對清單檔案） |
 | `payload` | path | — | 打包進發行物的目錄 |
 | `main-exe` | path | — | payload 內進入點（捷徑目標） |
-| `install` | table | 雙模式全開 | `local` / `portable` 開關、`portable-marker` 標記檔名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（環境變數展開的預設位置覆寫）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒絕裸磁碟根目錄目標；預設開啟——見「根磁碟保護」）、`root-dir-folder`（退出拒絕後墊層通道裡墊在裸磁碟根目錄下的資料夾，預設取產品名） |
+| `install` | table | 雙模式全開 | `local` / `portable` 開關、`portable-marker` 標記檔名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（環境變數展開的預設位置覆寫）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒絕裸磁碟根目錄目標；預設開啟——見「根磁碟保護」）、`root-dir-folder`（退出拒絕後墊層通道裡墊在裸磁碟根目錄下的資料夾，預設取產品名）、`forbid-non-empty`（全新安裝拒絕非空目錄；預設開啟）、`non-empty-allowlist`（非空拒絕忽略的垃圾檔名）、`dir-rules`（宣告式安裝位置規則——見「安裝位置規則」） |
 | `attachments` | 表格陣列 | 無 | 選用附件資源（資產包）：`key` / `title` / `dest` / `online.url`；精簡版在安裝時下載 |
 | `update` | table | 無 | 更新監視：`sources`（鏡像根 URL，按順序探測）+ `files`，解析到第一個可達源之下 |
 | `webview2` | table | `skip` | Windows 執行階段策略 |
@@ -128,7 +136,69 @@ require-removable = true                   # 拒絕非可移除裝置
 清單或主程式存在）即為升級——其位置決定在落地時已經做出，現在再
 否決會把靜默更新晾在半空。鉤子把 `SHUN_DIR_BLOCKED` 設為人類可讀
 的原因即可否決該位置；精靈原樣顯示該值，指令碼因此可透過
-`SHUN_LANGUAGE` 做在地化。鉤子出錯時，檢查連同其錯誤文字一起失敗。
+`SHUN_LANGUAGE` 做在地化。鉤子出錯時，檢查連同其錯誤文字一起
+失敗。宣告式 `dir-rules` 表（見「安裝位置規則」）與該階段並行
+執行、**先於**鉤子——最具體的否決先答；鉤子本身沒有變化。
+
+## 安裝位置規則
+
+各位置防護形制一致：目標越空，交付越安全。預設集合是上面的
+根磁碟保護加上**非空拒絕**——`install.forbid-non-empty`（預設
+`true`）讓全新安裝拒絕已裝有外來檔案的目標目錄，因為在它們
+旁邊交付會把產品攪在一起：更新時的原子交換會把整個目錄挪開，
+解除安裝清掃也會走進其中。升級（磁碟清單或主程式存在）恆放行
+——其位置決定在落地時已經做出，再否決會把靜默更新晾在半空。
+`install.forbid-non-empty = false` 恢復從前來者不拒的軌道；
+`install.non-empty-allowlist`（預設 `["desktop.ini", "Thumbs.db",
+".DS_Store"]`，不區分大小寫）列出拒絕邏輯忽略的系統垃圾檔名，
+於是只裝著垃圾的資料夾視同空目錄。
+
+`[[package.metadata.shun.install.dir-rules]]` 是 `check-dir`
+鉤子的資料化兄弟——對「這個位置不對」的宣告式回答，出身於
+WoWSP：玩家把外掛裝在遊戲用戶端旁邊，更新的目錄交換差點把
+整個遊戲資料夾挪開：
+
+```toml
+[[package.metadata.shun.install.dir-rules]]
+files = ["WorldOfWarships.exe"]     # 觸發檔名，按目標目錄的直接子項檢查
+action = "block"                    # block（預設）| relocate
+message = "This folder holds the game client — pick another location."  # 英文原因，原樣顯示
+
+[package.metadata.shun.install.dir-rules.message-locales]  # 按精靈語言覆寫
+zh-Hans = "该目录是游戏客户端，请另选位置。"
+```
+
+- `block`（預設）**僅否決全新安裝**——已住在那裡的安裝繼續原地
+  更新（「絕不晾在半空」規則）。
+- `relocate` 標記該位置不宜**共享**：全新選擇像 `block` 一樣被
+  否決，且已存在的安裝會被標記——靜默軌道移交互動式精靈，不再
+  原地更新。
+- `message-locales` 取代鉤子指令碼自己的 `SHUN_LANGUAGE` 分支：
+  命中的條目優先於 `message`，後者是英文後備。
+
+全新安裝的防護求值順序——最具體的否決先答：**dir-rules →
+check-dir 指令碼鉤子 → 非空拒絕**；空路徑門禁與根磁碟保護先於
+它們作答，可寫性檢查無條件執行。升級時只有 `relocate` 動作的
+規則能讓位置出錯。
+
+### 搬遷
+
+靜默軌道（`--silent --dir=<舊目錄>`）經規則發現被標記的安裝後，
+以 `--relocate-from <舊目錄>` 重新拉起互動式精靈（新的殼 CLI
+旗標；它隱含互動軌道並與 `--silent` 互斥）。移交本身會列印原因並以結束碼 `0` 結束、不安裝任何
+東西——更新器契約看到的是成功，使用者眼前接手的互動式精靈才是
+結果的主人。已知限制：完全無互動的工作階段（沒有使用者桌面）發
+起的靜默更新會拉起一個無人看見的精靈，這類安裝只能停在舊版本，
+直到有人互動登入。精靈直接在位置步驟
+開啟，附在地化提示說明舊位置已不再有效，被標記的目錄也會從
+快捷候選中剔除。新安裝落地後，只有產品自己的清單所列檔案——
+外加磁碟清單、可攜標記與複製的解除安裝器——會被清掃出舊目錄；
+外來檔案（比如宿主遊戲）絕不被碰觸，舊目錄本身只在清空後
+移除。註冊資訊（ARP、捷徑）跟隨新位置——清掃從不註銷任何東西。
+取消精靈則舊安裝保持已安裝、繼續在舊版本上執行——只是再也無法
+靜默原地更新：此後每一次靜默更新都會重新觸發搬遷移交、精靈再次
+開啟，直到使用者完成搬遷。「絕不晾在半空」規則依然成立——安裝
+絕不會被弄壞，只是靜默更新在等待搬遷。
 
 ## 安裝位置解析
 

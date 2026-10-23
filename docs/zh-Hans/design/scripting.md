@@ -44,7 +44,10 @@ shun 内置接口将以 duckscript 命令形式注册：`shun_progress`、
 主程序即为升级——再否决会把静默更新晾在半空）。钩子把
 `SHUN_DIR_BLOCKED` 设为人类可读的原因即可否决拟议位置；向导原样
 显示该值，脚本因此可通过 `SHUN_LANGUAGE` 做本地化。钩子报错时，
-检查连同其错误文本一起失败。`SHUN_INSTALL_DIR` 在该阶段以正斜杠
+检查连同其错误文本一起失败。声明式 `[[…install.dir-rules]]` 表
+（见 configuration.md 的「安装位置规则」一节）与 check-dir 阶段
+并行运行、先于钩子，自带本地化文案；钩子仍是规则表无法表达的
+逻辑的逃生口。`SHUN_INSTALL_DIR` 在该阶段以正斜杠
 形式到达——用 `get_env` 读回（duckscript 的 `${…}` 展开的是脚本
 变量而非进程环境），子路径以 `/` 拼接。
 

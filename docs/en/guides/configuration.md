@@ -40,6 +40,14 @@ aumid = "celestia-island.ShunDemo"         # default: generated from publisher +
 icon = "assets/icon.png"                   # payload-relative launcher icon (Linux Icon=)
 root-dir-folder = "ShunDemo"               # legacy pad lane only (forbid-drive-root = false): folder padded under a bare drive root (D:\ → D:\ShunDemo; default: product name)
 # forbid-drive-root = true                 # refuse a bare drive-root target outright (the default — see Root-drive guard); false restores the pad lane above
+# forbid-non-empty = true                  # refuse a fresh install into a non-empty directory (the default — see Install-location rules); false restores the old anything-goes lane
+# non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # junk names the non-empty refusal ignores, case-insensitive
+# [[package.metadata.shun.install.dir-rules]]  # declarative install-location rules (see Install-location rules)
+# files = ["WorldOfWarships.exe"]              # trigger names, checked as direct children of the target
+# action = "block"                             # block (default) | relocate
+# message = "This folder holds the game client."  # English reason, shown verbatim
+# [package.metadata.shun.install.dir-rules.message-locales]  # per-wizard-locale overrides (a match wins over message)
+# zh-Hans = "该目录是游戏客户端。"
 
 [[package.metadata.shun.install.verbs]]    # right-click verbs (Explorer verbs / desktop actions)
 key = "open-data"                          # stable verb id
@@ -86,7 +94,7 @@ require-removable = true                   # refuse non-removable devices
 | `logo` | path | — | Shell logo asset (relative to the manifest) |
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
-| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `default-dir` (env-expanded default location override), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (refuse bare drive-root targets; default on — see Root-drive guard), `root-dir-folder` (folder padded under a bare drive-root target in the opted-out pad lane, default: the product name) |
+| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `default-dir` (env-expanded default location override), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (refuse bare drive-root targets; default on — see Root-drive guard), `root-dir-folder` (folder padded under a bare drive-root target in the opted-out pad lane, default: the product name), `forbid-non-empty` (refuse non-empty targets for fresh installs; default on), `non-empty-allowlist` (junk names the non-empty refusal ignores), `dir-rules` (declarative install-location rules — see Install-location rules) |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
@@ -153,7 +161,88 @@ re-vetoing it now would strand silent updates. A hook vetoes the
 location by setting `SHUN_DIR_BLOCKED` to a human-readable reason; the
 wizard shows the value verbatim, so the script localizes it through
 `SHUN_LANGUAGE`. A hook that errors fails the check with its error
-text.
+text. The declarative `dir-rules` table (see Install-location rules)
+runs alongside this phase, **before** the hooks — the most specific
+veto answers first; the hooks themselves are unchanged.
+
+## Install-location rules
+
+The location guards share one shape: the emptier the target, the
+safer the delivery. The default set is the drive-root refusal above
+plus the **non-empty refusal** — `install.forbid-non-empty` (default
+`true`) makes a fresh install refuse a target that already holds
+foreign files, because delivering beside them tangles the products:
+an update's atomic swap moves the whole directory aside, and an
+uninstall sweep walks it. An upgrade (the on-disk manifest or the
+main executable present) always passes — its location decision was
+made when it landed, and re-vetoing would strand silent updates.
+`install.forbid-non-empty = false` restores the old anything-goes
+lane, and `install.non-empty-allowlist` (default `["desktop.ini",
+"Thumbs.db", ".DS_Store"]`, case-insensitive) names the OS droppings
+the refusal ignores, so a folder holding nothing but junk counts as
+empty.
+
+`[[package.metadata.shun.install.dir-rules]]` is the data-driven
+sibling of the `check-dir` hook — the declarative answer to "this
+location is wrong", born from WoWSP players installing beside the
+game client, where the update swap would have moved the whole game
+folder aside:
+
+```toml
+[[package.metadata.shun.install.dir-rules]]
+files = ["WorldOfWarships.exe"]     # trigger names, checked as direct children of the target
+action = "block"                    # block (default) | relocate
+message = "This folder holds the game client — pick another location."  # English reason, shown verbatim
+
+[package.metadata.shun.install.dir-rules.message-locales]  # per-wizard-locale overrides
+zh-Hans = "该目录是游戏客户端，请另选位置。"
+```
+
+- `block` (the default) vetoes **fresh installs only** — an install
+  already living there keeps updating in place (the never-strand
+  rule).
+- `relocate` marks the location as dangerous to **share**: fresh
+  picks are vetoed like `block`, and an existing install there is
+  flagged — the silent lane hands over to the interactive wizard
+  instead of updating in place.
+- `message-locales` replaces a hook script's own `SHUN_LANGUAGE`
+  branching: a matching entry wins over `message`, which stays the
+  English fallback.
+
+Guard evaluation order for a fresh install — the most specific veto
+answers first: **dir-rules → check-dir script hooks → non-empty
+refusal**, with the empty-path gate and the drive-root refusal
+answering before all of them and writability checked
+unconditionally. On an upgrade, only `relocate`-action rules can
+fault the location.
+
+### Relocation
+
+The silent lane (`--silent --dir=<old>`) detects a flagged install
+through the rule and relaunches itself as the interactive wizard
+with `--relocate-from <old-dir>` (a shell CLI flag that implies the
+interactive lane and conflicts with `--silent`). The handover itself prints the
+reason and exits `0` without installing anything — the updater
+contract sees success, and the interactive wizard the user now faces
+owns the outcome. Known limitation: a silent update from a fully
+non-interactive session (no user desktop) spawns a wizard nobody
+sees, so such an install stays on its old version until someone
+logs in interactively. The wizard opens
+straight at the location step with a localized notice explaining the
+old location is no longer valid, and the flagged directory is
+excluded from the quick-picks. After the new install lands, only the
+product's own manifest-listed files are swept out of the old
+directory — plus the on-disk manifest, the portable marker and the
+copied uninstaller; foreign files (the host game, say) are never
+touched, and the old directory itself is removed only once empty.
+The registration (ARP, shortcuts) follows the new location — the
+sweep never unregisters anything. Cancelling the wizard leaves the
+old install installed and running on its old version — it just can
+no longer silently update in place: every future silent update
+re-triggers the relocation handover, and the wizard opens again,
+until the user completes the relocation. The never-strand rule
+still holds — the install is never broken, only its silent updates
+wait for the move.
 
 ## Install location resolution
 

@@ -886,6 +886,64 @@ pub fn uninstall(ctx: &InstallContext, registration: &dyn Registration) -> Resul
     Ok(())
 }
 
+/// Sweeps a RELOCATED install's files out of `old_dir` — the
+/// manifest-precise half of [`uninstall`] with none of its registration
+/// teardown: the relocation's successor install already owns the ARP
+/// entry and shortcuts, so unregistering here would tear down the NEW
+/// install instead. Deletes exactly what the old directory's on-disk
+/// manifest lists (traversal-guarded the same way `uninstall` is),
+/// plus the manifest itself, the portable marker and the copied
+/// uninstaller, then prunes directories that became empty — foreign
+/// files sharing the directory are never touched, and the directory
+/// itself is removed only once empty. Returns how many files went.
+///
+/// A manifest that fails to parse aborts the sweep (an unknown file
+/// set must not be half-deleted); individual locked leftovers are
+/// skipped and simply not counted.
+pub fn relocate_cleanup(old_dir: &Path, portable_marker: &str) -> Result<u32, ShunError> {
+    let mut removed = 0u32;
+
+    let manifest_path = old_dir.join(MANIFEST_PATH);
+    if manifest_path.exists() {
+        // read_manifest accepts both the wrapper and the legacy bare
+        // entry list, so installs relocated from older shells sweep
+        // their full file set too.
+        for entry in read_manifest(old_dir)?.entries {
+            // Audit shun-R1-1, relocation edition: a poisoned manifest
+            // must not delete files outside the install directory —
+            // skip traversal entries loudly instead of removing them.
+            if crate::payload::entry_path_is_unsafe(std::path::Path::new(&entry.path)) {
+                eprintln!(
+                    "shun: relocation skipping traversal entry {:?} (poisoned manifest?)",
+                    entry.path
+                );
+                continue;
+            }
+            if std::fs::remove_file(old_dir.join(&entry.path)).is_ok() {
+                removed += 1;
+            }
+        }
+        if std::fs::remove_file(&manifest_path).is_ok() {
+            removed += 1;
+        }
+        remove_empty_dirs_below(old_dir);
+    }
+
+    if std::fs::remove_file(old_dir.join(portable_marker)).is_ok() {
+        removed += 1;
+    }
+
+    // The self-copied uninstaller is not manifest-listed. It is not
+    // running (this process is the NEW shell), so it deletes outright
+    // — no self-delete scheduling needed.
+    if std::fs::remove_file(old_dir.join(UNINSTALLER_NAME)).is_ok() {
+        removed += 1;
+    }
+
+    let _ = std::fs::remove_dir(old_dir);
+    Ok(removed)
+}
+
 /// Launches the installed application (the configured `main_exe` inside
 /// the install dir), detached — the installer process may exit right
 /// after. No-op when `ctx.launch_after_install` resolved false, and when
@@ -1934,6 +1992,66 @@ mod tests {
         let legacy = read_manifest(dir.path()).unwrap();
         assert_eq!(legacy.entries, manifest.entries);
         assert_eq!(legacy.language, None);
+    }
+
+    /// A relocation sweeps exactly the manifest-listed files (plus the
+    /// manifest, marker and copied uninstaller) out of the abandoned
+    /// directory: foreign files sharing it survive, and the directory
+    /// itself goes only once empty — the game-folder install WoWSP
+    /// ships its `relocate` rule for.
+    #[test]
+    fn relocate_cleanup_sweeps_manifest_files_and_spares_foreign_ones() {
+        use crate::payload::MANIFEST_PATH;
+
+        let shared = tempfile::tempdir().unwrap();
+        let dir = shared.path();
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin").join("app.exe"), b"MZ").unwrap();
+        std::fs::write(dir.join("README.txt"), b"payload file").unwrap();
+        // The foreign neighbor the sweep must never touch.
+        std::fs::write(dir.join("WorldOfWarships.exe"), b"MZ").unwrap();
+        std::fs::write(dir.join(".portable"), b"").unwrap();
+        std::fs::write(dir.join(UNINSTALLER_NAME), b"MZ").unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_PATH),
+            serde_json::to_vec(&InstallManifest {
+                language: None,
+                entries: vec![
+                    PayloadEntry {
+                        path: "bin/app.exe".into(),
+                        size: 2,
+                        sha256: "a".into(),
+                    },
+                    PayloadEntry {
+                        path: "README.txt".into(),
+                        size: 12,
+                        sha256: "b".into(),
+                    },
+                ],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let removed = relocate_cleanup(dir, ".portable").unwrap();
+        // The two payload files, the manifest, the marker, the
+        // uninstaller — and nothing else had shun's name on it.
+        assert_eq!(removed, 5);
+        assert!(!dir.join("bin").join("app.exe").exists());
+        assert!(!dir.join("README.txt").exists());
+        assert!(!dir.join("bin").exists());
+        assert!(!dir.join(MANIFEST_PATH).exists());
+        assert!(!dir.join(".portable").exists());
+        assert!(!dir.join(UNINSTALLER_NAME).exists());
+        assert!(dir.join("WorldOfWarships.exe").exists());
+        // The directory survives while the foreign file lives in it.
+        assert!(dir.is_dir());
+
+        // Once the neighbor goes, a repeat sweep takes the now-empty
+        // directory too.
+        std::fs::remove_file(dir.join("WorldOfWarships.exe")).unwrap();
+        relocate_cleanup(dir, ".portable").unwrap();
+        assert!(!dir.exists());
     }
 
     /// Stages a two-file tree (one at the root, one nested) with the

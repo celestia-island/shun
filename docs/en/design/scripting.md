@@ -51,7 +51,11 @@ would strand silent updates). A hook vetoes the proposed location by
 setting `SHUN_DIR_BLOCKED` to a human-readable reason; the wizard
 shows the value verbatim, so the script localizes it through
 `SHUN_LANGUAGE`. A hook that errors fails the check with its error
-text. `SHUN_INSTALL_DIR` arrives in forward-slash form in this phase —
+text. The declarative `[[…install.dir-rules]]` table (see the
+Install-location rules section in configuration.md) runs alongside
+the check-dir phase, before the hooks, carrying its own localized
+message; hooks remain the escape hatch for logic a rule table cannot
+express. `SHUN_INSTALL_DIR` arrives in forward-slash form in this phase —
 read it back with `get_env` (duckscript `${…}` interpolates script
 variables, not the process environment) and join child paths with `/`.
 

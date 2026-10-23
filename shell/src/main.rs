@@ -183,6 +183,17 @@ struct Cli {
     #[arg(long)]
     language: Option<String>,
 
+    /// The previous install directory a relocation leaves behind (the
+    /// silent lane's handover to the wizard): the interactive faces
+    /// open straight on the location step, never offer the old folder,
+    /// and the flow sweeps only the product's own manifest-listed files
+    /// out of it. Interactive install lane only — combining it with
+    /// `--silent` or `--uninstall` is rejected before the face resolves
+    /// (the wizard's own elevated relaunch is the one sanctioned silent
+    /// carrier: it re-enters elevated with every choice already made).
+    #[arg(long)]
+    relocate_from: Option<String>,
+
     /// Offline UI capture: render, wait, save the window as PNG, exit.
     #[arg(long)]
     screenshot: Option<PathBuf>,
@@ -325,6 +336,13 @@ struct AppState {
     core: std::sync::Mutex<WizardCore>,
     payload: ArchivePayload,
     uninstall_mode: bool,
+    /// The relocation handover (an explicit `--relocate-from`, or the
+    /// startup probe's flagged candidate): `Some(old dir)` puts the
+    /// wizard straight into its relocation pass — the location pane
+    /// leads with the notice, the old folder is neither offered nor
+    /// default, and the composed install request carries it so the
+    /// flow sweeps only the product's own files out of it.
+    relocate_from: Option<String>,
     /// The declared pairing step, when the pipeline has one — the pane's
     /// lane contract (gateway protocol vs product scripts) and its
     /// credential landing. Resolved once from the embedded pipeline.
@@ -439,7 +457,14 @@ fn default_dir(state: State<'_, AppState>, mode: String) -> DirDefaults {
     // leads the candidate chain instead of the per-user appdata
     // convention.
     let config = state.core.lock().expect("wizard core").config.clone();
-    let candidates = shun::wizard::location_defaults_for(&config);
+    let mut candidates = shun::wizard::location_defaults_for(&config);
+    // The relocation pass never offers the old folder: drop it from the
+    // quick picks, so the preselected default (the first writable
+    // candidate) lands on a DIFFERING folder when the registered — and
+    // flagged — install was the leader.
+    if let Some(old) = &state.relocate_from {
+        candidates.retain(|candidate| !same_install_dir(&candidate.path, old));
+    }
     let dir = candidates
         .iter()
         .find(|candidate| candidate.writable)
@@ -496,6 +521,15 @@ fn list_drives() -> Vec<DriveView> {
             label: drive.label,
         })
         .collect()
+}
+
+/// The relocation handover the webview wizard boots from: the silent
+/// lane's `--relocate-from` spawn, or the startup probe's flagged
+/// candidate. `Some(old dir)` flips the wizard into its relocation
+/// pass (the frontend opens on the location pane with the notice).
+#[tauri::command]
+fn get_relocate_from(state: State<'_, AppState>) -> Option<String> {
+    state.relocate_from.clone()
 }
 
 /// Live writability probe for the path the wizard currently shows.
@@ -808,6 +842,7 @@ async fn start_install(
     mode: String,
     dir: String,
     language: Option<String>,
+    relocate_from: Option<String>,
 ) -> Result<(), String> {
     let config = state.config();
     let payload = state.payload.clone();
@@ -817,6 +852,10 @@ async fn start_install(
         language,
         // The hikari wizard exposes no scope toggle — per-user only.
         machine: false,
+        // The relocation pass's old folder (None for every plain
+        // install): the flow sweeps only the product's own
+        // manifest-listed files out of it.
+        relocate_from,
     };
     tauri::async_runtime::spawn_blocking(move || {
         let core = WizardCore::new(config, BTreeMap::new());
@@ -957,6 +996,7 @@ fn run_headless_with_tap(
             desktop_answer,
             false,
             &raw_shortcut_args,
+            cli.relocate_from.as_deref(),
         )?;
     }
 
@@ -988,21 +1028,39 @@ fn run_headless_with_tap(
         return Ok(());
     }
 
+    // The silent lane never picks a wizard language — fall back to the
+    // saved preference, else the system locale, so the check-dir veto
+    // message (localized by the hook script), the relocation handover
+    // and the on-disk manifest carry a meaningful language on machines
+    // that never saw the wizard.
+    let language = cli
+        .language
+        .clone()
+        .or_else(|| Some(fallback::silent_locale_for(&config.product.name)));
+
+    // A location a `relocate` dir-rule flags ends the silent lane here:
+    // updating in place would endanger the foreign files sharing the
+    // folder (the update swap moves the WHOLE directory aside), so hand
+    // over to the interactive wizard's relocation pass instead — the
+    // user picks the new folder, or cancels and the old install stays
+    // on the old version. Exit 0 without installing: the updater
+    // contract sees success and the wizard owns the user's choice.
+    if let Some(reason) = shun::wizard::relocation_required(config, &dir, language.as_deref()) {
+        println!("relocation required ({reason}): launching the setup wizard");
+        spawn_relocation_wizard(&dir, language.as_deref())?;
+        return Ok(());
+    }
+
     let request = InstallRequest {
         mode: cli.mode.clone(),
         dir,
-        // The silent lane never picks a wizard language — fall back to
-        // the saved preference, else the system locale, so the check-dir
-        // veto message (localized by the hook script) and the on-disk
-        // manifest carry a meaningful language on machines that never
-        // saw the wizard.
-        language: cli
-            .language
-            .clone()
-            .or_else(|| Some(fallback::silent_locale_for(&config.product.name))),
+        language,
         // The gate above already re-launched elevated for machine scope;
         // reaching here with the flag set means this IS the elevated copy.
         machine,
+        // An explicit handover rides along (this is the elevated copy of
+        // a relocation the wizard already asked the user about).
+        relocate_from: cli.relocate_from.clone(),
     };
     shun::wizard::run_install(&core, payload, &request, &mut print_event)?;
     // The app files have landed; a runtime-less machine with a
@@ -1175,6 +1233,57 @@ fn headless_log_line(record: &shun::flow::FlowLog) -> Option<String> {
     }
 }
 
+/// Spawns this executable as the interactive relocation wizard,
+/// DETACHED (the silent lane exits right after — the spawned wizard
+/// must outlive it) and without a stray console window: CREATE_NO_WINDOW,
+/// the flag the codebase's cmd-spawning precedent verified — NOT
+/// DETACHED_PROCESS, which makes a console-subsystem child (a debug
+/// build) allocate a fresh visible console. Release builds are
+/// GUI-subsystem and unaffected either way.
+fn spawn_relocation_wizard(relocate_from: &str, language: Option<&str>) -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("cannot locate the installer to launch the wizard: {e}"))?;
+    let mut command = std::process::Command::new(exe);
+    command.arg("--relocate-from").arg(relocate_from);
+    if let Some(language) = language {
+        command.arg("--language").arg(language);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to launch the setup wizard: {e}"))
+}
+
+/// The manual-rerun half of the relocation lane: the first location
+/// candidate that already holds a flagged install (the registered
+/// install leads the chain), probed once at startup; `None` when no
+/// relocation is needed.
+fn relocation_startup_probe(config: &ShunConfig) -> Option<String> {
+    WizardCore::new(config.clone(), BTreeMap::new()).relocation_candidate()
+}
+
+/// Whether two path strings name the same directory — trimmed,
+/// separator-normalized (internal `/` folds to `\`, so a handover path
+/// typed either way still matches) and case-insensitive (Windows path
+/// conventions; the lowercase fold only widens the relocation lane's
+/// old-folder exclusion on case-sensitive hosts, harmlessly).
+pub(crate) fn same_install_dir(a: &str, b: &str) -> bool {
+    let normalize = |path: &str| {
+        path.trim()
+            .trim_end_matches(['\\', '/'])
+            .replace('/', "\\")
+            .to_lowercase()
+    };
+    let (a, b) = (normalize(a), normalize(b));
+    !a.is_empty() && a == b
+}
+
 /// When the resolved install scope is machine-wide and the current
 /// process is not elevated, re-launches this executable under UAC with
 /// the same choices (headless) and exits.
@@ -1185,6 +1294,7 @@ pub(crate) fn ensure_elevated_for(
     desktop: bool,
     uninstalling: bool,
     raw_shortcut_args: &[String],
+    relocate_from: Option<&str>,
 ) -> Result<(), String> {
     use shun::targets::install::InstallScope;
     if ctx.scope != InstallScope::Machine || shun::targets::elevate::is_elevated() {
@@ -1205,6 +1315,9 @@ pub(crate) fn ensure_elevated_for(
     args.push_str(" --scope=machine");
     if let Some(language) = &ctx.language {
         args.push_str(&format!(" --language={language}"));
+    }
+    if let Some(relocate_from) = relocate_from {
+        args.push_str(&format!(" --relocate-from=\"{}\"", relocate_from.trim()));
     }
     if uninstalling {
         args.push_str(" --uninstall");
@@ -1384,6 +1497,9 @@ fn park_cwd_off_targets(cli: &mut Cli) {
     if let (Some(base), Some(dir)) = (&original, cli.dir.take()) {
         cli.dir = Some(absolutize(dir, base));
     }
+    if let (Some(base), Some(dir)) = (&original, cli.relocate_from.take()) {
+        cli.relocate_from = Some(absolutize(dir, base));
+    }
     if let (Some(base), Some(shot)) = (&original, cli.screenshot.take()) {
         cli.screenshot = Some(if shot.is_relative() {
             base.join(shot)
@@ -1437,6 +1553,22 @@ fn main() {
     // `--no-gui` from cmd/PowerShell otherwise resolves to the help
     // text instead of the TUI.
     let _ = shun::env_probe::attach_parent_console();
+    // The relocation handover is an interactive-lane-only flag: a silent
+    // run cannot pick the new folder and an uninstall has no relocation
+    // to do. Reject the combination before any face resolves — except
+    // the already-elevated re-entry: the wizard's own machine-scope
+    // relaunch carries --relocate-from alongside --silent by design
+    // (its answers are all resolved, so it runs the silent install).
+    if cli.relocate_from.is_some()
+        && (cli.silent || cli.uninstall)
+        && !shun::targets::elevate::is_elevated()
+    {
+        eprintln!(
+            "shun: --relocate-from needs the interactive wizard — \
+             it cannot combine with --silent or --uninstall"
+        );
+        std::process::exit(2);
+    }
     park_cwd_off_targets(&mut cli);
     // Whether the webview face is a live candidate for this run — the
     // gate for the fixed-version runtime staging under the splash (a
@@ -1468,6 +1600,21 @@ fn main() {
     let caps = refine_caps_with_loader(UiCapabilities::probe());
     let face = resolve_face(&cli, &caps, &faces);
     let gui_track = matches!(face, Face::Egui | Face::Tauri);
+
+    // The relocation handover for the interactive faces: an explicit
+    // --relocate-from leads (the silent lane's spawn); when absent, a
+    // manual wizard rerun probes ONCE whether a location candidate —
+    // the registered install leads the chain — is flagged for
+    // relocating, and seeds the wizard into its relocation pass alike.
+    // The uninstall page and the silent lane never take it (the silent
+    // lane runs its own probe inside run_headless).
+    let relocate_from = if cli.uninstall || cli.silent {
+        None
+    } else {
+        cli.relocate_from
+            .clone()
+            .or_else(|| relocation_startup_probe(&config))
+    };
 
     if gui_track {
         // ONE egui event loop covers the whole GUI run: the wizard's
@@ -1521,6 +1668,7 @@ fn main() {
             Box::new(go_tauri),
             reason,
             cli.uninstall,
+            relocate_from.clone(),
             LOGO_KIND.trim(),
             LOGO_BYTES,
             license_docs(),
@@ -1531,7 +1679,14 @@ fn main() {
             let uninstall = cli.uninstall;
             let screenshot = cli.screenshot.clone();
             let screenshot_delay = cli.screenshot_delay;
-            if let Err(err) = run_tauri(cli, config, h.payload, uninstall, h.fixed_runtime) {
+            if let Err(err) = run_tauri(
+                cli,
+                config,
+                h.payload,
+                uninstall,
+                h.fixed_runtime,
+                relocate_from.clone(),
+            ) {
                 // The refined probe and tauri's own gate read the same
                 // loader verdict, so a webview-runtime failure here
                 // should be unreachable — but if one still slips through
@@ -1546,6 +1701,7 @@ fn main() {
                         payload,
                         fallback::FallbackReason::MissingWebview2,
                         uninstall,
+                        relocate_from,
                         screenshot,
                         screenshot_delay,
                     );
@@ -1592,7 +1748,7 @@ fn main() {
             std::process::exit(i32::from(err));
         }
         Face::Tui => {
-            if let Err(err) = tui::run(config, payload, cli.uninstall) {
+            if let Err(err) = tui::run(config, payload, cli.uninstall, relocate_from) {
                 crate::diag!("shun: {err}");
                 std::process::exit(1);
             }
@@ -1609,6 +1765,7 @@ fn run_egui_face(
     payload: ArchivePayload,
     reason: fallback::FallbackReason,
     uninstall: bool,
+    relocate_from: Option<String>,
     screenshot: Option<PathBuf>,
     screenshot_delay: Option<u64>,
 ) {
@@ -1625,6 +1782,7 @@ fn run_egui_face(
             payload,
             reason,
             uninstall,
+            relocate_from,
             LOGO_KIND.trim(),
             LOGO_BYTES,
             license_docs(),
@@ -1956,6 +2114,7 @@ fn run_tauri(
     payload: ArchivePayload,
     uninstall_mode: bool,
     fixed_runtime: Option<PathBuf>,
+    relocate_from: Option<String>,
 ) -> Result<(), tauri::Error> {
     let screenshot = cli.screenshot.clone();
     let delay = cli.screenshot_delay.unwrap_or(4000);
@@ -1976,6 +2135,7 @@ fn run_tauri(
         core,
         payload,
         uninstall_mode,
+        relocate_from,
         screenshot,
         delay,
     )
@@ -2372,6 +2532,7 @@ fn run_shell(
     core: WizardCore,
     payload: ArchivePayload,
     uninstall_mode: bool,
+    relocate_from: Option<String>,
     screenshot: Option<std::path::PathBuf>,
     delay: u64,
 ) -> Result<(), tauri::Error> {
@@ -2384,6 +2545,7 @@ fn run_shell(
                 core: std::sync::Mutex::new(core),
                 payload,
                 uninstall_mode,
+                relocate_from: relocate_from.clone(),
                 pairing: steps.into_iter().find_map(|s| s.pairing),
                 pairing_stage: std::sync::Mutex::new(None),
             }
@@ -2391,6 +2553,7 @@ fn run_shell(
         .invoke_handler(tauri::generate_handler![
             get_config,
             default_dir,
+            get_relocate_from,
             nest_root_dir,
             list_drives,
             check_dir_writable,
@@ -2435,18 +2598,27 @@ fn run_shell(
             } else {
                 (800.0, 600.0)
             };
-            let window =
-                tauri::WebviewWindowBuilder::new(app, "installer", tauri::WebviewUrl::default())
-                    .title(&native_title)
-                    .inner_size(width, height)
-                    .center()
-                    .resizable(false)
-                    .decorations(false)
-                    .shadow(true)
-                    .minimizable(true)
-                    .maximizable(false)
-                    .closable(true)
-                    .build()?;
+            // The relocation pass reaches the frontend through the URL
+            // (the same query channel `?window=passive` rides): a
+            // `?relocate=1` wizard boots on the location pane instead
+            // of the language pane — synchronously, before the first
+            // paint, so the skipped step never flashes.
+            let url = if relocate_from.is_some() {
+                tauri::WebviewUrl::App("index.html?relocate=1".into())
+            } else {
+                tauri::WebviewUrl::default()
+            };
+            let window = tauri::WebviewWindowBuilder::new(app, "installer", url)
+                .title(&native_title)
+                .inner_size(width, height)
+                .center()
+                .resizable(false)
+                .decorations(false)
+                .shadow(true)
+                .minimizable(true)
+                .maximizable(false)
+                .closable(true)
+                .build()?;
             polish_window(&window);
             Ok(())
         })
@@ -2530,6 +2702,10 @@ fn run_passive_tauri(
                 core: std::sync::Mutex::new(core),
                 payload: payload.clone(),
                 uninstall_mode,
+                // The passive page is the silent lane's mirror — the
+                // relocation lane never mounts it (run_headless spawns
+                // the interactive wizard instead).
+                relocate_from: None,
                 pairing: steps.into_iter().find_map(|s| s.pairing),
                 pairing_stage: std::sync::Mutex::new(None),
             }

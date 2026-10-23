@@ -30,6 +30,14 @@ scope = "ask"                              # user (por defecto) | machine | ask
 deep-links = ["shundemo"]                  # esquemas de URL propios de la app (myapp://…)
 root-dir-folder = "ShunDemo"              # solo el carril de acolchado heredado (forbid-drive-root = false): carpeta acolchada bajo una raíz de unidad desnuda (D:\ → D:\ShunDemo; por defecto: nombre del producto)
 # forbid-drive-root = true                 # rechazar de plano un destino en la raíz de unidad desnuda (comportamiento por defecto — ver Protección contra la raíz de unidad); false restaura el carril de acolchado anterior
+# forbid-non-empty = true                  # rechazar una instalación nueva en un directorio no vacío (comportamiento por defecto — ver Reglas de ubicación de instalación); false restaura el viejo carril de «cualquier cosa vale»
+# non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # nombres de basura que el veto a directorios no vacíos ignora (sin distinguir mayúsculas)
+# [[package.metadata.shun.install.dir-rules]]  # reglas declarativas de ubicación de instalación (ver Reglas de ubicación de instalación)
+# files = ["WorldOfWarships.exe"]              # nombres detonantes, comprobados como hijos directos del destino
+# action = "block"                             # block (por defecto) | relocate
+# message = "This folder holds the game client."  # motivo en inglés, mostrado tal cual
+# [package.metadata.shun.install.dir-rules.message-locales]  # anulaciones por idioma del asistente (una coincidencia gana a message)
+# zh-Hans = "该目录是游戏客户端。"
 
 [[package.metadata.shun.install.verbs]]    # verbos del menú contextual (verbos del Explorador / acciones de escritorio)
 key = "open-data"                          # id estable del verbo
@@ -77,7 +85,7 @@ require-removable = true                   # rechazar dispositivos no extraíble
 | `logo` | path | — | Recurso de logo del shell (relativo al manifiesto) |
 | `payload` | path | — | Directorio empaquetado en los artefactos |
 | `main-exe` | path | — | Punto de entrada relativo al payload (destino del atajo) |
-| `install` | table | ambos modos | conmutadores `local` / `portable`, nombre del marcador `portable-marker`, políticas `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (anulación de la ubicación por defecto con expansión de variables de entorno), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (rechazar destinos en la raíz de unidad desnuda; activado por defecto — ver Protección contra la raíz de unidad), `root-dir-folder` (carpeta acolchada bajo una raíz de unidad desnuda en el carril de acolchado heredado, por defecto el nombre del producto) |
+| `install` | table | ambos modos | conmutadores `local` / `portable`, nombre del marcador `portable-marker`, políticas `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (anulación de la ubicación por defecto con expansión de variables de entorno), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (rechazar destinos en la raíz de unidad desnuda; activado por defecto — ver Protección contra la raíz de unidad), `root-dir-folder` (carpeta acolchada bajo una raíz de unidad desnuda en el carril de acolchado heredado, por defecto el nombre del producto), `forbid-non-empty` (rechazar destinos no vacíos en instalaciones nuevas; activado por defecto), `non-empty-allowlist` (nombres de basura que el veto ignora), `dir-rules` (reglas declarativas de ubicación de instalación — ver Reglas de ubicación de instalación) |
 | `attachments` | array de tablas | ninguno | recursos acompañantes opcionales (packs de assets): `key` / `title` / `dest` / `online.url`; las builds lite los descargan al instalar |
 | `update` | table | ninguna | vigilancia de actualizaciones: `sources` (URLs base espejo, sondeadas en orden) + `files` resueltos bajo el primer espejo alcanzable |
 | `webview2` | table | `skip` | estrategia de runtime de Windows |
@@ -150,7 +158,97 @@ colgadas las actualizaciones silenciosas. Un gancho veta la ubicación
 asignando `SHUN_DIR_BLOCKED` a un motivo legible; el asistente
 muestra el valor tal cual, así que el script lo localiza mediante
 `SHUN_LANGUAGE`. Un gancho que da error tumba la comprobación con su
-texto de error.
+texto de error. La tabla declarativa `dir-rules` (ver Reglas de
+ubicación de instalación) corre junto a esta fase, **antes** de los
+ganchos — el veto más específico responde primero; los ganchos en sí
+no cambian.
+
+## Reglas de ubicación de instalación
+
+Las protecciones de ubicación comparten una forma: cuanto más vacío
+el destino, más segura la entrega. El conjunto por defecto es la
+protección contra la raíz de unidad anterior más el **veto a
+directorios no vacíos** — `install.forbid-non-empty` (por defecto
+`true`) hace que una instalación nueva rechace un destino que ya
+contiene archivos ajenos, porque entregar al lado de ellos enreda los
+productos: el intercambio atómico de la actualización aparta el
+directorio entero, y el barrido de la desinstalación lo recorre. Una
+actualización (el manifiesto en disco o el ejecutable principal
+presentes) siempre pasa — su decisión de ubicación se tomó cuando
+aterrizó, y volver a vetarla ahora dejaría colgadas las
+actualizaciones silenciosas. `install.forbid-non-empty = false`
+restaura el viejo carril de «cualquier cosa vale», y
+`install.non-empty-allowlist` (por defecto `["desktop.ini",
+"Thumbs.db", ".DS_Store"]`, sin distinguir mayúsculas) nombra los
+residuos del sistema operativo que el veto ignora: una carpeta que
+solo contiene basura cuenta como vacía.
+
+`[[package.metadata.shun.install.dir-rules]]` es el hermano basado en
+datos del gancho `check-dir` — la respuesta declarativa a «esta
+ubicación está mal», nacida de WoWSP: los jugadores instalaban junto
+al cliente del juego, y el intercambio de la actualización habría
+apartado la carpeta entera del juego:
+
+```toml
+[[package.metadata.shun.install.dir-rules]]
+files = ["WorldOfWarships.exe"]     # nombres detonantes, comprobados como hijos directos del destino
+action = "block"                    # block (por defecto) | relocate
+message = "This folder holds the game client — pick another location."  # motivo en inglés, mostrado tal cual
+
+[package.metadata.shun.install.dir-rules.message-locales]  # anulaciones por idioma del asistente
+zh-Hans = "该目录是游戏客户端，请另选位置。"
+```
+
+- `block` (por defecto) veta **solo instalaciones nuevas** — una
+  instalación que ya vive allí sigue actualizándose in situ (la regla
+  de no dejar nunca colgada una instalación).
+- `relocate` marca la ubicación como peligrosa para **compartir**: las
+  elecciones nuevas se vetan como con `block`, y además una
+  instalación existente allí queda marcada — el carril silencioso
+  cede el paso al asistente interactivo en lugar de actualizar in
+  situ.
+- `message-locales` sustituye a la propia ramificación por
+  `SHUN_LANGUAGE` del script del gancho: una entrada que coincida
+  gana a `message`, que queda como respaldo en inglés.
+
+Orden de evaluación de las protecciones para una instalación nueva —
+el veto más específico responde primero: **dir-rules → ganchos de
+script check-dir → veto a directorios no vacíos**; la compuerta de
+ruta vacía y la protección contra la raíz de unidad responden antes
+que todos, y la comprobación de escritura es incondicional. En una
+actualización, solo las reglas con acción `relocate` pueden reprobar
+la ubicación.
+
+### Reubicación
+
+El carril silencioso (`--silent --dir=<directorio antiguo>`) detecta
+por la regla una instalación marcada y se relanza como asistente
+interactivo con `--relocate-from <directorio antiguo>` (una opción
+nueva de la CLI del shell; implica el carril interactivo y choca con
+`--silent`). La cesión en sí imprime el motivo y sale con
+código `0` sin instalar nada — el contrato del actualizador ve
+éxito, y el resultado pertenece al asistente interactivo al que
+ahora se enfrenta el usuario. Limitación conocida: una
+actualización silenciosa desde una sesión totalmente no interactiva
+(sin escritorio de usuario) lanza un asistente que nadie ve — esa
+instalación se queda en su versión antigua hasta que alguien inicie
+sesión de forma interactiva. El asistente abre directamente en el paso de ubicación
+con un aviso localizado que explica que la ubicación antigua ya no es
+válida, y el directorio marcado queda excluido de las selecciones
+rápidas. Tras aterrizar la instalación nueva, del directorio antiguo
+solo se barren los archivos del producto listados en su manifiesto —
+más el manifiesto en disco, el marcador portable y el desinstalador
+copiado; los archivos ajenos (el juego anfitrión, por ejemplo) no se
+tocan jamás, y el directorio antiguo en sí solo se elimina cuando
+queda vacío. El registro (ARP, accesos directos) sigue a la ubicación
+nueva — el barrido nunca desregistra nada. Cancelar el asistente
+deja la instalación antigua instalada y corriendo en su versión
+antigua — pero ya no puede actualizarse en silencio in situ: cada
+intento silencioso futuro vuelve a disparar la cesión de la
+reubicación y el asistente se abre de nuevo, hasta que el usuario
+complete la reubicación. La regla de no dejar nunca colgada una
+instalación se mantiene — la instalación no queda rota; sus
+actualizaciones silenciosas simplemente esperan la mudanza.
 
 ## Resolución de la ubicación de instalación
 
