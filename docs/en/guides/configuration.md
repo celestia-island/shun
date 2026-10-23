@@ -38,7 +38,8 @@ launch-after-install = "ask"               # always | never | ask (done-page che
 deep-links = ["shundemo"]                  # URL schemes the app owns (myapp://...)
 aumid = "celestia-island.ShunDemo"         # default: generated from publisher + product
 icon = "assets/icon.png"                   # payload-relative launcher icon (Linux Icon=)
-root-dir-folder = "ShunDemo"               # folder padded under a bare drive root (D:\ → D:\ShunDemo; default: product name)
+root-dir-folder = "ShunDemo"               # legacy pad lane only (forbid-drive-root = false): folder padded under a bare drive root (D:\ → D:\ShunDemo; default: product name)
+# forbid-drive-root = true                 # refuse a bare drive-root target outright (the default — see Root-drive guard); false restores the pad lane above
 
 [[package.metadata.shun.install.verbs]]    # right-click verbs (Explorer verbs / desktop actions)
 key = "open-data"                          # stable verb id
@@ -85,7 +86,7 @@ require-removable = true                   # refuse non-removable devices
 | `logo` | path | — | Shell logo asset (relative to the manifest) |
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
-| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `default-dir` (env-expanded default location override), `verbs`, `deep-links`, `aumid`, `icon`, `root-dir-folder` (folder padded under a bare drive-root target, default: the product name) |
+| `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `default-dir` (env-expanded default location override), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (refuse bare drive-root targets; default on — see Root-drive guard), `root-dir-folder` (folder padded under a bare drive-root target in the opted-out pad lane, default: the product name) |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
@@ -129,12 +130,30 @@ usual `MissingEntry` error.
 
 A target that is a bare filesystem root — a picked drive like `D:\`
 (`D:` and a UNC share root `\\server\share` count too, as does the
-POSIX `/`) — never receives the payload directly:
-`InstallContext::apply_config` pads one folder level under it, the
-product name by default, customized via `install.root-dir-folder`. The
-wizard shells rewrite the path box the moment a root is picked or
-typed, so the displayed destination is always the real one; headless
-`--dir=D:\` runs get the same guard inside the flow.
+POSIX `/`) — never receives the payload. Since 0.6.30 the default is
+to **refuse** the location outright: `install.forbid-drive-root`
+(default `true`) makes the shared directory guards reject it — the
+wizard faces flag the path inline and gate their Next button, and a
+headless run fails loudly — because a payload delivered onto a root
+scatters its files there and an uninstall would try to sweep the whole
+drive. Setting `forbid-drive-root = false` restores the pre-0.6.30 pad
+lane: `InstallContext::apply_config` pads one folder level under the
+root, the product name by default, customized via
+`install.root-dir-folder`, and the wizard shells rewrite the path box
+the moment a root is picked or typed.
+
+## Directory pre-check hooks
+
+The `check-dir` script phase (see the scripting design note) runs
+inside those same guards, before anything is written, for **fresh
+installs only**: a directory that already holds an install of the
+product (the on-disk manifest or the main executable is present) is an
+upgrade — its location decision was made when it landed, and
+re-vetoing it now would strand silent updates. A hook vetoes the
+location by setting `SHUN_DIR_BLOCKED` to a human-readable reason; the
+wizard shows the value verbatim, so the script localizes it through
+`SHUN_LANGUAGE`. A hook that errors fails the check with its error
+text.
 
 ## Install location resolution
 

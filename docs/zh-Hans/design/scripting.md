@@ -20,8 +20,8 @@ crate 是 CLI，没有稳定库 API）—— duckscript 是该家族里可内嵌
 runner = "duckscript"
 
 [[package.metadata.shun.script.hooks]]
-phase = "prepare"                 # prepare | post-install | pre-uninstall
-script = "installer/prepare.dk"   # 由 `shun build` 打包
+phase = "check-dir"               # check-dir | prepare | post-install | pre-uninstall
+script = "installer/check-dir.dk" # 由 `shun build` 打包
 ```
 
 shun 内置接口将以 duckscript 命令形式注册：`shun_progress`、
@@ -38,6 +38,15 @@ shun 内置接口将以 duckscript 命令形式注册：`shun_progress`、
 投放的、经盘符根目录垫层后的安装目录）与 `SHUN_PORTABLE`（`1`/`0`）。
 安装后搬移钩子——把随包资源挪进用户级缓存、写版本戳、清理自举
 子树——正是依据这两个变量分支。
+
+`check-dir` 阶段是安装位置预检：其钩子运行在共享目录防护之内、
+任何写入之前，且**仅针对全新安装**（目录里已有产品的磁盘清单或
+主程序即为升级——再否决会把静默更新晾在半空）。钩子把
+`SHUN_DIR_BLOCKED` 设为人类可读的原因即可否决拟议位置；向导原样
+显示该值，脚本因此可通过 `SHUN_LANGUAGE` 做本地化。钩子报错时，
+检查连同其错误文本一起失败。`SHUN_INSTALL_DIR` 在该阶段以正斜杠
+形式到达——用 `get_env` 读回（duckscript 的 `${…}` 展开的是脚本
+变量而非进程环境），子路径以 `/` 拼接。
 
 需要在 shun 封装里归一化的坑：duckscript 参数里 Windows 反斜杠是
 转义符（传正斜杠路径）；赋值必须用 `x = 命令 参数` 的输出捕获语法。

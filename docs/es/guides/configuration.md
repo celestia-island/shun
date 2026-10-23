@@ -28,7 +28,8 @@ desktop-shortcut = "ask"                   # always | never | ask (casilla del a
 start-menu-shortcut = "always"             # always | never | ask (por defecto: always — el que se pregunta es el acceso del escritorio)
 scope = "ask"                              # user (por defecto) | machine | ask
 deep-links = ["shundemo"]                  # esquemas de URL propios de la app (myapp://…)
-root-dir-folder = "ShunDemo"              # carpeta añadida bajo una raíz de unidad desnuda (D:\ → D:\ShunDemo; por defecto: nombre del producto)
+root-dir-folder = "ShunDemo"              # solo el carril de acolchado heredado (forbid-drive-root = false): carpeta acolchada bajo una raíz de unidad desnuda (D:\ → D:\ShunDemo; por defecto: nombre del producto)
+# forbid-drive-root = true                 # rechazar de plano un destino en la raíz de unidad desnuda (comportamiento por defecto — ver Protección contra la raíz de unidad); false restaura el carril de acolchado anterior
 
 [[package.metadata.shun.install.verbs]]    # verbos del menú contextual (verbos del Explorador / acciones de escritorio)
 key = "open-data"                          # id estable del verbo
@@ -76,7 +77,7 @@ require-removable = true                   # rechazar dispositivos no extraíble
 | `logo` | path | — | Recurso de logo del shell (relativo al manifiesto) |
 | `payload` | path | — | Directorio empaquetado en los artefactos |
 | `main-exe` | path | — | Punto de entrada relativo al payload (destino del atajo) |
-| `install` | table | ambos modos | conmutadores `local` / `portable`, nombre del marcador `portable-marker`, políticas `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (anulación de la ubicación por defecto con expansión de variables de entorno), `verbs`, `deep-links`, `aumid`, `icon`, `root-dir-folder` (carpeta acolchada bajo una raíz de unidad desnuda, por defecto el nombre del producto) |
+| `install` | table | ambos modos | conmutadores `local` / `portable`, nombre del marcador `portable-marker`, políticas `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (anulación de la ubicación por defecto con expansión de variables de entorno), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (rechazar destinos en la raíz de unidad desnuda; activado por defecto — ver Protección contra la raíz de unidad), `root-dir-folder` (carpeta acolchada bajo una raíz de unidad desnuda en el carril de acolchado heredado, por defecto el nombre del producto) |
 | `attachments` | array de tablas | ninguno | recursos acompañantes opcionales (packs de assets): `key` / `title` / `dest` / `online.url`; las builds lite los descargan al instalar |
 | `update` | table | ninguna | vigilancia de actualizaciones: `sources` (URLs base espejo, sondeadas en orden) + `files` resueltos bajo el primer espejo alcanzable |
 | `webview2` | table | `skip` | estrategia de runtime de Windows |
@@ -124,12 +125,32 @@ ausente da el error `MissingEntry` habitual.
 Un objetivo que sea una raíz de sistema de archivos desnuda — una
 unidad elegida como `D:\` (también cuentan `D:`, una raíz de recurso
 compartido UNC `\\server\share` y el `/` POSIX) — nunca recibe el
-payload directamente: `InstallContext::apply_config` añade un nivel de
-carpeta debajo, por defecto el nombre del producto, personalizable con
-`install.root-dir-folder`. Los asistentes reescriben el cuadro de ruta
-en cuanto se elige o teclea una raíz, de modo que el destino mostrado
-es siempre el real; las ejecuciones headless `--dir=D:\` reciben la
-misma protección dentro del flujo.
+payload. Desde 0.6.30 el comportamiento por defecto es **rechazar**
+la ubicación de plano: `install.forbid-drive-root` (por defecto
+`true`) hace que las protecciones de directorio compartidas la
+rechacen — las caras del asistente marcan la ruta en línea y bloquean
+su botón Siguiente, y una ejecución headless falla de forma ruidosa —
+porque un payload entregado en una raíz esparce sus archivos por ella
+y una desinstalación intentaría barrer el disco entero. Poner
+`forbid-drive-root = false` restaura el carril de acolchado anterior
+a 0.6.30: `InstallContext::apply_config` añade un nivel de carpeta
+debajo de la raíz, por defecto el nombre del producto, personalizable
+con `install.root-dir-folder`, y los asistentes reescriben el cuadro
+de ruta en cuanto se elige o teclea una raíz.
+
+## Ganchos de pre-comprobación del directorio
+
+La fase de script `check-dir` (véase la nota de diseño de scripting)
+corre dentro de esas mismas protecciones, antes de escribir nada,
+**solo en instalaciones nuevas**: un directorio que ya contiene una
+instalación del producto (el manifiesto en disco o el ejecutable
+principal están presentes) es una actualización — su decisión de
+ubicación se tomó cuando aterrizó, y volver a vetarla ahora dejaría
+colgadas las actualizaciones silenciosas. Un gancho veta la ubicación
+asignando `SHUN_DIR_BLOCKED` a un motivo legible; el asistente
+muestra el valor tal cual, así que el script lo localiza mediante
+`SHUN_LANGUAGE`. Un gancho que da error tumba la comprobación con su
+texto de error.
 
 ## Resolución de la ubicación de instalación
 

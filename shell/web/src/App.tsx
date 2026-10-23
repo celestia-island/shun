@@ -234,6 +234,16 @@ export default defineComponent({
     // Live writability of the shown path: null while the probe is in
     // flight or the box is empty, true/false once the backend answered.
     const dirWritable = ref<boolean | null>(null);
+    // The backend's install-dir guard verdict (drive-root refusal plus
+    // the manifest's check-dir script hooks): null clears the location;
+    // "drive-root" localizes from the table while "script" carries the
+    // check script's own message verbatim (it localizes via the wizard
+    // language server-side).
+    const dirFault = ref<
+      | { kind: "empty" | "not-writable" | "drive-root" }
+      | { kind: "script"; message: string }
+      | null
+    >(null);
     const licenseDocs = ref<LicenseDoc[]>([]);
     const licenseIndex = ref(0);
     // The displayed agreement pages: the backend's copyright notice opens a
@@ -389,9 +399,11 @@ export default defineComponent({
       if (writableTimer !== null) clearTimeout(writableTimer);
       if (!target) {
         dirWritable.value = null;
+        dirFault.value = null;
         return;
       }
       dirWritable.value = null;
+      dirFault.value = null;
       writableTimer = setTimeout(() => {
         invoke<boolean>("check_dir_writable", { dir: target })
           .then((ok) => {
@@ -399,6 +411,24 @@ export default defineComponent({
           })
           .catch(() => {
             if (dir.value.trim() === target) dirWritable.value = null;
+          });
+        // The full guard set (root refusal + check-dir hooks) runs
+        // beside the probe; a script hook may take a few milliseconds,
+        // and a verdict only lands while it is still about this path.
+        void invoke<
+          | { kind: "empty" | "not-writable" | "drive-root" }
+          | { kind: "script"; message: string }
+          | null
+        >("check_dir", {
+          dir: target,
+          mode: mode.value,
+          language: locale.value,
+        })
+          .then((fault) => {
+            if (dir.value.trim() === target) dirFault.value = fault;
+          })
+          .catch(() => {
+            if (dir.value.trim() === target) dirFault.value = null;
           });
       }, 400);
     });
@@ -940,6 +970,12 @@ export default defineComponent({
                     : s.target.warnNoWritable}
                 </p>
               )}
+              {dirFault.value?.kind === "drive-root" && (
+                <p class="wizard-target__warning">{s.target.errorRoot}</p>
+              )}
+              {dirFault.value?.kind === "script" && (
+                <p class="wizard-target__warning">{dirFault.value.message}</p>
+              )}
               {identity.value && (
                 <p class="wizard-identity">
                   {`${product.value} ${identity.value.version} · `}
@@ -1203,7 +1239,7 @@ export default defineComponent({
                     <HkButton
                       variant="primary"
                       size="lg"
-                      disabled={dirWritable.value === false}
+                      disabled={dirWritable.value === false || dirFault.value !== null}
                       onClick={() => go(flow[flowIndex("mode") + 1].key)}
                     >
                       {s.nav.next}

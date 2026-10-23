@@ -120,6 +120,10 @@ pub fn run(
     let mut candidate_state = ListState::default();
     candidate_state.select(Some(0));
     let mut license_scroll: u16 = 0;
+    // The shared directory-guard verdict for the location step's Enter
+    // gate (drive-root refusal + check-dir hooks); rendered on the pane
+    // while set, cleared by any path edit.
+    let mut dir_fault: Option<shun::wizard::DirCheckFault> = None;
     let mut locale_choice = ListState::default();
     locale_choice.select(Some(0));
     let locales: Vec<String> = core.license_docs.keys().cloned().collect();
@@ -169,6 +173,7 @@ pub fn run(
                             &locales,
                             &mut locale_choice,
                             license_scroll,
+                            dir_fault.as_ref(),
                         );
                     }
                 })
@@ -244,21 +249,37 @@ pub fn run(
                         if let Some(pick) = picked {
                             core.set_dir(pick.path.clone());
                             core.state.dir_writable = Some(pick.writable);
+                            dir_fault = None;
                         }
                     }
+                    // Enter on the path: the shared directory guards gate
+                    // the step — a fault renders on the pane and the step
+                    // stays. The nest call is the legacy pad lane (a no-op
+                    // under the default root refusal).
                     (Step::Location, KeyCode::Enter, _) => {
                         core.nest_dir(&core.state.dir.clone());
-                        core.go(Step::License);
+                        dir_fault = shun::wizard::check_install_dir(
+                            &core.config,
+                            &payload,
+                            core.state.dir.trim(),
+                            Some(&core.state.locale),
+                            false,
+                        );
+                        if dir_fault.is_none() {
+                            core.go(Step::License);
+                        }
                     }
                     (Step::Location, KeyCode::Esc, _) => core.go(Step::Language),
                     (Step::Location, KeyCode::Backspace, _) => {
                         core.state.dir.pop();
                         core.set_dir(core.state.dir.clone());
+                        dir_fault = None;
                     }
                     (Step::Location, KeyCode::Char(c), KeyModifiers::NONE)
                     | (Step::Location, KeyCode::Char(c), KeyModifiers::SHIFT) => {
                         core.state.dir.push(c);
                         core.set_dir(core.state.dir.clone());
+                        dir_fault = None;
                     }
 
                     (Step::License, KeyCode::PageUp, _) => {
@@ -425,6 +446,7 @@ fn draw_wizard(
     locales: &[String],
     locale_choice: &mut ListState,
     license_scroll: u16,
+    dir_fault: Option<&shun::wizard::DirCheckFault>,
 ) {
     set_product(&core.config.product.name);
     let [rail_area, pane_area] = Layout::default()
@@ -510,11 +532,18 @@ fn draw_wizard(
                 .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
             frame.render_stateful_widget(list, picks, candidate_state);
 
-            let hint_text = match core.state.dir_writable {
-                Some(false) => "⚠ not writable — pick a highlighted candidate".to_string(),
-                _ => String::new(),
+            // The guard verdict outranks the writability hint; a script
+            // veto carries its own localized message, the built-in
+            // faults render the English lib sentence (this face's live
+            // hints are English-only, like the writability line).
+            let hint_text = match dir_fault {
+                Some(fault) => format!("⚠ {}", fault.message()),
+                None => match core.state.dir_writable {
+                    Some(false) => "⚠ not writable — pick a highlighted candidate".to_string(),
+                    _ => String::new(),
+                },
             };
-            frame.render_widget(Paragraph::new(hint_text), hint);
+            frame.render_widget(Paragraph::new(hint_text).wrap(Wrap { trim: false }), hint);
         }
         Step::License => {
             let docs = core.license_docs_for(&core.state.locale);

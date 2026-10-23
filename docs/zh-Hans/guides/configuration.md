@@ -37,7 +37,8 @@ launch-after-install = "ask"               # always | never | ask（完成页复
 deep-links = ["shundemo"]                  # 应用持有的 URL scheme（myapp://…）
 aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生成
 icon = "assets/icon.png"                   # 载荷内启动器图标（Linux 的 Icon=）
-root-dir-folder = "ShunDemo"               # 裸盘符根目录下自动垫的文件夹（D:\ → D:\ShunDemo；默认取产品名）
+root-dir-folder = "ShunDemo"               # 仅旧垫层通道生效（forbid-drive-root = false）：裸盘符根目录下垫的文件夹（D:\ → D:\ShunDemo；默认取产品名）
+# forbid-drive-root = true                 # 直接拒绝裸盘符根目录目标（默认行为——见「根盘保护」）；false 恢复上面的垫层通道
 
 [[package.metadata.shun.install.verbs]]    # 右键菜单动词（Explorer 动词 / Desktop Action）
 key = "open-data"                          # 稳定动词 id
@@ -83,7 +84,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `logo` | path | — | 壳的 logo 资产（相对清单文件） |
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
-| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（环境变量展开的默认位置覆盖）、`verbs`、`deep-links`、`aumid`、`icon`、`root-dir-folder`（裸盘符根目录下垫的文件夹，默认取产品名） |
+| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（环境变量展开的默认位置覆盖）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒绝裸盘符根目录目标；默认开启——见「根盘保护」）、`root-dir-folder`（退出拒绝后垫层通道里垫在裸盘符根目录下的文件夹，默认取产品名） |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
@@ -120,11 +121,24 @@ require-removable = true                   # 拒绝非可移动设备
 ## 根盘保护
 
 裸文件系统根目录目标——选中的盘符（如 `D:\`，`D:`、UNC 共享根
-`\\server\share`、POSIX 的 `/` 同理）——不会直接接收载荷：
-`InstallContext::apply_config` 会在其下自动垫一层文件夹，默认取
-产品名，可用 `install.root-dir-folder` 自定义。向导弹窗在选中或
-输入根目录的当下即改写路径框，展示的始终是真实目标；无界面的
-`--dir=D:\` 运行同样在流程内受此保护。
+`\\server\share`、POSIX 的 `/` 同理）——不会接收载荷。自 0.6.30 起，
+默认行为是**直接拒绝**该位置：`install.forbid-drive-root`（默认
+`true`）让共享的目录防护将其拒之门外——向导各面会在行内标出该路径
+并锁住「下一步」按钮，无头运行则大声失败——因为投放到根目录的载荷
+会把文件撒满整个盘符根，卸载也会试图清空整块盘。设置
+`forbid-drive-root = false` 可恢复 0.6.30 之前的垫层通道：
+`InstallContext::apply_config` 会在根目录下自动垫一层文件夹，默认取
+产品名，可用 `install.root-dir-folder` 自定义，向导弹窗也会在选中或
+输入根目录的当下改写路径框。
+
+## 目录预检钩子
+
+`check-dir` 脚本阶段（见脚本设计笔记）运行在同一批防护之内、任何
+写入之前，且**仅针对全新安装**：目录里已有本产品的安装（磁盘清单或
+主程序存在）即为升级——其位置决定在落盘时已经做出，现在再否决会把
+静默更新晾在半空。钩子把 `SHUN_DIR_BLOCKED` 设为人类可读的原因即可
+否决该位置；向导原样显示该值，脚本因此可通过 `SHUN_LANGUAGE` 做
+本地化。钩子报错时，检查连同其错误文本一起失败。
 
 ## 安装位置解析
 

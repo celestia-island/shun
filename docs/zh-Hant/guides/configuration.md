@@ -27,7 +27,8 @@ desktop-shortcut = "ask"                   # always | never | ask（精靈核取
 start-menu-shortcut = "always"             # always | never | ask（預設 always，精靈只詢問桌面那份）
 scope = "ask"                              # user（預設）| machine | ask
 deep-links = ["shundemo"]                  # 應用程式持有的 URL scheme（myapp://…）
-root-dir-folder = "ShunDemo"              # 裸磁碟根目錄下自動墊的資料夾（D:\ → D:\ShunDemo；預設取產品名）
+root-dir-folder = "ShunDemo"              # 僅舊墊層通道生效（forbid-drive-root = false）：裸磁碟根目錄下墊的資料夾（D:\ → D:\ShunDemo；預設取產品名）
+# forbid-drive-root = true                 # 直接拒絕裸磁碟根目錄目標（預設行為——見「根磁碟保護」）；false 恢復上面的墊層通道
 
 [[package.metadata.shun.install.verbs]]    # 右鍵選單動詞（Explorer 動詞 / 桌面動作）
 key = "open-data"                          # 穩定的動詞 id
@@ -72,7 +73,7 @@ require-removable = true                   # 拒絕非可移除裝置
 | `logo` | path | — | 殼的 logo 資產（相對清單檔案） |
 | `payload` | path | — | 打包進發行物的目錄 |
 | `main-exe` | path | — | payload 內進入點（捷徑目標） |
-| `install` | table | 雙模式全開 | `local` / `portable` 開關、`portable-marker` 標記檔名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（環境變數展開的預設位置覆寫）、`verbs`、`deep-links`、`aumid`、`icon`、`root-dir-folder`（裸磁碟根目錄下墊的資料夾，預設取產品名） |
+| `install` | table | 雙模式全開 | `local` / `portable` 開關、`portable-marker` 標記檔名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（環境變數展開的預設位置覆寫）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒絕裸磁碟根目錄目標；預設開啟——見「根磁碟保護」）、`root-dir-folder`（退出拒絕後墊層通道裡墊在裸磁碟根目錄下的資料夾，預設取產品名） |
 | `attachments` | 表格陣列 | 無 | 選用附件資源（資產包）：`key` / `title` / `dest` / `online.url`；精簡版在安裝時下載 |
 | `update` | table | 無 | 更新監視：`sources`（鏡像根 URL，按順序探測）+ `files`，解析到第一個可達源之下 |
 | `webview2` | table | `skip` | Windows 執行階段策略 |
@@ -110,11 +111,24 @@ require-removable = true                   # 拒絕非可移除裝置
 ## 根磁碟保護
 
 裸檔案系統根目錄目標——選中的磁碟（如 `D:\`，`D:`、UNC 共享根
-`\\server\share`、POSIX 的 `/` 同理）——不會直接接收載荷：
-`InstallContext::apply_config` 會在其下自動墊一層資料夾，預設取
-產品名，可用 `install.root-dir-folder` 自訂。精靈視窗在選取或
-輸入根目錄的當下即改寫路徑框，顯示的永遠是真實目標；無介面的
-`--dir=D:\` 執行同樣在流程內受此保護。
+`\\server\share`、POSIX 的 `/` 同理）——不會接收載荷。自 0.6.30 起，
+預設行為是**直接拒絕**該位置：`install.forbid-drive-root`（預設
+`true`）讓共用的目錄防護將其拒於門外——精靈各面會在行內標出該路徑
+並鎖住「下一步」按鈕，無頭執行則大聲失敗——因為投放到根目錄的載荷
+會把檔案撒滿整個磁碟根，解除安裝也會試圖清空整顆碟。設定
+`forbid-drive-root = false` 可恢復 0.6.30 之前的墊層通道：
+`InstallContext::apply_config` 會在根目錄下自動墊一層資料夾，預設取
+產品名，可用 `install.root-dir-folder` 自訂，精靈視窗也會在選取或
+輸入根目錄的當下改寫路徑框。
+
+## 目錄預檢鉤子
+
+`check-dir` 指令碼階段（見指令碼設計筆記）執行在同一批防護之內、
+任何寫入之前，且**僅針對全新安裝**：目錄裡已有本產品的安裝（磁碟
+清單或主程式存在）即為升級——其位置決定在落地時已經做出，現在再
+否決會把靜默更新晾在半空。鉤子把 `SHUN_DIR_BLOCKED` 設為人類可讀
+的原因即可否決該位置；精靈原樣顯示該值，指令碼因此可透過
+`SHUN_LANGUAGE` 做在地化。鉤子出錯時，檢查連同其錯誤文字一起失敗。
 
 ## 安裝位置解析
 

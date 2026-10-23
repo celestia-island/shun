@@ -504,6 +504,34 @@ fn check_dir_writable(dir: String) -> bool {
     shun::fs_probe::is_dir_writable(Path::new(dir.trim()))
 }
 
+/// Live install-directory guards for the path the wizard currently
+/// shows: the shared validation (empty/writability gates, the
+/// drive-root refusal, and the manifest's `check-dir` script hooks —
+/// fresh installs only). `None` clears the location; a fault renders
+/// inline and gates the Next button (the script's message is the
+/// script's own, already localized via the wizard language).
+#[tauri::command]
+async fn check_dir(
+    state: State<'_, AppState>,
+    dir: String,
+    mode: String,
+    language: Option<String>,
+) -> Result<Option<shun::wizard::DirCheckFault>, String> {
+    let config = state.config();
+    let payload = state.payload.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        shun::wizard::check_install_dir(
+            &config,
+            &payload,
+            dir.trim(),
+            language.as_deref(),
+            mode != "local",
+        )
+    })
+    .await
+    .map_err(|e| format!("the directory-check task exited abnormally: {e}"))
+}
+
 /// The installer's identity: product version plus the build flavor,
 /// shown under the install location.
 #[derive(Serialize)]
@@ -2358,6 +2386,7 @@ fn run_shell(
             nest_root_dir,
             list_drives,
             check_dir_writable,
+            check_dir,
             get_identity,
             get_logo,
             get_license_docs,

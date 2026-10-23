@@ -236,11 +236,7 @@ impl WizardCore {
     /// The main executable name: the manifest's `main-exe`, else the
     /// product name with an `.exe` suffix.
     pub fn main_exe(&self) -> String {
-        self.install_target()
-            .ok()
-            .and_then(|i| i.main_exe)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| format!("{}.exe", self.config.product.name))
+        config_main_exe(&self.config)
     }
 
     /// Locale change: re-keys the license pager (documents arrive from
@@ -308,19 +304,11 @@ impl WizardCore {
     }
 
     /// The padded form of a path per the root-drive guard, without
-    /// touching state.
+    /// touching state. In the default configuration (root refusal on)
+    /// this is the identity: the typed path stays as typed so the
+    /// refusal is visible where it was typed.
     pub fn nested_path(&self, raw: &str) -> String {
-        let folder = self
-            .install_target()
-            .ok()
-            .and_then(|i| i.root_dir_folder.clone());
-        nest_root_dir(
-            Path::new(raw.trim()),
-            &self.config.product.name,
-            folder.as_deref(),
-        )
-        .to_string_lossy()
-        .into_owned()
+        pad_root_dir(&self.config, raw)
     }
 
     /// Advances one step (no-op past Done; entering Install resets the
@@ -471,9 +459,169 @@ pub struct InstallRequest {
     pub machine: bool,
 }
 
+/// Why an install directory cannot take the payload. The shared guard
+/// ([`check_install_dir`]) reports the first fault; the headless lane
+/// renders it through [`DirCheckFault::message`] (English, like every
+/// lib message) while the faces map it into their locale tables — a
+/// script veto carries the script's own localized message verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum DirCheckFault {
+    /// The directory is empty.
+    Empty,
+    /// The directory (or its nearest existing ancestor) is not
+    /// writable.
+    NotWritable,
+    /// The directory is a bare filesystem root and the manifest did not
+    /// opt out of the root guard (`forbid-drive-root`, default on).
+    DriveRoot,
+    /// A `check-dir` script hook vetoed the location; the message is
+    /// the script's own (it localizes via `SHUN_LANGUAGE`).
+    Script {
+        /// The veto reason, shown to the user verbatim.
+        message: String,
+    },
+}
+
+impl DirCheckFault {
+    /// The headless-lane rendering.
+    pub fn message(&self) -> String {
+        match self {
+            DirCheckFault::Empty => "the install directory must not be empty".into(),
+            DirCheckFault::NotWritable => {
+                "the target directory is not writable — pick another location".into()
+            }
+            DirCheckFault::DriveRoot => {
+                "the install directory must not sit directly on a drive root — pick a \
+                 folder under it"
+                    .into()
+            }
+            DirCheckFault::Script { message } => message.clone(),
+        }
+    }
+}
+
+/// Runs the install-directory guards every face and the headless lane
+/// share: the empty gate, the drive-root refusal (default on) and the
+/// manifest's `check-dir` script hooks — the latter two only for a
+/// FRESH install. A directory that already holds an install of this
+/// product (the on-disk manifest or the main executable) is an
+/// upgrade: its location decision was made when that install landed,
+/// and vetoing it now would strand silent updates (an updatable
+/// install in a vetoed location must stay updatable). The writability
+/// gate stays unconditional — an upgrade into an unwritable location
+/// must fail loudly, never relocate.
+///
+/// Returns the first fault, or `None` when the location is clear. The
+/// `portable` flag and `language` reach the check-dir hooks as the
+/// `SHUN_PORTABLE` / `SHUN_LANGUAGE` delivery facts (see
+/// docs/en/design/scripting.md).
+pub fn check_install_dir(
+    config: &ShunConfig,
+    payload: &ArchivePayload,
+    raw_dir: &str,
+    language: Option<&str>,
+    portable: bool,
+) -> Option<DirCheckFault> {
+    let dir = raw_dir.trim().trim_end_matches('\\').to_string();
+    if dir.is_empty() {
+        return Some(DirCheckFault::Empty);
+    }
+    let install = install_target_of(config);
+    let forbid_root = install.is_none_or(|i| i.forbid_drive_root);
+    // The legacy pad lane delivers into the padded directory — guard
+    // what will actually land (the default lane refuses roots, so the
+    // raw path is the delivered path).
+    let effective = if forbid_root {
+        dir.clone()
+    } else {
+        pad_root_dir(config, &dir)
+    };
+    let path = Path::new(&effective);
+    let upgrading =
+        read_installed_manifest(path).is_some() || path.join(config_main_exe(config)).is_file();
+    if !upgrading && forbid_root && crate::targets::install::is_fs_root(path) {
+        return Some(DirCheckFault::DriveRoot);
+    }
+    if !crate::fs_probe::is_dir_writable(path) {
+        return Some(DirCheckFault::NotWritable);
+    }
+    if upgrading {
+        return None;
+    }
+    run_check_dir_hooks(config, payload, &effective, language, portable)
+        .map(|message| DirCheckFault::Script { message })
+}
+
+/// Runs the manifest's `check-dir` hooks (the payload-embedded
+/// scripts, read pre-extraction exactly like `prepare`) and resolves
+/// their verdict: a hook vetoes the location by setting
+/// [`crate::targets::install::DIR_BLOCKED_ENV`] to a human-readable
+/// reason, which surfaces verbatim; a hook that errors fails the check
+/// with its error text. The delivery facts ride along with
+/// `SHUN_INSTALL_DIR` in forward-slash form (a backslash is an escape
+/// character in duckscript arguments).
+fn run_check_dir_hooks(
+    config: &ShunConfig,
+    payload: &ArchivePayload,
+    dir: &str,
+    language: Option<&str>,
+    portable: bool,
+) -> Option<String> {
+    let mut ctx = InstallContext::new(
+        config.product.name.clone(),
+        config.product.version.clone(),
+        PathBuf::from(dir.replace('\\', "/")),
+        portable,
+    );
+    ctx.language = language
+        .map(str::to_string)
+        .filter(|l| !l.trim().is_empty());
+    // A stale veto from an earlier probe must not leak into this one.
+    // SAFETY: shun's own SHUN_* namespace, set/read single-threaded per
+    // lane (the same contract the hook runner's script_env export uses).
+    unsafe { std::env::remove_var(crate::targets::install::DIR_BLOCKED_ENV) };
+    let mut ignored = |_: FlowEvent| {};
+    let verdict = crate::targets::install::run_phase_hooks(
+        "check-dir",
+        config,
+        &ctx,
+        &mut ignored,
+        &|path| payload.read_file(path).map(|b| b.to_vec()),
+    )
+    .err()
+    .map(|e| e.to_string())
+    .or_else(|| {
+        std::env::var(crate::targets::install::DIR_BLOCKED_ENV)
+            .ok()
+            .filter(|message| !message.trim().is_empty())
+    });
+    unsafe { std::env::remove_var(crate::targets::install::DIR_BLOCKED_ENV) };
+    verdict
+}
+
+/// The manifest's install-target configuration, when it declares one.
+fn install_target_of(config: &ShunConfig) -> Option<&InstallConfig> {
+    config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => Some(install),
+        _ => None,
+    })
+}
+
+/// The main executable name: the manifest's `main-exe`, else the
+/// product name with an `.exe` suffix — the shared resolution behind
+/// [`WizardCore::main_exe`] for callers without a core.
+fn config_main_exe(config: &ShunConfig) -> String {
+    install_target_of(config)
+        .and_then(|install| install.main_exe.clone())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| format!("{}.exe", config.product.name))
+}
+
 /// Drives one delivery through the shared path every face uses:
-/// writability gate → overwrite hygiene (stop the running app, capture
-/// the previous manifest) → the install flow → the stale-file sweep.
+/// directory guards (writability, the root refusal, the check-dir
+/// hooks) → overwrite hygiene (stop the running app, capture the
+/// previous manifest) → the install flow → the stale-file sweep.
 /// Faces render the emitted events (and fold them into their wizard
 /// state via [`WizardCore::apply_event`]); this function never touches
 /// UI state itself.
@@ -484,22 +632,23 @@ pub fn run_install(
     on_event: &mut dyn FnMut(&FlowEvent),
 ) -> Result<(), String> {
     let dir = request.dir.trim().trim_end_matches('\\').to_string();
-    if dir.is_empty() {
-        return Err("the install directory must not be empty".into());
-    }
-    if !crate::fs_probe::is_dir_writable(Path::new(&dir)) {
-        return Err("the target directory is not writable — pick another location".into());
-    }
     let portable = request.mode != "local";
+    // The check-dir hooks localize through the wizard language when the
+    // request carries one, else the language the previous install
+    // recorded (the repair path).
+    let language = match request.language.as_deref() {
+        Some(l) if !l.trim().is_empty() => Some(l.to_string()),
+        _ => current_exe_dir().as_deref().and_then(manifest_language_of),
+    };
+    if let Some(fault) =
+        check_install_dir(&core.config, payload, &dir, language.as_deref(), portable)
+    {
+        return Err(fault.message());
+    }
     let mut ctx = core
         .install_context(&dir, portable, request.machine)
         .map_err(|e| e.to_string())?;
-    ctx.language = match request.language.as_deref() {
-        Some(l) if !l.trim().is_empty() => Some(l.to_string()),
-        // Repair path (no wizard answer): keep the language the
-        // previous install recorded.
-        _ => current_exe_dir().as_deref().and_then(manifest_language_of),
-    };
+    ctx.language = language;
 
     let install_dir = ctx.install_dir.clone();
     let main_exe = core.main_exe();
@@ -928,16 +1077,23 @@ fn expand_env_vars(raw: &str) -> String {
 }
 
 /// The root-drive guard for a bare path, config-aware (free-function
-/// form for the command layer).
+/// form for the command layer). The default lane (`forbid-drive-root`,
+/// on) refuses roots outright in [`check_install_dir`] — padding here
+/// would rewrite the path into something the user never typed, so it
+/// returns the input unchanged; only the opted-out legacy lane pads
+/// one folder level under the root.
 pub fn pad_root_dir(config: &ShunConfig, raw: &str) -> String {
-    let folder = config.targets.iter().find_map(|t| match t {
-        TargetConfig::Install(install) => install.root_dir_folder.clone(),
+    let install = config.targets.iter().find_map(|t| match t {
+        TargetConfig::Install(install) => Some(install),
         _ => None,
     });
+    if install.is_none_or(|i| i.forbid_drive_root) {
+        return raw.trim().to_string();
+    }
     nest_root_dir(
         Path::new(raw.trim()),
         &config.product.name,
-        folder.as_deref(),
+        install.and_then(|i| i.root_dir_folder.clone()).as_deref(),
     )
     .to_string_lossy()
     .into_owned()
@@ -1369,4 +1525,199 @@ mod tests {
 
     const BASIC: &str =
         r#"{"product":{"name":"app","version":"1.0"},"targets":[{"kind":"install","local":true}]}"#;
+
+    // ── Install-directory guards (check_install_dir) ──────────────────
+
+    /// Serializes the guard tests that run check-dir hooks: the
+    /// duckscript runner exports the SHUN_* delivery facts and the veto
+    /// rides SHUN_DIR_BLOCKED — process-global state, held under one
+    /// lock for the whole run (the same contract the scripting tests
+    /// use).
+    static GUARD_ENV_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+    fn guard_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        GUARD_ENV_LOCK
+            .get_or_init(std::sync::Mutex::default)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// A config whose payload carries one `check-dir` duckscript hook
+    /// (the script body under test), plus the packed payload itself.
+    fn guard_config(
+        script_body: &str,
+        forbid_root: bool,
+    ) -> (crate::config::ShunConfig, ArchivePayload) {
+        let mut config = location_config(None);
+        if let Some(crate::config::TargetConfig::Install(install)) = config.targets.first_mut() {
+            install.forbid_drive_root = forbid_root;
+        }
+        config.script = Some(crate::config::ScriptHooksConfig {
+            runner: "duckscript".into(),
+            hooks: vec![crate::config::ScriptHookConfig {
+                phase: "check-dir".into(),
+                script: "check.dk".into(),
+            }],
+        });
+        let stage = tempfile::tempdir().unwrap();
+        std::fs::write(stage.path().join("check.dk"), script_body).unwrap();
+        let packed = crate::payload::pack_directory(stage.path()).unwrap();
+        let payload = ArchivePayload::from_bytes(&packed).unwrap();
+        (config, payload)
+    }
+
+    /// The empty gate answers first; a target whose nearest existing
+    /// ancestor is a FILE cannot take the probe's temp file.
+    #[test]
+    fn dir_guards_refuse_empty_and_unwritable_dirs() {
+        let _guard = guard_env_lock();
+        let (config, payload) = guard_config("noop", true);
+        assert_eq!(
+            check_install_dir(&config, &payload, "   ", None, false),
+            Some(DirCheckFault::Empty)
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &blocker.join("sub").to_string_lossy(),
+                None,
+                false
+            ),
+            Some(DirCheckFault::NotWritable)
+        );
+    }
+
+    /// A bare filesystem root is refused under the default
+    /// `forbid-drive-root` — the payload would scatter across the root
+    /// and an uninstall would try to sweep the drive.
+    #[test]
+    fn dir_guards_refuse_a_bare_root_by_default() {
+        let _guard = guard_env_lock();
+        let (config, payload) = guard_config("noop", true);
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
+        assert_eq!(
+            check_install_dir(&config, &payload, root, None, false),
+            Some(DirCheckFault::DriveRoot)
+        );
+    }
+
+    /// The WoWSP-shaped hook: a check-dir script vetoes a directory
+    /// that contains the host application it must not cohabit (the
+    /// uninstall sweep would take the host with it), and clears a
+    /// directory without it.
+    #[test]
+    fn check_dir_hooks_veto_through_the_blocked_env() {
+        let _guard = guard_env_lock();
+        // `${…}` interpolates duckscript VARIABLES, not the process
+        // environment — the delivery facts arrive via get_env (the
+        // contract the scripting tests pin).
+        let script = r#"
+dir = get_env SHUN_INSTALL_DIR
+wows = is_file ${dir}/WorldOfWarships.exe
+if ${wows}
+  set_env SHUN_DIR_BLOCKED "this is the game folder"
+end
+"#;
+        let (config, payload) = guard_config(script, true);
+
+        // Clean directory: no veto, the location is clear.
+        let clean = tempfile::tempdir().unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &clean.path().to_string_lossy(),
+                None,
+                false
+            ),
+            None
+        );
+
+        // The game folder: the script's message surfaces verbatim.
+        let game = tempfile::tempdir().unwrap();
+        std::fs::write(game.path().join("WorldOfWarships.exe"), b"MZ").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &game.path().to_string_lossy(),
+                None,
+                false
+            ),
+            Some(DirCheckFault::Script {
+                message: "this is the game folder".into()
+            })
+        );
+
+        // The veto never leaks past the check that read it.
+        // SAFETY: shun-owned SHUN_* namespace, still under the lock.
+        assert!(std::env::var(crate::targets::install::DIR_BLOCKED_ENV).is_err());
+    }
+
+    /// A directory that already holds an install of this product is an
+    /// upgrade: both fresh-install guards stand down — a location
+    /// vetoed today must never strand the silent updates of an install
+    /// that landed there yesterday.
+    #[test]
+    fn dir_guards_skip_fresh_checks_for_an_existing_install() {
+        let _guard = guard_env_lock();
+        // The hook vetoes EVERYTHING it sees.
+        let (config, payload) = guard_config("set_env SHUN_DIR_BLOCKED nope", true);
+
+        // An on-disk manifest marks a previous install.
+        let manifest = crate::targets::install::InstallManifest {
+            language: None,
+            entries: vec![],
+        };
+        let installed = tempfile::tempdir().unwrap();
+        std::fs::write(
+            installed.path().join(MANIFEST_PATH),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &installed.path().to_string_lossy(),
+                None,
+                false
+            ),
+            None
+        );
+
+        // The main executable alone marks one too (the updater's
+        // `--dir` always points at the parent of the running exe).
+        let exe_dir = tempfile::tempdir().unwrap();
+        std::fs::write(exe_dir.path().join("Wowsp.exe"), b"MZ").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &exe_dir.path().to_string_lossy(),
+                None,
+                false
+            ),
+            None
+        );
+    }
+
+    /// The opt-out pad lane keeps its rewrite (and keeps running the
+    /// script hooks for every non-root directory); the default lane
+    /// leaves the typed path alone so the refusal is visible.
+    #[test]
+    fn pad_root_dir_follows_the_forbid_knob() {
+        let mut config = location_config(None);
+        assert_eq!(pad_root_dir(&config, r"D:\"), r"D:\");
+        assert_eq!(pad_root_dir(&config, r"D:\Games"), r"D:\Games");
+        if let Some(crate::config::TargetConfig::Install(install)) = config.targets.first_mut() {
+            install.forbid_drive_root = false;
+        }
+        assert_eq!(pad_root_dir(&config, r"D:\"), r"D:\Wowsp");
+        assert_eq!(pad_root_dir(&config, r"D:\Games"), r"D:\Games");
+    }
 }

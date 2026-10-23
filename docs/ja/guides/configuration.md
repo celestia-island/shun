@@ -28,7 +28,8 @@ desktop-shortcut = "ask"                   # always | never | ask（ウィザー
 start-menu-shortcut = "always"             # always | never | ask（既定は always、尋ねられるのはデスクトップの方）
 scope = "ask"                              # user（既定）| machine | ask
 deep-links = ["shundemo"]                  # アプリが保有する URL スキーム（myapp://…）
-root-dir-folder = "ShunDemo"              # ドライブルート直下に自動で挟むフォルダー（D:\ → D:\ShunDemo、既定は製品名）
+root-dir-folder = "ShunDemo"              # 従来のパディングレーンのみ（forbid-drive-root = false）：ドライブルート直下に挟むフォルダー（D:\ → D:\ShunDemo、既定は製品名）
+# forbid-drive-root = true                 # 裸のドライブルートのターゲットを全面的に拒否（既定の挙動——「ドライブルートの保護」を参照）。false は上記のパディングレーンを復元する
 
 [[package.metadata.shun.install.verbs]]    # 右クリック動詞（Explorer 動詞 / デスクトップアクション）
 key = "open-data"                          # 安定した動詞 id
@@ -74,7 +75,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 | `logo` | path | — | シェルのロゴアセット（マニフェスト相対） |
 | `payload` | path | — | 成果物にパックされるディレクトリ |
 | `main-exe` | path | — | payload 相対のエントリポイント（ショートカットの宛先） |
-| `install` | table | 両モードオン | `local` / `portable` スイッチ、`portable-marker` ファイル名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` ポリシー、`default-dir`（環境変数展開される既定位置の上書き）、`verbs`、`deep-links`、`aumid`、`icon`、`root-dir-folder`（ドライブルート直下に挟むフォルダー、既定は製品名） |
+| `install` | table | 両モードオン | `local` / `portable` スイッチ、`portable-marker` ファイル名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` ポリシー、`default-dir`（環境変数展開される既定位置の上書き）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（裸のドライブルートのターゲットを拒否。既定でオン——ドライブルートの保護を参照）、`root-dir-folder`（オプトアウト時のパディングレーンでドライブルート直下に挟むフォルダー、既定は製品名） |
 | `attachments` | テーブル配列 | なし | 追加リソース（アセットパック）：`key` / `title` / `dest` / `online.url`。ライト版はインストール時にダウンロード |
 | `update` | table | なし | 更新ウォッチ：`sources`（ミラー基底 URL、順にプローブ）+ 最初に到達したソース配下で解決される `files` |
 | `webview2` | table | `skip` | Windows ランタイム戦略 |
@@ -121,12 +122,30 @@ require-removable = true                   # リムーバブル以外のデバ�
 
 ドライブなど、裸のファイルシステムルート（`D:\` のほか `D:`、
 UNC 共有ルート `\\server\share`、POSIX の `/` も同様）が対象の
-場合、ペイロードが直接そこへ置かれることはありません：
-`InstallContext::apply_config` がその下に一段フォルダーを挟みます。
-既定は製品名で、`install.root-dir-folder` でカスタマイズできます。
-ウィザードはルートが選択・入力された時点でパス欄を書き換えるため、
-表示される宛先は常に実際のものです。ヘッドレスの `--dir=D:\` 実行
-もフロー内で同じ保護を受けます。
+場合、ペイロードがそこへ置かれることはありません。0.6.30 からは
+既定でその場所を**拒否**します：`install.forbid-drive-root`
+（既定 `true`）により、共有のディレクトリガードがそれを退けます
+—— ウィザードの各フェイスはパスをインラインで警告表示して「次へ」
+ボタンを封じ、ヘッドレス実行は派手に失敗します —— ルートへ届いた
+ペイロードはファイルをそこに撒き散らし、アンインストールはディスク
+全体を掃き払おうとするからです。`forbid-drive-root = false` と
+すれば 0.6.30 以前のパディングレーンが戻ります：
+`InstallContext::apply_config` がルートの下に一段フォルダーを挟み
+ます（既定は製品名、`install.root-dir-folder` でカスタマイズ可能）。
+ウィザードはルートが選択・入力された時点でパス欄を書き換えます。
+
+## ディレクトリ事前チェックフック
+
+`check-dir` スクリプトフェーズ（スクリプト設計ノートを参照）は、
+それと同じガードの中で、何も書き込まれる前に、**新規インストール
+のみ**に対して走ります：製品のインストール済みディレクトリ（オン
+ディスクのマニフェストかメイン実行ファイルが存在する）は
+アップグレードであり —— その場所の決定は設置時に行われたもので、
+いま再び拒否すればサイレント更新が行き詰まるからです。フックは
+`SHUN_DIR_BLOCKED` に人が読める理由を設定して場所に異議を唱えます。
+ウィザードはその値をそのまま表示するため、スクリプトは
+`SHUN_LANGUAGE` でローカライズします。エラーを起こしたフックは、
+そのエラーテキストとともにチェックを失敗させます。
 
 ## インストール先の解決
 

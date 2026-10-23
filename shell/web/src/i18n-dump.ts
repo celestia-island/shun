@@ -36,6 +36,7 @@ const MAP: Record<string, string> = {
   flash_hint: "target.flashHint",
   warn_unwritable: "target.warnUnwritable",
   warn_no_writable: "target.warnNoWritable",
+  error_root: "target.errorRoot",
   desktop_shortcut: "done.shortcutDesktop",
   menu_shortcut: "done.shortcutMenu",
   launch_after: "done.launchAfter",
