@@ -37,6 +37,11 @@ const MAP: Record<string, string> = {
   warn_unwritable: "target.warnUnwritable",
   warn_no_writable: "target.warnNoWritable",
   error_root: "target.errorRoot",
+  error_non_empty: "target.errorNonEmpty",
+  // The relocation notice (the wizard's relocation pass: the previous
+  // install's folder must not be shared; a new empty folder is asked for).
+  relocate_title: "target.relocateTitle",
+  relocate_body: "target.relocateBody",
   desktop_shortcut: "done.shortcutDesktop",
   menu_shortcut: "done.shortcutMenu",
   launch_after: "done.launchAfter",

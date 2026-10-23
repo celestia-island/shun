@@ -35,6 +35,8 @@ struct Texts {
     rail: [&'static str; 5],
     language: (&'static str, &'static str),
     location: (&'static str, &'static str, &'static str),
+    /// The relocation pass's notice on the location pane (title, body).
+    relocate: (&'static str, &'static str),
     license: (&'static str, &'static str),
     install: &'static str,
     done: (&'static str, &'static str, &'static str, &'static str),
@@ -53,6 +55,10 @@ const ZH: Texts = Texts {
     rail: ["安装语言", "安装位置", "用户协议", "安装", "完成"],
     language: ("选择安装语言", "后续步骤将以所选语言显示"),
     location: ("选择安装位置", "安装到：", "预设位置："),
+    relocate: (
+        "需要选择新的安装位置",
+        "先前的安装所在的文件夹不宜继续共用——在其中更新或卸载会把文件夹里的其他内容一并清走。请选择一个新的空文件夹；之后只会从旧位置移除本产品自身的文件。",
+    ),
     license: ("用户协议", "我已阅读并接受上述协议"),
     install: "正在安装",
     done: ("安装完成", "安装失败", "桌面快捷方式", "立即启动"),
@@ -65,6 +71,12 @@ const EN: Texts = Texts {
     rail: ["Language", "Location", "License", "Install", "Done"],
     language: ("Choose the language", "Later steps render in it"),
     location: ("Choose the install location", "Install to:", "Quick picks:"),
+    relocate: (
+        "A new install location is required",
+        "The previous installation sits in a folder it must not share — updating or \
+         uninstalling it there would sweep the folder's other contents too. Pick a new \
+         empty folder; only this product's own files will be removed from the old location.",
+    ),
     license: ("License agreement", "I have read and accept the agreement"),
     install: "Installing",
     done: (
@@ -93,10 +105,14 @@ enum Focus {
 
 /// Runs the terminal wizard. `uninstall_mode` renders the standalone
 /// uninstall/repair page instead (the TTY's answer to the ARP entry).
+/// `relocate_from` seeds the relocation pass: the old folder is neither
+/// offered nor preselected, the pane opens on location with the notice,
+/// and the install request carries it.
 pub fn run(
     config: ShunConfig,
     payload: ArchivePayload,
     uninstall_mode: bool,
+    relocate_from: Option<String>,
 ) -> Result<(), String> {
     let locale_hint = std::env::var("LANG").unwrap_or_default();
     let mut core = {
@@ -108,6 +124,26 @@ pub fn run(
     };
     if uninstall_mode {
         core.state.step = Step::Done; // the uninstall page replaces the rail flow
+    }
+
+    // The relocation pass opens straight on the location step: the old
+    // folder drops out of the quick picks (so the preselection — the
+    // first writable candidate, the registered install leads the chain
+    // — lands on a DIFFERING folder), and the pane leads with its
+    // notice. Escaping at any point leaves the old install untouched.
+    let relocating = relocate_from.is_some() && !uninstall_mode;
+    if relocating {
+        let old = relocate_from.clone().unwrap();
+        core.state.step = Step::Location;
+        core.state
+            .candidates
+            .retain(|candidate| !crate::same_install_dir(&candidate.path, &old));
+        if crate::same_install_dir(core.state.dir.trim(), &old) {
+            if let Some(pick) = core.state.candidates.iter().find(|c| c.writable).cloned() {
+                core.set_dir(pick.path.clone());
+                core.state.dir_writable = Some(pick.writable);
+            }
+        }
     }
 
     enable_raw_mode().map_err(|e| e.to_string())?;
@@ -174,6 +210,7 @@ pub fn run(
                             &mut locale_choice,
                             license_scroll,
                             dir_fault.as_ref(),
+                            relocating,
                         );
                     }
                 })
@@ -305,6 +342,10 @@ pub fn run(
                             language: Some(core.state.locale.clone()),
                             // The TUI exposes no scope toggle — per-user.
                             machine: false,
+                            // The relocation handover (None for plain
+                            // installs): the flow sweeps only the
+                            // product's own files out of the old folder.
+                            relocate_from: relocate_from.clone(),
                         };
                         worker = Some(std::thread::spawn(move || {
                             shun::wizard::run_install(&install_core, &payload, &request, &mut {
@@ -447,6 +488,7 @@ fn draw_wizard(
     locale_choice: &mut ListState,
     license_scroll: u16,
     dir_fault: Option<&shun::wizard::DirCheckFault>,
+    relocating: bool,
 ) {
     set_product(&core.config.product.name);
     let [rail_area, pane_area] = Layout::default()
@@ -480,19 +522,51 @@ fn draw_wizard(
             frame.render_widget(hint, hint_area);
         }
         Step::Location => {
-            let [head, path_row, picks, hint] = Layout::default()
+            // The relocation pass slots its notice between the heading
+            // and the path row (title bold + wrapped body).
+            let mut constraints = vec![Constraint::Length(3)];
+            if relocating {
+                constraints.push(Constraint::Length(4));
+            }
+            constraints.extend([
+                Constraint::Length(3),
+                Constraint::Length(5),
+                Constraint::Length(2),
+            ]);
+            let rows = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Length(3),
-                    Constraint::Length(5),
-                    Constraint::Length(2),
-                ])
-                .areas(pane);
+                .constraints(constraints)
+                .split(pane);
+            let mut next = 0;
+            let head = rows[next];
+            next += 1;
+            let notice = relocating.then(|| {
+                let area = rows[next];
+                next += 1;
+                area
+            });
+            let path_row = rows[next];
+            let picks = rows[next + 1];
+            let hint = rows[next + 2];
             frame.render_widget(
                 Paragraph::new(texts.location.0).block(title_block("")),
                 head,
             );
+            if let Some(area) = notice {
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        Line::styled(
+                            texts.relocate.0,
+                            Style::default()
+                                .add_modifier(Modifier::BOLD)
+                                .fg(Color::Yellow),
+                        ),
+                        Line::raw(texts.relocate.1),
+                    ])
+                    .wrap(Wrap { trim: true }),
+                    area,
+                );
+            }
             let path_style = if focus == Focus::Path {
                 Style::default().fg(Color::Cyan)
             } else {

@@ -30,6 +30,14 @@ scope = "ask"                              # user (par défaut) | machine | ask
 deep-links = ["shundemo"]                  # schémas d'URL détenus par l'app (myapp://…)
 root-dir-folder = "ShunDemo"              # seulement l'ancienne voie d'insertion (forbid-drive-root = false) : dossier intercalé sous une racine de lecteur nue (D:\ → D:\ShunDemo ; défaut : nom du produit)
 # forbid-drive-root = true                 # refuser d'office une cible à la racine de lecteur nue (comportement par défaut — voir Garde anti-racine) ; false restaure la voie d'insertion ci-dessus
+# forbid-non-empty = true                  # refuser une installation fraîche dans un répertoire non vide (comportement par défaut — voir Règles d'emplacement d'installation) ; false restaure l'ancienne voie « tout est permis »
+# non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # noms de fichiers poubelle ignorés par le refus non-vide (sans distinction de casse)
+# [[package.metadata.shun.install.dir-rules]]  # règles déclaratives d'emplacement d'installation (voir Règles d'emplacement d'installation)
+# files = ["WorldOfWarships.exe"]              # noms déclencheurs, cherchés parmi les enfants directs de la cible
+# action = "block"                             # block (défaut) | relocate
+# message = "This folder holds the game client."  # motif en anglais, affiché tel quel
+# [package.metadata.shun.install.dir-rules.message-locales]  # remplacements par langue de l'assistant (une correspondance l'emporte sur message)
+# zh-Hans = "该目录是游戏客户端。"
 
 [[package.metadata.shun.install.verbs]]    # verbes du menu contextuel (verbes de l'Explorateur / actions de bureau)
 key = "open-data"                          # id stable du verbe
@@ -76,7 +84,7 @@ require-removable = true                   # refuser les périphériques non amo
 | `logo` | path | — | Ressource logo du shell (relative au manifeste) |
 | `payload` | path | — | Répertoire empaqueté dans les artefacts |
 | `main-exe` | path | — | Point d'entrée relatif au payload (cible du raccourci) |
-| `install` | table | les deux modes | interrupteurs `local` / `portable`, nom de fichier `portable-marker`, politiques `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (remplacement de l'emplacement par défaut, variables d'environnement expansées), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (refuser les cibles à la racine de lecteur nue ; activé par défaut — voir Garde anti-racine), `root-dir-folder` (dossier intercalé sous une racine de lecteur nue dans l'ancienne voie d'insertion, défaut : le nom du produit) |
+| `install` | table | les deux modes | interrupteurs `local` / `portable`, nom de fichier `portable-marker`, politiques `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (remplacement de l'emplacement par défaut, variables d'environnement expansées), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (refuser les cibles à la racine de lecteur nue ; activé par défaut — voir Garde anti-racine), `root-dir-folder` (dossier intercalé sous une racine de lecteur nue dans l'ancienne voie d'insertion, défaut : le nom du produit), `forbid-non-empty` (refuser les cibles non vides pour les installations fraîches ; activé par défaut), `non-empty-allowlist` (noms de fichiers poubelle ignorés par le refus), `dir-rules` (règles déclaratives d'emplacement d'installation — voir Règles d'emplacement d'installation) |
 | `attachments` | tableau de tables | aucun | ressources compagnes optionnelles (packs d'assets) : `key` / `title` / `dest` / `online.url` ; les builds lite les téléchargent à l'installation |
 | `update` | table | aucune | veille de mise à jour : `sources` (URL de base miroirs, sondées dans l'ordre) + `files` résolus sous la première source joignable |
 | `webview2` | table | `skip` | stratégie runtime Windows |
@@ -149,7 +157,85 @@ son veto maintenant laisserait les mises à jour silencieuses en plan.
 Un hook met son veto à l'emplacement en affectant à `SHUN_DIR_BLOCKED`
 un motif lisible ; l'assistant affiche la valeur telle quelle, le
 script le localise donc via `SHUN_LANGUAGE`. Un hook qui échoue fait
-échouer la vérification avec son texte d'erreur.
+échouer la vérification avec son texte d'erreur. La table déclarative
+`dir-rules` (voir Règles d'emplacement d'installation) tourne aux
+côtés de cette phase, **avant** les hooks — le veto le plus
+spécifique répond en premier ; les hooks eux-mêmes ne changent pas.
+
+## Règles d'emplacement d'installation
+
+Les gardes d'emplacement partagent une forme : plus la cible est
+vide, plus la livraison est sûre. L'ensemble par défaut est la garde
+anti-racine ci-dessus plus le **refus non-vide** —
+`install.forbid-non-empty` (défaut `true`) fait qu'une installation
+fraîche refuse une cible qui contient déjà des fichiers étrangers,
+car livrer à côté d'eux emmêle les produits : l'échange atomique de
+la mise à jour écarte le répertoire entier, et le balayage de la
+désinstallation le parcourt. Une mise à jour (le manifeste sur disque
+ou l'exécutable principal présent) passe toujours — sa décision
+d'emplacement a été prise à l'installation, et y opposer de nouveau
+son veto laisserait les mises à jour silencieuses en plan.
+`install.forbid-non-empty = false` restaure l'ancienne voie « tout
+est permis », et `install.non-empty-allowlist` (défaut
+`["desktop.ini", "Thumbs.db", ".DS_Store"]`, sans distinction de
+casse) nomme les dépôts du système que le refus ignore : un dossier
+ne contenant que des fichiers poubelle compte comme vide.
+
+`[[package.metadata.shun.install.dir-rules]]` est le frère piloté par
+données du hook `check-dir` — la réponse déclarative à « cet
+emplacement ne va pas », née de WoWSP : des joueurs installaient à
+côté du client du jeu, et l'échange de la mise à jour aurait écarté
+le dossier entier du jeu :
+
+```toml
+[[package.metadata.shun.install.dir-rules]]
+files = ["WorldOfWarships.exe"]     # noms déclencheurs, cherchés parmi les enfants directs de la cible
+action = "block"                    # block (défaut) | relocate
+message = "This folder holds the game client — pick another location."  # motif en anglais, affiché tel quel
+
+[package.metadata.shun.install.dir-rules.message-locales]  # remplacements par langue de l'assistant
+zh-Hans = "该目录是游戏客户端，请另选位置。"
+```
+
+- `block` (le défaut) met son veto **uniquement aux installations
+  fraîches** — une installation qui vit déjà là continue de se mettre
+  à jour sur place (la règle qui ne laisse jamais une installation en
+  plan).
+- `relocate` marque l'emplacement comme dangereux à **partager** :
+  les choix neufs sont vetoisés comme avec `block`, et en plus une
+  installation existante y est signalée — la voie silencieuse passe
+  la main à l'assistant interactif au lieu de mettre à jour sur
+  place.
+- `message-locales` remplace le propre branchement `SHUN_LANGUAGE`
+  du script du hook : une entrée qui correspond l'emporte sur
+  `message`, qui reste le repli anglais.
+
+Ordre d'évaluation des gardes pour une installation fraîche — le
+veto le plus spécifique répond en premier : **dir-rules → hooks de
+script check-dir → refus non-vide** ; le contrôle de chemin vide et
+la garde anti-racine répondent avant tous, et le contrôle d'écriture
+est inconditionnel. Sur une mise à jour, seules les règles à action
+`relocate` peuvent rejeter l'emplacement.
+
+### Relocalisation
+
+La voie silencieuse (`--silent --dir=<ancien répertoire>`) détecte
+via la règle une installation signalée et se relance en assistant
+interactif avec `--relocate-from <ancien répertoire>` (une nouvelle
+option CLI du shell ; elle implique la voie interactive et entre en
+conflit avec `--silent`). L'assistant s'ouvre directement à l'étape
+d'emplacement avec un encart localisé expliquant que l'ancien
+emplacement n'est plus valide, et le répertoire signalé est exclu
+des sélections rapides. Une fois la nouvelle installation posée,
+seuls les fichiers du produit listés dans son manifeste sont balayés
+hors de l'ancien répertoire — plus le manifeste sur disque, le
+marqueur portable et le désinstalleur copié ; les fichiers étrangers
+(le jeu hôte, par exemple) ne sont jamais touchés, et l'ancien
+répertoire lui-même n'est supprimé qu'une fois vide. L'enregistrement
+(ARP, raccourcis) suit le nouvel emplacement — le balayage ne
+désenregistre jamais rien. Annuler l'assistant laisse l'ancienne
+installation intacte et à jour — la règle qui ne laisse jamais une
+installation en plan tient.
 
 ## Résolution de l'emplacement d'installation
 

@@ -827,6 +827,14 @@ struct Texts {
     warn_unwritable: String,
     warn_no_writable: String,
     error_root: String,
+    /// The non-empty folder refusal (the default `forbid-non-empty`
+    /// guard): a fresh install refuses to tangle with a neighbor the
+    /// update swap and uninstall sweep would endanger.
+    error_non_empty: String,
+    /// The relocation notice (title + body) — the location pane's
+    /// leading callout when the wizard runs its relocation pass.
+    relocate_title: String,
+    relocate_body: String,
     error_copy: String,
     flavor_full: String,
     flavor_full_webview2: String,
@@ -1640,6 +1648,13 @@ struct FallbackApp {
     stage: Stage,
     mode: &'static str,
     dir: String,
+    /// The relocation handover (an explicit `--relocate-from`, or the
+    /// startup probe's flagged candidate): the wizard opens on the
+    /// location step with the notice, never offers the old folder, and
+    /// the install request carries it — the flow sweeps only the
+    /// product's own manifest-listed files out of it. `None` for plain
+    /// installs; cancelling the wizard leaves the old install untouched.
+    relocate_from: Option<String>,
     /// The wizard's answer to the `ask` desktop-shortcut policy
     /// (default checked, the NSIS convention).
     desktop_shortcut: bool,
@@ -1874,6 +1889,7 @@ impl FallbackApp {
         payload: ArchivePayload,
         reason: FallbackReason,
         uninstall_mode: bool,
+        relocate_from: Option<String>,
         language: String,
         receiver: Receiver<WorkerMsg>,
         logo: Option<TextureHandle>,
@@ -1888,8 +1904,15 @@ impl FallbackApp {
         let mode = offered_modes(&config).first().copied().unwrap_or("local");
         // The initial location resolves exactly like the web face's
         // default_dir command: the first writable candidate from the
-        // config-driven list, else the wizard's default.
-        let probed = shun::wizard::location_defaults_for(&config);
+        // config-driven list, else the wizard's default. The relocation
+        // pass never offers the old folder — it is dropped from the
+        // candidates FIRST, so the preselection lands on a DIFFERING
+        // folder when the registered (and flagged) install was the
+        // leader of the chain.
+        let mut probed = shun::wizard::location_defaults_for(&config);
+        if let Some(old) = &relocate_from {
+            probed.retain(|candidate| !crate::same_install_dir(&candidate.path, old));
+        }
         let dir = probed
             .iter()
             .find(|candidate| candidate.writable)
@@ -1930,6 +1953,18 @@ impl FallbackApp {
         let runtime_forced = reason == FallbackReason::MissingWebview2 && !uninstall_mode;
         let warn_missing = runtime_forced && config.webview2_warn_missing();
         let warn_missing_runtime = warn_missing && !shun::webview2::evergreen_carried(&payload);
+        let pages = wizard_pages();
+        // The relocation pass skips the language pane: the wizard opens
+        // straight on the location step (the language stays at the
+        // saved/system resolution, like a rerun that never asks again).
+        let initial_step = if relocate_from.is_some() {
+            pages
+                .iter()
+                .position(|page| page.is_location())
+                .unwrap_or(0)
+        } else {
+            0
+        };
         Self {
             dir,
             config,
@@ -1946,6 +1981,7 @@ impl FallbackApp {
             go_tauri: None,
             runtime_consent: None,
             runtime_ask_pending: false,
+            relocate_from,
             candidates: probed
                 .into_iter()
                 .map(|c| (c.kind.to_string(), c.writable, c.path))
@@ -1985,14 +2021,14 @@ impl FallbackApp {
             glow: std::rc::Rc::new(GlowCache::default()),
             caption_icons,
             stage: Stage::Configure,
-            pages: wizard_pages(),
+            pages,
             mode,
             desktop_shortcut: true,
             start_menu: true,
             launch_after: true,
             machine: false,
             license_docs,
-            step: 0,
+            step: initial_step,
             license_accepted: false,
             license_entered: None,
             lang_combo_open: false,
@@ -2168,9 +2204,11 @@ impl FallbackApp {
 
     /// The install request the shared wizard driver consumes: mode,
     /// padded directory, and the wizard language (it rides into the flow
-    /// as `SHUN_LANGUAGE` and the on-disk manifest). Shortcut answers
-    /// deliberately ride OUT of the request — the flow creates none and
-    /// the done page owns the choice, exactly like every other face.
+    /// as `SHUN_LANGUAGE` and the on-disk manifest), plus the
+    /// relocation handover when this run is a relocation pass. Shortcut
+    /// answers deliberately ride OUT of the request — the flow creates
+    /// none and the done page owns the choice, exactly like every other
+    /// face.
     fn install_request(&self) -> Result<InstallRequest, String> {
         let dir = self.dir.trim().trim_end_matches('\\');
         if dir.is_empty() {
@@ -2181,6 +2219,10 @@ impl FallbackApp {
             dir: dir.to_string(),
             language: Some(self.language.clone()),
             machine: self.machine,
+            // The old folder the relocation leaves behind — None for
+            // plain installs; the flow sweeps only the product's own
+            // manifest-listed files out of it.
+            relocate_from: self.relocate_from.clone(),
         })
     }
 
@@ -2299,6 +2341,7 @@ impl FallbackApp {
                 self.desktop_shortcut,
                 uninstalling,
                 &[],
+                self.relocate_from.as_deref(),
             )
         }) {
             self.outcome = Some(Outcome::Failed(err));
@@ -2772,11 +2815,13 @@ pub(crate) fn icon_viewport_builder(logo_kind: &str, logo_bytes: &[u8]) -> egui:
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     config: ShunConfig,
     payload: ArchivePayload,
     reason: FallbackReason,
     uninstall: bool,
+    relocate_from: Option<String>,
     logo_kind: &str,
     logo_bytes: &[u8],
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
@@ -2813,6 +2858,7 @@ pub fn run(
                 payload,
                 reason,
                 uninstall,
+                relocate_from,
                 logo_kind,
                 logo_bytes,
                 license_docs,
@@ -2845,6 +2891,7 @@ pub(crate) fn run_gui(
     go_tauri: Box<dyn FnOnce() -> bool>,
     reason: FallbackReason,
     uninstall: bool,
+    relocate_from: Option<String>,
     logo_kind: &str,
     logo_bytes: &[u8],
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
@@ -2872,6 +2919,7 @@ pub(crate) fn run_gui(
                 ArchivePayload::empty(),
                 reason,
                 uninstall,
+                relocate_from,
                 logo_kind,
                 logo_bytes,
                 license_docs,
@@ -2923,6 +2971,7 @@ fn build_app(
     payload: ArchivePayload,
     reason: FallbackReason,
     uninstall: bool,
+    relocate_from: Option<String>,
     logo_kind: &str,
     logo_bytes: &[u8],
     license_docs: std::collections::BTreeMap<String, Vec<shun::config::ResolvedLicenseDoc>>,
@@ -2988,6 +3037,7 @@ fn build_app(
             payload,
             reason,
             uninstall,
+            relocate_from,
             language,
             receiver,
             logo,
@@ -3811,6 +3861,26 @@ impl FallbackApp {
             .size(13.5)
             .color(theme.text_secondary),
         );
+        // The relocation pass leads with its notice: the previous
+        // install's folder can no longer be shared, a new EMPTY folder
+        // is asked for, and only the product's own files leave the old
+        // location (cancelling here keeps the old install as it is).
+        if self.relocate_from.is_some() {
+            ui.add_space(12.0);
+            crate::callout::callout(
+                ui,
+                &theme,
+                &crate::callout::CalloutIcons {
+                    alert: &icons.alert,
+                    info: &icons.info,
+                    check: &icons.check,
+                },
+                crate::callout::CalloutLevel::Warning,
+                Some(texts.relocate_title.as_str()),
+                texts.relocate_body.as_str(),
+                &mut |_ui| {},
+            );
+        }
         ui.add_space(18.0);
         ui.label(
             RichText::new(texts.dir_label)
@@ -4108,9 +4178,27 @@ impl FallbackApp {
                                 .color(theme.error),
                         );
                     }
+                    // The non-empty refusal (the default guard): a
+                    // fresh install must not tangle with a neighbor the
+                    // update swap and uninstall sweep would endanger.
+                    Some(shun::wizard::DirCheckFault::NonEmpty) => {
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(texts.error_non_empty.clone())
+                                .size(13.0)
+                                .color(theme.error),
+                        );
+                    }
                     // The script's own message, already localized through
                     // the wizard language server-side.
                     Some(shun::wizard::DirCheckFault::Script { message }) => {
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(message.clone()).size(13.0).color(theme.error));
+                    }
+                    // A declarative dir-rule's own message, localized
+                    // through its message-locales — verbatim, like the
+                    // script veto.
+                    Some(shun::wizard::DirCheckFault::Rule { message }) => {
                         ui.add_space(6.0);
                         ui.label(RichText::new(message.clone()).size(13.0).color(theme.error));
                     }
@@ -5059,6 +5147,9 @@ impl FallbackApp {
                     dir,
                     language: None,
                     machine: false,
+                    // Repair re-installs over the existing folder — no
+                    // relocation to sweep.
+                    relocate_from: None,
                 };
                 shun::wizard::run_install(&core, &payload, &request, &mut |event| {
                     let _ = sender.send(WorkerMsg::Event(event.clone()));
@@ -5878,6 +5969,24 @@ mod strings_tests {
             assert!(
                 !texts.done_warn_webview2.is_empty(),
                 "{locale}: done_warn_webview2"
+            );
+        }
+    }
+
+    /// Every authored locale carries the relocation pass's notice and
+    /// the non-empty refusal — the same serde(default) gap: a locale
+    /// missing one would render an empty callout (or a silent location
+    /// pane) for that language.
+    #[test]
+    fn every_locale_authors_the_relocation_copy() {
+        let strings = wizard_strings();
+        for locale in &strings.locales {
+            let texts = strings.texts(locale);
+            assert!(!texts.relocate_title.is_empty(), "{locale}: relocate_title");
+            assert!(!texts.relocate_body.is_empty(), "{locale}: relocate_body");
+            assert!(
+                !texts.error_non_empty.is_empty(),
+                "{locale}: error_non_empty"
             );
         }
     }

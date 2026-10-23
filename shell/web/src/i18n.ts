@@ -185,6 +185,16 @@ export interface InstallerStrings {
     nestedNote: string;
     /** Drive-root refusal (the default `forbid-drive-root` guard). */
     errorRoot: string;
+    /** Non-empty folder refusal (the default `forbid-non-empty`
+     *  guard): a fresh install refuses to tangle with a neighbor the
+     *  update swap and uninstall sweep would endanger. */
+    errorNonEmpty: string;
+    /** Relocation notice: the previous install sits in a folder a
+     *  `relocate` dir-rule flagged — the wizard asks for a new empty
+     *  folder and sweeps only the product's own files from the old
+     *  one. */
+    relocateTitle: string;
+    relocateBody: string;
     /** Optional-components block: heading + the bundled badge. */
     attachTitle: string;
     attachBundled: string;
@@ -300,6 +310,9 @@ const zhHans: InstallerStrings = {
     warnNoWritable: "未检测到可写的候选位置，请手动选择有权限的目录。",
     nestedNote: "已自动垫一层文件夹，避免直接安装到盘符根目录。",
     errorRoot: "不能直接安装到盘符根目录——请选择一个具体的文件夹（例如 D:\\%PRODUCT%）。",
+    errorNonEmpty: "该文件夹不是空的——请选择一个空文件夹（或先清空它），以免日后的清理波及其他内容。",
+    relocateTitle: "需要选择新的安装位置",
+    relocateBody: "先前的安装所在的文件夹不宜继续共用——在其中更新或卸载会把文件夹里的其他内容一并清走。请在下方选择一个新的空文件夹；之后只会从旧位置移除本产品自身的文件。",
     attachTitle: "可选组件",
     attachBundled: "已内置",
     flashHint: "本交付还包含一个设备刷写步骤，安装完成后进行。",
@@ -446,6 +459,9 @@ const zhHant: InstallerStrings = {
     warnNoWritable: "未偵測到可寫的候選位置，請手動選擇有權限的目錄。",
     nestedNote: "已自動墊一層資料夾，避免直接安裝到磁碟根目錄。",
     errorRoot: "不能直接安裝到磁碟根目錄——請選擇一個具體的資料夾（例如 D:\\%PRODUCT%）。",
+    errorNonEmpty: "該資料夾不是空的——請選擇一個空資料夾（或先清空它），以免日後的清理波及其他內容。",
+    relocateTitle: "需要選擇新的安裝位置",
+    relocateBody: "先前的安裝所在的資料夾不宜繼續共用——在其中更新或解除安裝會把資料夾裡的其他內容一併清走。請在下方選擇一個新的空資料夾；之後只會從舊位置移除本產品自身的檔案。",
     attachTitle: "可選元件",
     attachBundled: "已內建",
     flashHint: "本交付還包含一個裝置燒錄步驟，安裝完成後進行。",
@@ -592,6 +608,9 @@ const en: InstallerStrings = {
     warnNoWritable: "No writable candidate location was found — pick a directory you have access to.",
     nestedNote: "A folder layer was added automatically so the payload never lands on the drive root.",
     errorRoot: "The install folder must not sit directly on a drive root — pick a real folder (for example D:\\%PRODUCT%).",
+    errorNonEmpty: "This folder is not empty — choose an empty folder (or clean it) so nothing else gets swept away later.",
+    relocateTitle: "A new install location is required",
+    relocateBody: "The previous installation sits in a folder it must not share — updating or uninstalling it there would sweep the folder's other contents too. Choose a new empty folder below; only this product's own files will be removed from the old location.",
     attachTitle: "Optional components",
     attachBundled: "Bundled",
     flashHint: "This delivery also includes a device flash step, run after the install.",
@@ -740,6 +759,9 @@ const ru: InstallerStrings = {
     warnNoWritable: "Доступных для записи вариантов не найдено — выберите папку, к которой у вас есть доступ.",
     nestedNote: "Автоматически добавлен уровень папки, чтобы установка не шла в корень диска.",
     errorRoot: "Нельзя устанавливать прямо в корень диска — выберите обычную папку (например, D:\\%PRODUCT%).",
+    errorNonEmpty: "Эта папка не пуста — выберите пустую папку (или сначала очистите её), чтобы позже не пострадало ничего лишнего.",
+    relocateTitle: "Требуется новое место установки",
+    relocateBody: "Предыдущая установка находится в папке, которой не стоит делиться с программой — обновление или удаление там заодно смахнуло бы и остальное содержимое папки. Выберите ниже новую пустую папку; из старого места будут удалены только файлы самого продукта.",
     attachTitle: "Частые компоненты",
     attachBundled: "В комплекте",
     flashHint: "Этот пакет также включает шаг прошивки устройства после установки.",
@@ -898,6 +920,9 @@ const ja: InstallerStrings = {
     nestedNote:
       "ドライブのルートに直接インストールされないよう、フォルダーを一階層自動で追加しました。",
     errorRoot: "ドライブのルート直下にはインストールできません。実際のフォルダーを選んでください（例: D:\\%PRODUCT%）。",
+    errorNonEmpty: "このフォルダーは空ではありません——後で他の内容を巻き込まないために、空のフォルダーを選ぶか、このフォルダーを空にしてください。",
+    relocateTitle: "新しいインストール先が必要です",
+    relocateBody: "既存のインストールは、共有すべきでないフォルダーにあります——そこで更新やアンインストールを行うと、フォルダー内の他の内容も一緒に削除されてしまいます。下で新しい空のフォルダーを選んでください。古い場所から削除されるのは製品自身のファイルだけです。",
     attachTitle: "追加コンポーネント",
     attachBundled: "同梱済み",
     flashHint: "この配信にはインストール後のデバイス書き込みステップも含まれます。",
@@ -1060,6 +1085,9 @@ const ko: InstallerStrings = {
     nestedNote:
       "드라이브 루트에 바로 설치되지 않도록 폴더를 한 단계 자동으로 추가했습니다.",
     errorRoot: "드라이브 루트에 직접 설치할 수 없습니다. 실제 폴더를 선택해 주세요 (예: D:\\%PRODUCT%).",
+    errorNonEmpty: "이 폴더는 비어 있지 않습니다——나중에 다른 내용이 함께 지워지지 않도록 빈 폴더를 선택하거나 폴더를 비워 주세요.",
+    relocateTitle: "새 설치 위치가 필요합니다",
+    relocateBody: "기존 설치가 공유해서는 안 되는 폴더에 있습니다——그곳에서 업데이트하거나 제거하면 폴더의 다른 내용까지 함께 지워집니다. 아래에서 새로운 빈 폴더를 선택해 주세요. 이전 위치에서는 제품 자체의 파일만 제거됩니다.",
     attachTitle: "선택 구성 요소",
     attachBundled: "포함됨",
     flashHint: "이 배포에는 설치 후 기기 플래시 단계도 포함됩니다.",
@@ -1213,6 +1241,9 @@ const fr: InstallerStrings = {
     nestedNote:
       "Un niveau de dossier a été ajouté automatiquement afin que l'installation n'atterrisse jamais à la racine du lecteur.",
     errorRoot: "Impossible d'installer directement à la racine d'un disque — choisissez un vrai dossier (par exemple D:\\%PRODUCT%).",
+    errorNonEmpty: "Ce dossier n'est pas vide — choisissez un dossier vide (ou videz-le d'abord) pour ne rien emporter d'autre plus tard.",
+    relocateTitle: "Un nouvel emplacement d'installation est requis",
+    relocateBody: "L'installation précédente se trouve dans un dossier qu'elle ne doit pas partager — y mettre à jour ou la désinstaller emporterait aussi le reste du contenu du dossier. Choisissez ci-dessous un nouveau dossier vide ; seuls les fichiers propres au produit seront retirés de l'ancien emplacement.",
     attachTitle: "Composants facultatifs",
     attachBundled: "Inclus",
     flashHint: "Cette livraison inclut également une étape de flashage après l'installation.",
@@ -1372,6 +1403,9 @@ const es: InstallerStrings = {
     nestedNote:
       "Se añadió automáticamente un nivel de carpeta para que la instalación nunca caiga en la raíz de la unidad.",
     errorRoot: "No se puede instalar directamente en la raíz de una unidad: elige una carpeta real (por ejemplo, D:\\%PRODUCT%).",
+    errorNonEmpty: "Esta carpeta no está vacía: elige una carpeta vacía (o límpiala primero) para que nada más se vea arrastrado más adelante.",
+    relocateTitle: "Se requiere una nueva ubicación de instalación",
+    relocateBody: "La instalación anterior está en una carpeta que no debe compartirse: actualizarla o desinstalarla ahí también barrería el resto del contenido de la carpeta. Elige abajo una carpeta nueva y vacía; de la ubicación anterior solo se eliminarán los archivos del propio producto.",
     attachTitle: "Componentes opcionales",
     attachBundled: "Incluido",
     flashHint: "Esta entrega también incluye un paso de flasheo tras la instalación.",
@@ -1531,6 +1565,9 @@ const de: InstallerStrings = {
     nestedNote:
       "Automatisch wurde eine Ordnerebene eingefügt, damit nichts direkt im Wurzelverzeichnis des Laufwerks landet.",
     errorRoot: "Eine Installation direkt im Wurzelverzeichnis eines Laufwerks ist nicht erlaubt — wähle einen echten Ordner (z. B. D:\\%PRODUCT%).",
+    errorNonEmpty: "Dieser Ordner ist nicht leer — wähle einen leeren Ordner (oder räume ihn vorher aus), damit später nichts anderes mit entfernt wird.",
+    relocateTitle: "Ein neuer Installationsort ist erforderlich",
+    relocateBody: "Die bisherige Installation liegt in einem Ordner, den sie nicht teilen darf — ein Update oder eine Deinstallation dort würde auch die übrigen Inhalte des Ordners mit entfernen. Wähle unten einen neuen, leeren Ordner; vom alten Ort werden nur die Dateien des Produkts selbst entfernt.",
     attachTitle: "Optionale Komponenten",
     attachBundled: "Enthalten",
     flashHint: "Diese Auslieferung umfasst zudem einen Flash-Schritt nach der Installation.",
@@ -1689,6 +1726,9 @@ const pt: InstallerStrings = {
     nestedNote:
       "Foi adicionado automaticamente um nível de pastas para que a instalação nunca caia na raiz da unidade.",
     errorRoot: "Não é possível instalar direto na raiz de uma unidade — escolha uma pasta real (por exemplo, D:\\%PRODUCT%).",
+    errorNonEmpty: "Esta pasta não está vazia — escolha uma pasta vazia (ou limpe-a antes) para que nada além dela seja varrido mais tarde.",
+    relocateTitle: "É necessário um novo local de instalação",
+    relocateBody: "A instalação anterior está em uma pasta que não deve ser compartilhada — atualizar ou desinstalar ali varreria também os demais conteúdos da pasta. Escolha abaixo uma pasta nova e vazia; do local antigo serão removidos apenas os arquivos do próprio produto.",
     attachTitle: "Componentes opcionais",
     attachBundled: "Incluído",
     flashHint: "Esta entrega inclui também um passo de gravação após a instalação.",

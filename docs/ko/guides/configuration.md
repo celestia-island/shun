@@ -30,6 +30,14 @@ scope = "ask"                              # user(기본값) | machine | ask
 deep-links = ["shundemo"]                  # 앱이 소유한 URL 스킴(myapp://…)
 root-dir-folder = "ShunDemo"              # 레거시 패딩 레인 전용(forbid-drive-root = false): 드라이브 루트 바로 아래에 깔리는 폴더 (D:\ → D:\ShunDemo, 기본값은 제품명)
 # forbid-drive-root = true                 # 드라이브 루트 대상을 곧장 거부(기본 동작 — 「드라이브 루트 보호」 참조). false는 위의 패딩 레인을 되살림
+# forbid-non-empty = true                  # 신규 설치에서 비어 있지 않은 디렉터리를 거부(기본 동작 — 「설치 위치 규칙」 참조). false는 예전의 무엇이든 허용하던 레인을 되살림
+# non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # 비어 있지 않음 거부가 무시하는 찌꺼기 파일명(대소문자 구분 없음)
+# [[package.metadata.shun.install.dir-rules]]  # 선언적 설치 위치 규칙(「설치 위치 규칙」 참조)
+# files = ["WorldOfWarships.exe"]              # 트리거 파일 이름, 대상 디렉터리의 직속 하위 항목으로 검사
+# action = "block"                             # block(기본) | relocate
+# message = "This folder holds the game client."  # 영어 사유, 그대로 표시
+# [package.metadata.shun.install.dir-rules.message-locales]  # 마법사 로케일별 재정의(일치가 message보다 우선)
+# zh-Hans = "该目录是游戏客户端。"
 
 [[package.metadata.shun.install.verbs]]    # 우클릭 동사(탐색기 동사 / 데스크톱 액션)
 key = "open-data"                          # 안정적인 동사 id
@@ -75,7 +83,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 | `logo` | path | — | 셸 로고 에셋(매니페스트 기준 상대 경로) |
 | `payload` | path | — | 아티팩트로 패킹되는 디렉터리 |
 | `main-exe` | path | — | payload 상대 진입점(바로 가기 대상) |
-| `install` | table | 두 모두 켜짐 | `local` / `portable` 스위치, `portable-marker` 파일명, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 정책, `default-dir`(환경 변수가 전개되는 기본 위치 재정의), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root`(드라이브 루트 대상 거부, 기본 켜짐 — 드라이브 루트 보호 참조), `root-dir-folder`(옵트아웃한 패딩 레인에서 드라이브 루트 아래 깔리는 폴더, 기본은 제품명) |
+| `install` | table | 두 모두 켜짐 | `local` / `portable` 스위치, `portable-marker` 파일명, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 정책, `default-dir`(환경 변수가 전개되는 기본 위치 재정의), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root`(드라이브 루트 대상 거부, 기본 켜짐 — 드라이브 루트 보호 참조), `root-dir-folder`(옵트아웃한 패딩 레인에서 드라이브 루트 아래 깔리는 폴더, 기본은 제품명), `forbid-non-empty`(신규 설치에서 비어 있지 않은 대상 거부, 기본 켜짐), `non-empty-allowlist`(비어 있지 않음 거부가 무시하는 찌꺼기 파일명), `dir-rules`(선언적 설치 위치 규칙 — 「설치 위치 규칙」 참조) |
 | `attachments` | 테이블 배열 | 없음 | 선택적 추가 리소스(에셋 팩): `key` / `title` / `dest` / `online.url`. 라이트 빌드는 설치 시 내려받기 |
 | `update` | table | 없음 | 업데이트 감시: `sources`(미러 기본 URL, 순서대로 탐색) + 첫 번째로 도달한 소스 아래에서 해석되는 `files` |
 | `webview2` | table | `skip` | Windows 런타임 전략 |
@@ -140,7 +148,74 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 `SHUN_DIR_BLOCKED`를 사람이 읽을 수 있는 이유로 설정해 위치에
 거부권을 행사합니다. 마법사는 그 값을 그대로 표시하므로 스크립트는
 `SHUN_LANGUAGE`로 현지화합니다. 오류를 낸 훅은 자신의 오류 텍스트와
-함께 검사를 실패시킵니다.
+함께 검사를 실패시킵니다. 선언적 `dir-rules` 테이블(「설치 위치
+규칙」 참조)은 이 단계와 함께, 훅보다 **먼저** 실행됩니다 — 가장
+구체적인 거부가 먼저 답합니다. 훅 자체는 변하지 않았습니다.
+
+## 설치 위치 규칙
+
+위치 가드는 하나의 형태를 공유합니다: 대상이 비어 있을수록 배포는
+안전합니다. 기본 집합은 위의 드라이브 루트 거부에 **비어 있지 않음
+거부**를 더한 것 — `install.forbid-non-empty`(기본 `true`)는 신규
+설치가 이미 남의 파일을 담은 대상을 거부하게 합니다. 옆에 배달하면
+제품끼리 얽히기 때문입니다: 업데이트의 원자적 스왑은 디렉터리 전체를
+옆으로 치우고, 제거 스위프는 그 안을 훑습니다. 업그레이드(디스크의
+매니페스트나 메인 실행 파일이 있음)는 언제나 통과합니다 — 그 위치
+결정은 설치된 순간 내려진 것이어서, 다시 거부하면 조용한 업데이트가
+길을 잃습니다. `install.forbid-non-empty = false`는 예전의 무엇이든
+허용하던 레인을 되살리고, `install.non-empty-allowlist`(기본
+`["desktop.ini", "Thumbs.db", ".DS_Store"]`, 대소문자 구분 없음)은
+거부가 무시하는 OS 찌꺼기 파일명을 나열합니다 — 찌꺼기만 담긴
+폴더는 빈 것으로 취급됩니다.
+
+`[[package.metadata.shun.install.dir-rules]]`는 `check-dir` 훅의
+데이터 주도형 형제입니다 — "이 위치는 잘못됐다"에 대한 선언적
+답이며, WoWSP에서 비롯했습니다: 플레이어가 게임 클라이언트 옆에
+설치했고, 업데이트 스왑이 게임 폴더 전체를 치울 뻔했기 때문입니다.
+
+```toml
+[[package.metadata.shun.install.dir-rules]]
+files = ["WorldOfWarships.exe"]     # 트리거 파일 이름, 대상 디렉터리의 직속 하위 항목으로 검사
+action = "block"                    # block(기본) | relocate
+message = "This folder holds the game client — pick another location."  # 영어 사유, 그대로 표시
+
+[package.metadata.shun.install.dir-rules.message-locales]  # 마법사 로케일별 재정의
+zh-Hans = "该目录是游戏客户端，请另选位置。"
+```
+
+- `block`(기본값)은 **신규 설치만** 거부합니다 — 이미 그곳에 살고
+  있는 설치는 그 자리에서 계속 업데이트됩니다(절대 길 잃게 하지
+  않는 규칙).
+- `relocate`는 그 위치를 **공유하기** 위험하다고 표시합니다: 신규
+  선택은 `block`처럼 거부되고, 더해 기존 설치에는 플래그가 붙습니다
+  — 사일런트 레인은 그 자리 업데이트 대신 대화형 마법사로
+  넘어갑니다.
+- `message-locales`는 훅 스크립트 자신의 `SHUN_LANGUAGE` 분기를
+  대신합니다: 일치하는 항목이 `message`보다 우선하고, `message`는
+  영어 폴백입니다.
+
+신규 설치의 가드 평가 순서 — 가장 구체적인 거부가 먼저 답합니다:
+**dir-rules → check-dir 스크립트 훅 → 비어 있지 않음 거부**. 빈
+경로 게이트와 드라이브 루트 거부는 그 모든 것보다 앞서 답하고,
+쓰기 가능 여부는 무조건 검사됩니다. 업그레이드에서는 `relocate`
+동작의 규칙만 위치에 문제를 일으킬 수 있습니다.
+
+### 재배치
+
+사일런트 레인(`--silent --dir=<이전 디렉터리>`)은 규칙을 통해
+플래그가 붙은 설치를 감지하면, 자기 자신을 대화형 마법사로
+`--relocate-from <이전 디렉터리>`와 함께 다시 띄웁니다(새 셸 CLI
+플래그. 대화형 레인을 함의하며 `--silent`와 충돌합니다). 마법사는
+곧바로 위치 단계에서 열리고, 이전 위치가 더 이상 유효하지 않음을
+설명하는 현지화 안내가 붙으며, 플래그가 붙은 디렉터리는 빠른 선택
+후보에서 제외됩니다. 새 설치가 착지한 뒤, 이전 디렉터리에서
+쓸어내어지는 것은 제품 자신의 매니페스트에 나열된 파일뿐입니다 —
+디스크의 매니페스트, 휴대용 마커, 복사된 제거 프로그램을 더해.
+남의 파일(예컨대 호스트 게임)은 결코 건드리지 않고, 이전 디렉터리
+자신은 완전히 비었을 때만 삭제됩니다. 등록(ARP, 바로 가기)은 새
+위치를 따릅니다 — 스위프는 어떤 등록도 해제하지 않습니다. 마법사를
+취소하면 이전 설치는 그대로 남아 업데이트 가능합니다 — 절대 길
+잃게 하지 않는 규칙이 유지됩니다.
 
 ## 설치 위치 결정
 

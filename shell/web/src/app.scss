@@ -228,6 +228,29 @@ body {
   flex-direction: column;
   gap: 8px;
 
+  // The relocation pass's leading notice: the previous install's folder
+  // must not be shared; a new EMPTY folder is asked for (title + body).
+  .wizard-target__relocate {
+    padding: 10px 12px;
+    border: 1px solid rgb(var(--color-warning) / 45%);
+    border-left: 3px solid rgb(var(--color-warning));
+    border-radius: var(--radius-md);
+    background: rgb(var(--color-warning) / 8%);
+
+    .wizard-target__relocate-title {
+      margin: 0 0 4px;
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: rgb(var(--color-warning));
+    }
+
+    .wizard-target__relocate-body {
+      margin: 0;
+      font-size: var(--text-xs);
+      color: rgb(var(--color-muted));
+    }
+  }
+
   .wizard-target__label {
     font-size: var(--text-sm);
     color: rgb(var(--color-muted));

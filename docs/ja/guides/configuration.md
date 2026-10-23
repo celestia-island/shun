@@ -30,6 +30,14 @@ scope = "ask"                              # user（既定）| machine | ask
 deep-links = ["shundemo"]                  # アプリが保有する URL スキーム（myapp://…）
 root-dir-folder = "ShunDemo"              # 従来のパディングレーンのみ（forbid-drive-root = false）：ドライブルート直下に挟むフォルダー（D:\ → D:\ShunDemo、既定は製品名）
 # forbid-drive-root = true                 # 裸のドライブルートのターゲットを全面的に拒否（既定の挙動——「ドライブルートの保護」を参照）。false は上記のパディングレーンを復元する
+# forbid-non-empty = true                  # 新規インストールで空でないディレクトリを拒否（既定の挙動——「インストール先ルール」を参照）。false は従来の「何でもあり」レーンを復元する
+# non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # 非空拒否が無視するゴミファイル名（大小文字を区別しない）
+# [[package.metadata.shun.install.dir-rules]]  # 宣言的なインストール先ルール（「インストール先ルール」を参照）
+# files = ["WorldOfWarships.exe"]              # トリガーとなるファイル名、ターゲットの直下の子として検査される
+# action = "block"                             # block（既定）| relocate
+# message = "This folder holds the game client."  # 英語の理由、そのまま表示される
+# [package.metadata.shun.install.dir-rules.message-locales]  # ウィザードロケール別の上書き（一致が message に優先）
+# zh-Hans = "该目录是游戏客户端。"
 
 [[package.metadata.shun.install.verbs]]    # 右クリック動詞（Explorer 動詞 / デスクトップアクション）
 key = "open-data"                          # 安定した動詞 id
@@ -75,7 +83,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 | `logo` | path | — | シェルのロゴアセット（マニフェスト相対） |
 | `payload` | path | — | 成果物にパックされるディレクトリ |
 | `main-exe` | path | — | payload 相対のエントリポイント（ショートカットの宛先） |
-| `install` | table | 両モードオン | `local` / `portable` スイッチ、`portable-marker` ファイル名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` ポリシー、`default-dir`（環境変数展開される既定位置の上書き）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（裸のドライブルートのターゲットを拒否。既定でオン——ドライブルートの保護を参照）、`root-dir-folder`（オプトアウト時のパディングレーンでドライブルート直下に挟むフォルダー、既定は製品名） |
+| `install` | table | 両モードオン | `local` / `portable` スイッチ、`portable-marker` ファイル名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` ポリシー、`default-dir`（環境変数展開される既定位置の上書き）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（裸のドライブルートのターゲットを拒否。既定でオン——ドライブルートの保護を参照）、`root-dir-folder`（オプトアウト時のパディングレーンでドライブルート直下に挟むフォルダー、既定は製品名）、`forbid-non-empty`（新規インストールで空でないターゲットを拒否。既定でオン）、`non-empty-allowlist`（非空拒否が無視するゴミファイル名）、`dir-rules`（宣言的なインストール先ルール——「インストール先ルール」を参照） |
 | `attachments` | テーブル配列 | なし | 追加リソース（アセットパック）：`key` / `title` / `dest` / `online.url`。ライト版はインストール時にダウンロード |
 | `update` | table | なし | 更新ウォッチ：`sources`（ミラー基底 URL、順にプローブ）+ 最初に到達したソース配下で解決される `files` |
 | `webview2` | table | `skip` | Windows ランタイム戦略 |
@@ -145,7 +153,79 @@ UNC 共有ルート `\\server\share`、POSIX の `/` も同様）が対象の
 `SHUN_DIR_BLOCKED` に人が読める理由を設定して場所に異議を唱えます。
 ウィザードはその値をそのまま表示するため、スクリプトは
 `SHUN_LANGUAGE` でローカライズします。エラーを起こしたフックは、
-そのエラーテキストとともにチェックを失敗させます。
+そのエラーテキストとともにチェックを失敗させます。宣言的な
+`dir-rules` テーブル（「インストール先ルール」を参照）はこの
+フェーズと並走し、フックの**前に**走ります —— 最も具体的な拒否が
+先に答えます。フック自身は変更されていません。
+
+## インストール先ルール
+
+場所のガードは一つの形を共有します：ターゲットが空であるほど、
+配布は安全です。既定の集合は上のドライブルート拒否に**非空拒否**を
+加えたもの —— `install.forbid-non-empty`（既定 `true`）により、
+新規インストールは既に他者のファイルを抱えたターゲットを拒否
+します。隣に届けると製品同士が絡まるからです：更新時のアトミック
+な入れ替えはディレクトリ全体を横へ退け、アンインストールの
+スイープはその中を歩きます。アップグレード（オンディスクの
+マニフェストかメイン実行ファイルが存在）は常に通過します ——
+その場所の決定は設置時に行われたもので、再び拒否すればサイレント
+更新が行き詰まるからです。`install.forbid-non-empty = false` は
+従来の「何でもあり」レーンを復元し、`install.non-empty-allowlist`
+（既定 `["desktop.ini", "Thumbs.db", ".DS_Store"]`、大小文字を
+区別しない）は拒否が無視する OS のゴミファイル名を列挙します
+—— ゴミしか入っていないフォルダーは空と同じ扱いです。
+
+`[[package.metadata.shun.install.dir-rules]]` は `check-dir`
+フックのデータ駆動の兄弟 —— 「この場所は誤り」への宣言的な答え
+であり、発端は WoWSP です：プレイヤーがゲームクライアントの横に
+インストールし、更新の入れ替えでゲームフォルダー全体が退けられ
+そうになりました。
+
+```toml
+[[package.metadata.shun.install.dir-rules]]
+files = ["WorldOfWarships.exe"]     # トリガーとなるファイル名、ターゲットの直下の子として検査される
+action = "block"                    # block（既定）| relocate
+message = "This folder holds the game client — pick another location."  # 英語の理由、そのまま表示される
+
+[package.metadata.shun.install.dir-rules.message-locales]  # ウィザードロケール別の上書き
+zh-Hans = "该目录是游戏客户端，请另选位置。"
+```
+
+- `block`（既定）は**新規インストールのみ**拒否します —— そこに
+  既に住んでいるインストールはその場で更新を続けます（置き去り
+  禁止ルール）。
+- `relocate` はその場所を**共有**するには危険と印づけます：新規の
+  選択は `block` 同様に拒否され、加えて既存のインストールは
+  フラグ付きになります —— サイレントレーンはその場での更新では
+  なく対話型ウィザードへ引き継ぎます。
+- `message-locales` はフックスクリプト自身の `SHUN_LANGUAGE` 分岐
+  の代わりです：一致する項目が `message` に優先し、`message` が
+  英語のフォールバックです。
+
+新規インストールのガード評価順序 —— 最も具体的な拒否が先に
+答えます：**dir-rules → check-dir スクリプトフック → 非空拒否**。
+空パスのゲートとドライブルート拒否はそれら全ての前に答え、
+書き込み可否は無条件に検査されます。アップグレードでは
+`relocate` アクションのルールだけが場所を故障させられます。
+
+### 再配置
+
+サイレントレーン（`--silent --dir=<旧ディレクトリ>`）はルールを
+通してフラグ付きのインストールを検出すると、自分自身を対話型
+ウィザードとして `--relocate-from <旧ディレクトリ>` 付きで再起動
+します（新しいシェル CLI フラグ。対話レーンを意味し `--silent`
+と衝突します）。ウィザードは場所ステップから直ちに開き、旧の
+場所がもう有効でないことを説明するローカライズ済みの注意書きが
+付き、フラグ付きディレクトリはクイック候補から除外されます。
+新しいインストールが着地した後、旧ディレクトリから掃き出される
+のは製品自身のマニフェスト列挙のファイルだけです —— オン
+ディスクのマニフェスト、ポータブルマーカー、コピーされた
+アンインストーラーを加えて。他者のファイル（例えばホストの
+ゲーム）は決して触れられず、旧ディレクトリ自身は空になった
+ときだけ削除されます。登録（ARP、ショートカット）は新しい場所に
+従います —— スイープは何の登録も解除しません。ウィザードを
+キャンセルすれば旧インストールは無傷のまま更新可能です ——
+置き去り禁止ルールは保たれます。
 
 ## インストール先の解決
 

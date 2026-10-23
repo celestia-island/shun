@@ -39,6 +39,14 @@ aumid = "celestia-island.ShunDemo"         # 默认由 publisher + product 生�
 icon = "assets/icon.png"                   # 载荷内启动器图标（Linux 的 Icon=）
 root-dir-folder = "ShunDemo"               # 仅旧垫层通道生效（forbid-drive-root = false）：裸盘符根目录下垫的文件夹（D:\ → D:\ShunDemo；默认取产品名）
 # forbid-drive-root = true                 # 直接拒绝裸盘符根目录目标（默认行为——见「根盘保护」）；false 恢复上面的垫层通道
+# forbid-non-empty = true                  # 全新安装拒绝非空目录（默认行为——见「安装位置规则」）；false 恢复从前不设防的通道
+# non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # 非空拒绝忽略的垃圾文件名（不区分大小写）
+# [[package.metadata.shun.install.dir-rules]]  # 声明式安装位置规则（见「安装位置规则」）
+# files = ["WorldOfWarships.exe"]              # 触发文件名，按目标目录的直接子项检查
+# action = "block"                             # block（默认）| relocate
+# message = "This folder holds the game client."  # 英文原因，原样显示
+# [package.metadata.shun.install.dir-rules.message-locales]  # 按向导语言覆盖（命中优先于 message）
+# zh-Hans = "该目录是游戏客户端。"
 
 [[package.metadata.shun.install.verbs]]    # 右键菜单动词（Explorer 动词 / Desktop Action）
 key = "open-data"                          # 稳定动词 id
@@ -84,7 +92,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `logo` | path | — | 壳的 logo 资产（相对清单文件） |
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
-| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（环境变量展开的默认位置覆盖）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒绝裸盘符根目录目标；默认开启——见「根盘保护」）、`root-dir-folder`（退出拒绝后垫层通道里垫在裸盘符根目录下的文件夹，默认取产品名） |
+| `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（环境变量展开的默认位置覆盖）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒绝裸盘符根目录目标；默认开启——见「根盘保护」）、`root-dir-folder`（退出拒绝后垫层通道里垫在裸盘符根目录下的文件夹，默认取产品名）、`forbid-non-empty`（全新安装拒绝非空目录；默认开启）、`non-empty-allowlist`（非空拒绝忽略的垃圾文件名）、`dir-rules`（声明式安装位置规则——见「安装位置规则」） |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
@@ -138,7 +146,63 @@ require-removable = true                   # 拒绝非可移动设备
 主程序存在）即为升级——其位置决定在落盘时已经做出，现在再否决会把
 静默更新晾在半空。钩子把 `SHUN_DIR_BLOCKED` 设为人类可读的原因即可
 否决该位置；向导原样显示该值，脚本因此可通过 `SHUN_LANGUAGE` 做
-本地化。钩子报错时，检查连同其错误文本一起失败。
+本地化。钩子报错时，检查连同其错误文本一起失败。声明式
+`dir-rules` 表（见「安装位置规则」）与该阶段并行运行、**先于**
+钩子——最具体的否决先答；钩子本身没有变化。
+
+## 安装位置规则
+
+各位置防护形制一致：目标越空，交付越安全。默认集合是上面的
+根盘保护加上**非空拒绝**——`install.forbid-non-empty`（默认
+`true`）让全新安装拒绝已装有外来文件的目标目录，因为在它们
+旁边交付会把产品搅在一起：更新时的原子交换会把整个目录挪开，
+卸载清扫也会走进其中。升级（磁盘清单或主程序存在）恒放行——
+其位置决定在落盘时已经做出，再否决会把静默更新晾在半空。
+`install.forbid-non-empty = false` 恢复从前来者不拒的通道；
+`install.non-empty-allowlist`（默认 `["desktop.ini",
+"Thumbs.db", ".DS_Store"]`，不区分大小写）列出拒绝逻辑忽略的
+系统垃圾文件名，于是只装着垃圾的文件夹视同空目录。
+
+`[[package.metadata.shun.install.dir-rules]]` 是 `check-dir`
+钩子的数据化兄弟——对「这个位置不对」的声明式回答，出身于
+WoWSP：玩家把插件装在游戏客户端旁边，更新的目录交换差点把
+整个游戏文件夹挪开：
+
+```toml
+[[package.metadata.shun.install.dir-rules]]
+files = ["WorldOfWarships.exe"]     # 触发文件名，按目标目录的直接子项检查
+action = "block"                    # block（默认）| relocate
+message = "This folder holds the game client — pick another location."  # 英文原因，原样显示
+
+[package.metadata.shun.install.dir-rules.message-locales]  # 按向导语言覆盖
+zh-Hans = "该目录是游戏客户端，请另选位置。"
+```
+
+- `block`（默认）**仅否决全新安装**——已住在那里的安装继续原地
+  更新（「绝不晾在半空」规则）。
+- `relocate` 标记该位置不宜**共享**：全新选择像 `block` 一样被
+  否决，且已存在的安装会被标记——静默轨道移交交互式向导，不再
+  原地更新。
+- `message-locales` 取代钩子脚本自己的 `SHUN_LANGUAGE` 分支：
+  命中的条目优先于 `message`，后者是英文兜底。
+
+全新安装的防护求值顺序——最具体的否决先答：**dir-rules →
+check-dir 脚本钩子 → 非空拒绝**；空路径门禁与根盘保护先于它们
+作答，可写性检查无条件执行。升级时只有 `relocate` 动作的规则
+能让位置出错。
+
+### 搬迁
+
+静默轨道（`--silent --dir=<旧目录>`）经规则发现被标记的安装后，
+以 `--relocate-from <旧目录>` 重新拉起交互式向导（新的壳 CLI
+旗标；它隐含交互轨道并与 `--silent` 互斥）。向导直接在位置步骤
+打开，附本地化提示说明旧位置已不再有效，被标记的目录也会从
+快捷候选中剔除。新安装落盘后，只有产品自己的清单所列文件——
+外加磁盘清单、便携标记与复制的卸载器——会被清扫出旧目录；
+外来文件（比如宿主游戏）绝不被触碰，旧目录本身只在清空后
+移除。注册信息（ARP、快捷方式）跟随新位置——清扫从不注销任何
+东西。取消向导则旧安装原封不动、仍可更新——「绝不晾在半空」
+规则依然成立。
 
 ## 安装位置解析
 

@@ -51,7 +51,12 @@ de nouveau son veto laisserait les mises à jour silencieuses en plan).
 Un hook met son veto à l'emplacement proposé en affectant à
 `SHUN_DIR_BLOCKED` un motif lisible ; l'assistant affiche la valeur
 telle quelle, le script le localise donc via `SHUN_LANGUAGE`. Un hook
-qui échoue fait échouer la vérification avec son texte d'erreur.
+qui échoue fait échouer la vérification avec son texte d'erreur. La
+table déclarative `[[…install.dir-rules]]` (voir la section Règles
+d'emplacement d'installation dans configuration.md) tourne aux côtés
+de la phase check-dir, avant les hooks, avec son propre message
+localisé ; les hooks restent l'échappatoire pour la logique qu'une
+table de règles ne peut exprimer.
 `SHUN_INSTALL_DIR` arrive sous forme à barres obliques dans cette
 phase — relisez-la avec `get_env` (le `${…}` de duckscript interpole
 les variables de script, pas l'environnement du processus) et joignez

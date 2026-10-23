@@ -177,12 +177,17 @@ export default defineComponent({
   name: "InstallerApp",
   setup() {
     // `?step=` preview hook (static previews / dev); production passes no
-    // query and starts at the language pane.
-    const initialStep = (new URLSearchParams(window.location.search).get(
-      "step",
-    ) ?? "") as StepKey;
+    // query and starts at the language pane. A `?relocate=1` wizard (the
+    // Rust side's relocation handover) starts on the location pane — the
+    // language question is pre-resolved and the pass owns the pane.
+    const query = new URLSearchParams(window.location.search);
+    const initialStep = (query.get("step") ?? "") as StepKey;
     const step = ref<StepKey>(
-      (BASE_STEP_KEYS as readonly string[]).includes(initialStep as never) ? (initialStep as StepKey) : "language",
+      query.get("relocate") === "1"
+        ? "mode"
+        : (BASE_STEP_KEYS as readonly string[]).includes(initialStep as never)
+          ? (initialStep as StepKey)
+          : "language",
     );
     const mode = ref<Mode>("local");
     // Wizard locale — resolved synchronously from the system so first paint
@@ -208,6 +213,11 @@ export default defineComponent({
       { immediate: true },
     );
     const dir = ref("");
+    // The relocation handover (get_relocate_from): the previous install
+    // directory the flow sweeps only the product's own files out of.
+    // Set when the wizard boots in its relocation pass — the pane shows
+    // the notice and the install request carries it.
+    const relocateFrom = ref<string | null>(null);
     // The hint under the path field: a semantic kind resolved to text at
     // render time (so a locale switch relabels it), or a raw backend error
     // message that passes through as-is.
@@ -238,12 +248,14 @@ export default defineComponent({
     const dirWritable = ref<boolean | null>(null);
     // The backend's install-dir guard verdict (drive-root refusal plus
     // the manifest's check-dir script hooks): null clears the location;
-    // "drive-root" localizes from the table while "script" carries the
-    // check script's own message verbatim (it localizes via the wizard
-    // language server-side).
+    // "drive-root"/"non-empty" localize from the table while "script"
+    // and "rule" carry the backend's own message verbatim (the script
+    // localizes via the wizard language, the rule through its
+    // message-locales).
     const dirFault = ref<
-      | { kind: "empty" | "not-writable" | "drive-root" }
+      | { kind: "empty" | "not-writable" | "drive-root" | "non-empty" }
       | { kind: "script"; message: string }
+      | { kind: "rule"; message: string }
       | null
     >(null);
     const licenseDocs = ref<LicenseDoc[]>([]);
@@ -414,12 +426,14 @@ export default defineComponent({
           .catch(() => {
             if (dir.value.trim() === target) dirWritable.value = null;
           });
-        // The full guard set (root refusal + check-dir hooks) runs
-        // beside the probe; a script hook may take a few milliseconds,
-        // and a verdict only lands while it is still about this path.
+        // The full guard set (root refusal + non-empty guard + dir
+        // rules + check-dir hooks) runs beside the probe; a script hook
+        // may take a few milliseconds, and a verdict only lands while it
+        // is still about this path.
         void invoke<
-          | { kind: "empty" | "not-writable" | "drive-root" }
+          | { kind: "empty" | "not-writable" | "drive-root" | "non-empty" }
           | { kind: "script"; message: string }
+          | { kind: "rule"; message: string }
           | null
         >("check_dir", {
           dir: target,
@@ -515,6 +529,15 @@ export default defineComponent({
         .catch(() => {
           uninstallMode.value = false;
         });
+      // The relocation handover: when set, this wizard boots in its
+      // relocation pass (the step landed on "mode" via ?relocate=1; the
+      // backend's default_dir already excludes the old folder from the
+      // candidates and preselects a differing one).
+      invoke<string | null>("get_relocate_from")
+        .then((dir) => {
+          relocateFrom.value = dir;
+        })
+        .catch(() => {});
       refreshDefaults().catch((err) => { hintKind.value = "error"; hintError.value = String(err); });
       invoke<{ version: string; flavor: string }>("get_identity")
         .then((id) => { identity.value = id; })
@@ -668,6 +691,7 @@ export default defineComponent({
           mode: mode.value,
           dir: dir.value.trim(),
           language: locale.value,
+          relocateFrom: relocateFrom.value,
         });
         // Optional components the user picked (not bundled in this
         // build) stream in now — their progress lands in the log pane
@@ -960,6 +984,12 @@ export default defineComponent({
             <p class="wizard-sub">{s.mode.sub}</p>
 
             <section class="wizard-target">
+              {relocateFrom.value && (
+                <div class="wizard-target__relocate">
+                  <p class="wizard-target__relocate-title">{s.target.relocateTitle}</p>
+                  <p class="wizard-target__relocate-body">{s.target.relocateBody}</p>
+                </div>
+              )}
               <label class="wizard-target__label" for="dir-input">{s.target.label}</label>
               <PathField
                 modelValue={dir.value}
@@ -993,7 +1023,13 @@ export default defineComponent({
               {dirFault.value?.kind === "drive-root" && (
                 <p class="wizard-target__warning">{s.target.errorRoot}</p>
               )}
+              {dirFault.value?.kind === "non-empty" && (
+                <p class="wizard-target__warning">{s.target.errorNonEmpty}</p>
+              )}
               {dirFault.value?.kind === "script" && (
+                <p class="wizard-target__warning">{dirFault.value.message}</p>
+              )}
+              {dirFault.value?.kind === "rule" && (
                 <p class="wizard-target__warning">{dirFault.value.message}</p>
               )}
               {identity.value && (
