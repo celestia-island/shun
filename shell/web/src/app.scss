@@ -427,13 +427,17 @@ body {
     max-width: 80%;
   }
 
-  // Failure sub-line: the raw backend error, muted and wrappable.
-  .wizard-done__error {
-    margin: 0;
-    font-size: var(--text-sm);
-    color: rgb(var(--color-muted));
-    max-width: 80%;
-    overflow-wrap: anywhere;
+  // The failure variant's standard hikari error landing
+  // (variant="inline") centers its card inside this host region — hand
+  // it the column; the hand-rolled error line/actions row is retired.
+  .wizard-done__landing {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 0;
+    text-align: left;
   }
 
   // Failure action row: retry + close, centered with the pane.
@@ -476,20 +480,16 @@ body {
   // left-anchored-page artifact that reads as off-center here.
   padding: 40px 48px;
 
-  .wizard-uninstall__actions {
+  // The failed view's hikari error landing (variant="inline") fills
+  // this host region; the hand-rolled error line is retired.
+  .wizard-done__landing {
+    flex: 1;
+    width: 100%;
     display: flex;
-    align-items: center;
+    flex-direction: column;
     justify-content: center;
-    gap: 10px;
-  }
-
-  // The raw backend error on the failed view — error hue, wrappable.
-  .wizard-uninstall__error {
-    margin: 0;
-    font-size: var(--text-sm);
-    color: rgb(var(--color-error));
-    max-width: 80%;
-    overflow-wrap: anywhere;
+    min-height: 0;
+    text-align: left;
   }
 }
 

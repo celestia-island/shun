@@ -11,6 +11,8 @@ import {
   HkAlert,
   HkButton,
   HkCheckbox,
+  HkErrorLanding,
+  HkJsonTree,
   HkProgressBar,
   HkScrollContainer,
   HkSelect,
@@ -886,19 +888,37 @@ export default defineComponent({
             </section>
           ) : (
             <section class="wizard-pane wizard-uninstall">
-              <XCircle
-                size={56}
-                color="rgb(var(--color-error))"
-                stroke-width={1.5}
-              />
-              <p class="wizard-done__title wizard-done__title--fail">
-                {uninstallPhase.value === "repair_failed" ? s.uninstall.failedRepair : s.uninstall.failedUninstall}
-              </p>
-              <p class="wizard-uninstall__error">{uninstallError.value}</p>
-              <div class="wizard-uninstall__actions">
-                <HkButton variant="primary" onClick={closeWindow}>
-                  {s.uninstall.close}
-                </HkButton>
+              {/* The standard hikari error landing, the uninstall lane's
+                  failed page — same reason/detail/copy treatment. */}
+              <div class="wizard-done__landing">
+                <HkErrorLanding
+                  variant="inline"
+                  tone="error"
+                  title={
+                    uninstallPhase.value === "repair_failed"
+                      ? s.uninstall.failedRepair
+                      : s.uninstall.failedUninstall
+                  }
+                  description={uninstallError.value}
+                  copyText={`${uninstallPhase.value}\n${uninstallError.value}`}
+                >
+                  {{
+                    default: () => (
+                      <HkJsonTree
+                        value={{
+                          lane: uninstallPhase.value,
+                          error: uninstallError.value,
+                        }}
+                        ariaLabel={s.uninstall.failedUninstall}
+                      />
+                    ),
+                    actions: () => (
+                      <HkButton variant="primary" onClick={closeWindow}>
+                        {s.uninstall.close}
+                      </HkButton>
+                    ),
+                  }}
+                </HkErrorLanding>
               </div>
             </section>
           );
@@ -1113,13 +1133,51 @@ export default defineComponent({
           </section>
         ) : installFailed.value ? (
           <section class="wizard-pane wizard-done">
-            <XCircle
-              size={56}
-              color="rgb(var(--color-error))"
-              stroke-width={1.5}
-            />
-            <p class="wizard-done__title wizard-done__title--fail">{s.done.failedTitle}</p>
-            <p class="wizard-done__error">{failMessage.value}</p>
+            {/* The standard hikari error landing — reason verbatim, the
+                structured detail as a JSON tree, the built-in copy
+                action, the retry/close seats beside it. */}
+            <div class="wizard-done__landing">
+              <HkErrorLanding
+                variant="inline"
+                tone="error"
+                title={s.done.failedTitle}
+                description={failMessage.value}
+                copyText={`${s.done.failedTitle}\n${failMessage.value}\n${JSON.stringify(
+                  {
+                    product: product.value,
+                    version: identity.value?.version ?? "",
+                    lane: "wizard-install",
+                    error: failMessage.value,
+                  },
+                  null,
+                  2,
+                )}`}
+              >
+                {{
+                  default: () => (
+                    <HkJsonTree
+                      value={{
+                        product: product.value,
+                        version: identity.value?.version ?? "",
+                        lane: "wizard-install",
+                        error: failMessage.value,
+                      }}
+                      ariaLabel={s.done.failedTitle}
+                    />
+                  ),
+                  actions: () => (
+                    <>
+                      <HkButton variant="primary" onClick={start}>
+                        {s.done.retry}
+                      </HkButton>
+                      <HkButton variant="ghost" onClick={() => tauriWindow()?.close()}>
+                        {s.done.close}
+                      </HkButton>
+                    </>
+                  ),
+                }}
+              </HkErrorLanding>
+            </div>
             <div class="wizard-install__logs">
               <LogPane
                 lines={logLines.value}
@@ -1130,14 +1188,6 @@ export default defineComponent({
                   logExpanded.value = !logExpanded.value;
                 }}
               />
-            </div>
-            <div class="wizard-done__actions">
-              <HkButton variant="primary" onClick={start}>
-                {s.done.retry}
-              </HkButton>
-              <HkButton variant="ghost" onClick={() => tauriWindow()?.close()}>
-                {s.done.close}
-              </HkButton>
             </div>
           </section>
         ) : (

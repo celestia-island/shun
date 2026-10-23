@@ -40,7 +40,7 @@ use eframe::egui::{
     self, Align, Context, CornerRadius, Layout, RichText, Sense, Stroke, Vec2, ViewportCommand,
     WindowLevel,
 };
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use shun::config::ShunConfig;
 use shun::payload::ArchivePayload;
@@ -144,6 +144,18 @@ pub(crate) fn attach_worker(
     std::thread::spawn(move || {
         while let Ok(event) = receiver.recv() {
             let done = matches!(event, LaneEvent::Done(..));
+            // A failed run grows its window once: the error landing needs
+            // the room the compact mirror lacks. Best-effort — a window
+            // already closed simply ignores it.
+            if matches!(event, LaneEvent::Done(false, _)) {
+                if let Some(window) = app.get_webview_window("passive") {
+                    let _ = window.set_size(tauri::LogicalSize::new(
+                        PASSIVE_FAIL_W as f64,
+                        PASSIVE_FAIL_H as f64,
+                    ));
+                    let _ = window.center();
+                }
+            }
             let payload = PassiveEvent::from(&event);
             LAST_EVENT
                 .lock()
@@ -216,6 +228,9 @@ struct PassiveApp {
     /// When the Done phase should close the window (a short linger so
     /// the completion line is readable).
     close_at: Option<Instant>,
+    /// One-shot: the failure window has already been enlarged (the
+    /// error landing needs the room the compact mirror lacks).
+    failed_enlarged: bool,
     /// The egui face's resolved theme: the manifest's `shell.theme`
     /// layers over the sun (`fallback::resolve_theme` — the same
     /// resolution the wizard's egui face ships).
@@ -248,6 +263,13 @@ const DONE_LINGER: Duration = Duration::from_millis(1500);
 /// content column.
 const PASSIVE_W: f32 = 420.0;
 const PASSIVE_H: f32 = 240.0;
+
+/// The failure window's inner size: the compact mirror cannot hold the
+/// error landing (a wrapped reason + the copy affordances + the close
+/// seat), so a failed run grows its window once — the running and
+/// success mirrors keep the compact footprint.
+const PASSIVE_FAIL_W: f32 = 640.0;
+const PASSIVE_FAIL_H: f32 = 460.0;
 
 impl PassiveApp {
     fn fold(&mut self, msg: LaneEvent) {
@@ -424,6 +446,7 @@ impl eframe::App for PassiveApp {
         while let Ok(msg) = self.receiver.try_recv() {
             self.fold(msg);
         }
+<<<<<<< HEAD
         // The solar clock: the same five-minute re-check the wizard's
         // egui face runs — a long extraction crossing dusk flips the
         // mirror with it (a manifest pin stands the clock down).
@@ -432,6 +455,17 @@ impl eframe::App for PassiveApp {
         {
             self.solar_tick_at = Instant::now();
             self.theme = fallback::resolve_theme(&self.config);
+=======
+        // A failed run grows its window once — the error landing needs
+        // the room (see PASSIVE_FAIL_W); the compact mirror stays for
+        // the running and success phases.
+        if matches!(self.phase, Phase::Failed) && !self.failed_enlarged {
+            self.failed_enlarged = true;
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(
+                PASSIVE_FAIL_W,
+                PASSIVE_FAIL_H,
+            )));
+>>>>>>> 82994ff (✨ Render installer failures on the standard hikari error landing.)
         }
 
         let theme = self.theme;
@@ -487,28 +521,72 @@ impl eframe::App for PassiveApp {
                         ui.label(RichText::new(line).size(12.5).color(line_color));
                     }
                     if let Phase::Failed = self.phase {
-                        ui.add_space(6.0);
-                        if let Some(failure) = &self.failure {
-                            ui.label(RichText::new(failure).size(11.5).color(theme.text_tertiary));
-                        }
-                        ui.add_space(12.0);
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new(&self.strings.close)
-                                        .size(13.0)
-                                        .color(theme.text_secondary),
-                                )
+                        ui.add_space(10.0);
+                        // The hikari error landing's details pane, egui-side:
+                        // the raw reason in a bordered standing frame —
+                        // wrapped, scrolled inside a fixed height, never
+                        // pushing the window around (the compact mirror's
+                        // single-line label truncated exactly here).
+                        let detail = self.failure.clone().unwrap_or_default();
+                        let frame_width = (ui.available_width() - 32.0).max(220.0);
+                        ui.allocate_ui(egui::vec2(frame_width, 168.0), |ui| {
+                            egui::Frame::default()
                                 .fill(theme.surface)
                                 .stroke(Stroke::new(1.0f32, theme.border))
-                                .corner_radius(CornerRadius::same(6))
-                                .min_size(Vec2::new(120.0, 28.0)),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            ctx.send_viewport_cmd(ViewportCommand::Close);
-                        }
+                                .corner_radius(CornerRadius::same(8))
+                                .inner_margin(egui::Margin::same(10))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    egui::ScrollArea::vertical().show(ui, |ui| {
+                                        ui.set_min_width(ui.available_width());
+                                        ui.label(
+                                            RichText::new(detail.clone())
+                                                .size(11.5)
+                                                .color(theme.text_tertiary),
+                                        );
+                                    });
+                                });
+                        });
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            // The landing's built-in copy action, egui-side:
+                            // the whole detail onto the clipboard.
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(&self.strings.error_copy)
+                                            .size(13.0)
+                                            .color(theme.text),
+                                    )
+                                    .fill(theme.surface)
+                                    .stroke(Stroke::new(1.0f32, theme.border))
+                                    .corner_radius(CornerRadius::same(6))
+                                    .min_size(Vec2::new(132.0, 28.0)),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                ui.ctx().copy_text(detail);
+                            }
+                            ui.add_space(8.0);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(&self.strings.close)
+                                            .size(13.0)
+                                            .color(theme.text_secondary),
+                                    )
+                                    .fill(theme.surface)
+                                    .stroke(Stroke::new(1.0f32, theme.border))
+                                    .corner_radius(CornerRadius::same(6))
+                                    .min_size(Vec2::new(120.0, 28.0)),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                ctx.send_viewport_cmd(ViewportCommand::Close);
+                            }
+                        });
                     }
                 });
             });
@@ -641,6 +719,7 @@ fn run_silent_egui(
                 percent: None,
                 failure: None,
                 close_at: None,
+                failed_enlarged: false,
                 theme,
                 config: config.clone(),
                 solar_pinned,

@@ -991,7 +991,15 @@ fn run_headless_with_tap(
     let request = InstallRequest {
         mode: cli.mode.clone(),
         dir,
-        language: cli.language.clone(),
+        // The silent lane never picks a wizard language — fall back to
+        // the saved preference, else the system locale, so the check-dir
+        // veto message (localized by the hook script) and the on-disk
+        // manifest carry a meaningful language on machines that never
+        // saw the wizard.
+        language: cli
+            .language
+            .clone()
+            .or_else(|| Some(fallback::silent_locale_for(&config.product.name))),
         // The gate above already re-launched elevated for machine scope;
         // reaching here with the flag set means this IS the elevated copy.
         machine,
