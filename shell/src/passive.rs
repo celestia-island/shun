@@ -647,7 +647,10 @@ impl eframe::App for PassiveApp {
                         // The details pane: the structured detail as a
                         // collapsible JSON tree inside the standing
                         // fixed-height frame (a longer reason scrolls).
-                        let frame_width = (ui.available_width() - 32.0).max(220.0);
+                        // 32 pt of side breathing room: the pane reads
+                        // as a card, not a full-bleed band glued to the
+                        // window edges.
+                        let frame_width = (ui.available_width() - 64.0).max(220.0);
                         ui.allocate_ui(egui::vec2(frame_width, FAILED_PANE_H), |ui| {
                             egui::Frame::default()
                                 .fill(theme.surface)
@@ -688,18 +691,23 @@ impl eframe::App for PassiveApp {
                                 .size()
                                 .x
                         };
+                        // The pair shares ONE width — a wide copy plate
+                        // beside a narrow close plate reads as sloppy.
+                        // The wider label sets it over the 120 pt floor,
+                        // and each plate re-derives its pad so the
+                        // left-drawn text sits on the midline.
                         let copy_text = text_w(&copy_label);
                         let close_text = text_w(&close_label);
-                        let copy_w = copy_text + 32.0;
-                        let close_w = (close_text + 32.0).max(120.0);
-                        let close_pad = ((close_w - close_text) / 2.0).max(16.0);
+                        let plate_w = (copy_text.max(close_text) + 32.0).max(120.0);
+                        let copy_pad = ((plate_w - copy_text) / 2.0).max(16.0);
+                        let close_pad = ((plate_w - close_text) / 2.0).max(16.0);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.add_space(
-                                ((ui.available_width() - (copy_w + 8.0 + close_w)) / 2.0).max(12.0),
+                                ((ui.available_width() - (plate_w * 2.0 + 8.0)) / 2.0).max(12.0),
                             );
                             if fallback::text_button(
                                 ui,
-                                egui::vec2(close_w, 28.0),
+                                egui::vec2(plate_w, 28.0),
                                 &close_label,
                                 13.0,
                                 close_pad,
@@ -722,10 +730,10 @@ impl eframe::App for PassiveApp {
                             // detail — everything a bug report needs.
                             if fallback::text_button(
                                 ui,
-                                egui::vec2(copy_w, 28.0),
+                                egui::vec2(plate_w, 28.0),
                                 &copy_label,
                                 13.0,
-                                16.0,
+                                copy_pad,
                                 false,
                                 theme.text_secondary,
                                 theme.surface,
