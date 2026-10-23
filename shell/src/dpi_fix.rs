@@ -51,68 +51,6 @@ pub(crate) fn install(frame: &eframe::Frame) {
     }
 }
 
-/// Resizes (centered on the window's CURRENT monitor work area) in
-/// PHYSICAL pixels, bypassing egui's logical
-/// [`egui::ViewportCommand::InnerSize`]: on DPI-scaled displays the
-/// eframe-0.32/winit-0.30 logical path can grow the window without
-/// growing the render surface — the enlarged region then stays
-/// transparent (the passive failure pane's one-shot enlarge hit exactly
-/// that). A physical `SetWindowPos` rides the ordinary `WM_SIZE` path
-/// both layers resize on, the same one a user drag takes. Centering
-/// uses the window's own monitor (work area), never the primary — a
-/// secondary screen keeps the window on-screen.
-#[cfg(windows)]
-pub(crate) fn resize_centered(frame: &eframe::Frame, width: f32, height: f32, scale: f32) {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos,
-    };
-    let Ok(handle) = frame.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::Win32(win) = handle.as_raw() else {
-        return;
-    };
-    let hwnd = win.hwnd.get() as windows_sys::Win32::Foundation::HWND;
-    let (w, h) = ((width * scale) as i32, (height * scale) as i32);
-    // SAFETY: plain monitor/window queries and one SetWindowPos on our
-    // own window handle.
-    unsafe {
-        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        let mut info: MONITORINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(monitor, &mut info) == 0 {
-            // No work area to center in — grow in place instead of
-            // jumping to a guessed position.
-            SetWindowPos(
-                hwnd,
-                std::ptr::null_mut(),
-                0,
-                0,
-                w,
-                h,
-                SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
-            );
-            return;
-        }
-        let area = info.rcWork;
-        let x = area.left + (area.right - area.left - w) / 2;
-        let y = area.top + (area.bottom - area.top - h) / 2;
-        SetWindowPos(
-            hwnd,
-            std::ptr::null_mut(),
-            x,
-            y,
-            w,
-            h,
-            SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
-        );
-    }
-}
-
 #[cfg(windows)]
 const SUBCLASS_ID: usize = 0x4450_4947; // "DPIG"
 

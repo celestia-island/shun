@@ -11,7 +11,7 @@
 //! overwrite-failure loop the CWD pinning and lock retries fight.
 //!
 //! A product that opts in gets the honest middle: the install stays
-//! automatic — no pages, no clicks — while a small always-on-top window
+//! automatic — no pages, no clicks — while an always-on-top window
 //! mirrors what stdout already says (the running step, the percent when
 //! the step has one) and folds on completion. The old build needs to
 //! know nothing: ANY spawn of a `silent-progress` installer gets the
@@ -19,6 +19,15 @@
 //! untouched, so redirected fleet runs log exactly as before; a machine
 //! without a desktop session (the window cannot open there) silently
 //! stays console-only.
+//!
+//! The window is BORN at its final size and never resizes — the running
+//! mirror, the done verdict and the failure landing lay out inside the
+//! one surface. A runtime grow cannot be DPI-correct from the first
+//! frame: on scaled displays the OS window and the render surface part
+//! ways for the transition's first beats however the resize is issued
+//! (egui's logical command rides the same WM_SIZE a physical
+//! `SetWindowPos` does), reading as a shrunken layout over a black
+//! region. A birth size has no transition to get wrong.
 //!
 //! The window rides the SAME design surface the wizard faces ship: the
 //! WEBVIEW lane renders it first — a product auto-updating through this
@@ -38,9 +47,8 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{
     self, Align, Context, CornerRadius, Layout, RichText, Sense, Stroke, Vec2, ViewportCommand,
-    WindowLevel,
 };
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 use shun::config::ShunConfig;
 use shun::payload::ArchivePayload;
@@ -144,18 +152,6 @@ pub(crate) fn attach_worker(
     std::thread::spawn(move || {
         while let Ok(event) = receiver.recv() {
             let done = matches!(event, LaneEvent::Done(..));
-            // A failed run grows its window once: the error landing needs
-            // the room the compact mirror lacks. Best-effort — a window
-            // already closed simply ignores it.
-            if matches!(event, LaneEvent::Done(false, _)) {
-                if let Some(window) = app.get_webview_window("passive") {
-                    let _ = window.set_size(tauri::LogicalSize::new(
-                        PASSIVE_FAIL_W as f64,
-                        PASSIVE_FAIL_H as f64,
-                    ));
-                    let _ = window.center();
-                }
-            }
             let payload = PassiveEvent::from(&event);
             LAST_EVENT
                 .lock()
@@ -228,13 +224,6 @@ struct PassiveApp {
     /// When the Done phase should close the window (a short linger so
     /// the completion line is readable).
     close_at: Option<Instant>,
-    /// One-shot: the failure window has already been enlarged (the
-    /// error landing needs the room the compact mirror lacks).
-    failed_enlarged: bool,
-    /// When the enlarge landed — repaints are hammered for a short
-    /// window so the render surface catches up before the user sees
-    /// blank space.
-    enlarge_drive: Option<Instant>,
     /// The egui face's resolved theme: the manifest's `shell.theme`
     /// layers over the sun (`fallback::resolve_theme` — the same
     /// resolution the wizard's egui face ships).
@@ -264,16 +253,42 @@ struct PassiveApp {
 const DONE_LINGER: Duration = Duration::from_millis(1500);
 
 /// The passive window's inner size (points): the caption band over the
-/// content column.
-const PASSIVE_W: f32 = 420.0;
-const PASSIVE_H: f32 = 240.0;
+/// content column. The window is BORN at its final size and never
+/// resizes — every phase (running mirror, done verdict, the failure
+/// landing) lays out inside the one surface. A runtime grow cannot be
+/// DPI-correct from the first frame: on scaled displays the OS window
+/// and the render surface part ways for the transition's first beats
+/// however the resize is issued (egui's logical command or a physical
+/// `SetWindowPos`), reading as a shrunken layout over a black region —
+/// a birth size has no transition to get wrong.
+pub(crate) const PASSIVE_W: f32 = 720.0;
+pub(crate) const PASSIVE_H: f32 = 620.0;
 
-/// The failure window's inner size: the compact mirror cannot hold the
-/// error landing (a wrapped reason + the copy affordances + the close
-/// seat), so a failed run grows its window once — the running and
-/// success mirrors keep the compact footprint.
-const PASSIVE_FAIL_W: f32 = 640.0;
-const PASSIVE_FAIL_H: f32 = 400.0;
+/// The failure action row's width: the copy and close plates' minimum
+/// sizes plus the gap between them. The row is centered by hand from
+/// this (egui's vertical layouts left-flush their children).
+const FAILED_ROW_W: f32 = 132.0 + 8.0 + 120.0;
+
+/// The standing reason pane's fixed height — the web landing's details
+/// pane, egui-side. Part of [`FAILED_BODY_H`]; measuring a hugging
+/// container instead feeds the centering pad poisoned egui rects (a
+/// zero-height allocate_ui and the right-to-left row both read back
+/// infinite/full-panel cursors).
+const FAILED_PANE_H: f32 = 300.0;
+
+/// The failed block's full analytic stack: the verdict line (~22 pt),
+/// the lead-in, the standing pane, the action row's lead-in and plates.
+/// The centering pad is plain arithmetic against this — no per-frame
+/// convergence state to drift.
+const FAILED_BODY_H: f32 = 22.0 + 14.0 + FAILED_PANE_H + 14.0 + 28.0;
+
+/// The done block's height: the verdict line alone.
+const SETTLED_LINE_H: f32 = 22.0;
+
+/// The running block's height: the task heading over the bar and the
+/// live step line (the compact mirror's stack, centered in the one
+/// window all three phases share).
+const RUN_BODY_H: f32 = 70.0;
 
 impl PassiveApp {
     fn fold(&mut self, msg: LaneEvent) {
@@ -304,9 +319,10 @@ impl PassiveApp {
 
     /// The hikari caption bar, the egui face's own chrome drawn small:
     /// 12pt lead-in, 16pt logo, the product + role word at 11pt/600,
-    /// the version subtitle at 10pt/70%, and one CLOSE plate flush to
-    /// the right edge (the passive window minimizes nowhere — it is a
-    /// mirror). The band outside the plate drags the window.
+    /// the version subtitle at 10pt/70%, and a CLOSE plate with a
+    /// MINIMIZE plate to its left, flush to the right edge — the
+    /// wizard's caption pair. The band outside the plates drags the
+    /// window.
     fn caption_bar(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme;
         let (strip, _) = ui.allocate_exact_size(
@@ -338,6 +354,9 @@ impl PassiveApp {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     // Flush plates: zero the item spacing (HkTitleBar's
                     // geometry — a gap here would read as a stray seam).
+                    // Right to left: the close seat lands rightmost, the
+                    // minimize plate to its left — the wizard caption's
+                    // pair and the HkTitleBar convention.
                     ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                     let (rect, response) = ui.allocate_exact_size(
                         Vec2::new(fallback::CAPTION_W, fallback::TITLEBAR_H),
@@ -388,14 +407,47 @@ impl PassiveApp {
                     if response.clicked() {
                         ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                     }
+                    // The minimize plate: the same seat geometry, a plain
+                    // hover wash (the SCSS recipe styles only the close
+                    // red), folding the mirror into the taskbar — a long
+                    // extraction must be minimizable like any window.
+                    let (rect, response) = ui.allocate_exact_size(
+                        Vec2::new(fallback::CAPTION_W, fallback::TITLEBAR_H),
+                        Sense::click(),
+                    );
+                    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let painter = ui.painter_at(rect);
+                    let hovered = response.hovered();
+                    let active = response.is_pointer_button_down_on();
+                    let hover_t =
+                        ui.ctx()
+                            .animate_bool_with_time(response.id.with("hover"), hovered, 0.12);
+                    if hover_t > 0.0 || active {
+                        let fill = fallback::mix(theme.background, theme.text, hover_t * 0.12);
+                        painter.rect_filled(rect, CornerRadius::ZERO, fill);
+                    }
+                    let icon_color = if hovered || active {
+                        theme.text
+                    } else {
+                        theme.text_secondary
+                    };
+                    painter.image(
+                        self.caption_icons.minus.id(),
+                        egui::Rect::from_center_size(rect.center(), egui::vec2(14.0, 14.0)),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        icon_color,
+                    );
+                    if response.clicked() {
+                        ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
+                    }
                 });
             },
         );
-        // The drag zone stops short of the caption plate (egui
+        // The drag zone stops short of the caption plates (egui
         // hit-tests later widgets first — a full-band drag rect on top
-        // would eat the close click; the wizard's bar does the same).
+        // would eat the plate clicks; the wizard's bar does the same).
         let mut drag_rect = strip;
-        let cluster_left = drag_rect.right() - fallback::CAPTION_W;
+        let cluster_left = drag_rect.right() - 2.0 * fallback::CAPTION_W;
         drag_rect.set_right(cluster_left.max(drag_rect.left()));
         let drag = ui.interact(drag_rect, ui.id().with("titlebar-drag"), Sense::drag());
         if drag.drag_started() {
@@ -459,40 +511,6 @@ impl eframe::App for PassiveApp {
             self.solar_tick_at = Instant::now();
             self.theme = fallback::resolve_theme(&self.config);
         }
-        // A failed run grows its window once — the error landing needs
-        // the room (see PASSIVE_FAIL_W); the compact mirror stays for
-        // the running and success phases. Windows resizes in PHYSICAL
-        // pixels: the logical ViewportCommand::InnerSize grows the
-        // window without growing the render surface on DPI-scaled
-        // displays, leaving the enlarged region transparent (dpi_fix).
-        // The physical resize lands synchronously but the surface and
-        // egui's layout catch up over the next few presents — hammer
-        // repaints for a short window so the blank stretch never
-        // becomes visible.
-        if matches!(self.phase, Phase::Failed) && !self.failed_enlarged {
-            self.failed_enlarged = true;
-            self.enlarge_drive = Some(Instant::now());
-            #[cfg(windows)]
-            crate::dpi_fix::resize_centered(
-                frame,
-                PASSIVE_FAIL_W,
-                PASSIVE_FAIL_H,
-                ctx.pixels_per_point(),
-            );
-            #[cfg(not(windows))]
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(
-                PASSIVE_FAIL_W,
-                PASSIVE_FAIL_H,
-            )));
-        }
-        // The post-enlarge repaint hammer (see the resize above).
-        if let Some(started) = self.enlarge_drive {
-            if started.elapsed() < Duration::from_millis(600) {
-                ctx.request_repaint_after(Duration::from_millis(16));
-            } else {
-                self.enlarge_drive = None;
-            }
-        }
 
         let theme = self.theme;
         let (line, line_color) = match &self.phase {
@@ -520,7 +538,20 @@ impl eframe::App for PassiveApp {
             .show(ctx, |ui| {
                 self.caption_bar(ui);
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                    ui.add_space(14.0);
+                    let body = ui.available_height();
+                    // Every phase's block is FULLY known (verdict line,
+                    // the standing reason pane, the action row, the
+                    // running stack — see the constants), so the
+                    // centering pad is plain arithmetic. Measuring egui's
+                    // cursor instead runs into infinite/poisoned rects
+                    // across the pane's container and the right-to-left
+                    // row — and the window never resizes to chase it.
+                    let content_h = match self.phase {
+                        Phase::Failed => FAILED_BODY_H,
+                        Phase::Done => SETTLED_LINE_H,
+                        Phase::Running => RUN_BODY_H,
+                    };
+                    ui.add_space(((body - content_h) / 2.0).max(14.0));
                     if matches!(self.phase, Phase::Running) {
                         // The mirror's running face: the task heading over
                         // the bar and the live step.
@@ -549,36 +580,68 @@ impl eframe::App for PassiveApp {
                         ui.label(RichText::new(line).strong().size(16.0).color(line_color));
                     }
                     if let Phase::Failed = self.phase {
-                        ui.add_space(10.0);
+                        ui.add_space(14.0);
                         // The hikari error landing's details pane, egui-side:
                         // the raw reason in a bordered frame that hugs its
                         // content up to a cap — a two-line reason never
                         // floats in a tall empty box, a long one scrolls.
+                        // The pane stands its FIXED height (part of
+                        // SETTLED_BODY_H) — measuring a hugging container
+                        // feeds the centering pad poisoned egui rects.
                         let detail = self.failure.clone().unwrap_or_default();
                         let frame_width = (ui.available_width() - 32.0).max(220.0);
-                        ui.allocate_ui(egui::vec2(frame_width, 0.0), |ui| {
+                        ui.allocate_ui(egui::vec2(frame_width, FAILED_PANE_H), |ui| {
                             egui::Frame::default()
                                 .fill(theme.surface)
                                 .stroke(Stroke::new(1.0f32, theme.border))
                                 .corner_radius(CornerRadius::same(8))
                                 .inner_margin(egui::Margin::same(10))
                                 .show(ui, |ui| {
-                                    ui.set_min_width(ui.available_width());
-                                    egui::ScrollArea::vertical()
-                                        .max_height(168.0)
-                                        .auto_shrink([false, true])
-                                        .show(ui, |ui| {
-                                            ui.set_min_width(ui.available_width());
-                                            ui.label(
-                                                RichText::new(detail.clone())
-                                                    .size(11.5)
-                                                    .color(theme.text_tertiary),
-                                            );
-                                        });
+                                    // The pane FILLS its allocation —
+                                    // the standing details pane of the
+                                    // web landing.
+                                    ui.set_min_size(egui::vec2(
+                                        ui.available_width(),
+                                        ui.available_height(),
+                                    ));
+                                    egui::ScrollArea::vertical().show(ui, |ui| {
+                                        ui.set_min_width(ui.available_width());
+                                        ui.label(
+                                            RichText::new(detail.clone())
+                                                .size(11.5)
+                                                .color(theme.text_tertiary),
+                                        );
+                                    });
                                 });
                         });
                         ui.add_space(14.0);
-                        ui.horizontal(|ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            // Center the row by hand: a vertical layout
+                            // left-flushes its children, and the widths
+                            // here are pinned min sizes (FAILED_ROW_W),
+                            // so the offset from the right edge lands
+                            // the pair on the window's midline. Right
+                            // to left, the close seat lands rightmost —
+                            // the same pair the web landing seats.
+                            ui.add_space(((ui.available_width() - FAILED_ROW_W) / 2.0).max(12.0));
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(&self.strings.close)
+                                            .size(13.0)
+                                            .color(theme.text_secondary),
+                                    )
+                                    .fill(theme.surface)
+                                    .stroke(Stroke::new(1.0f32, theme.border))
+                                    .corner_radius(CornerRadius::same(6))
+                                    .min_size(Vec2::new(120.0, 28.0)),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                ctx.send_viewport_cmd(ViewportCommand::Close);
+                            }
+                            ui.add_space(8.0);
                             // The landing's built-in copy action, egui-side:
                             // the whole detail onto the clipboard.
                             if ui
@@ -597,24 +660,6 @@ impl eframe::App for PassiveApp {
                                 .clicked()
                             {
                                 ui.ctx().copy_text(detail);
-                            }
-                            ui.add_space(8.0);
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new(&self.strings.close)
-                                            .size(13.0)
-                                            .color(theme.text_secondary),
-                                    )
-                                    .fill(theme.surface)
-                                    .stroke(Stroke::new(1.0f32, theme.border))
-                                    .corner_radius(CornerRadius::same(6))
-                                    .min_size(Vec2::new(120.0, 28.0)),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                ctx.send_viewport_cmd(ViewportCommand::Close);
                             }
                         });
                     }
@@ -714,7 +759,11 @@ fn run_silent_egui(
             .with_decorations(false)
             .with_inner_size([PASSIVE_W, PASSIVE_H])
             .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
+            // A normal window: the mirror rides the desktop's z-order and
+            // minimizes like anything else — forcing it over every app
+            // (and denying the caption's minimize seat) read as hostile
+            // for an update that can outlast a minute.
+            .with_minimize_button(true)
             .with_position(crate::splash::center_on_primary(PASSIVE_W, PASSIVE_H)),
         ..Default::default()
     };
@@ -749,8 +798,6 @@ fn run_silent_egui(
                 percent: None,
                 failure: None,
                 close_at: None,
-                failed_enlarged: false,
-                enlarge_drive: None,
                 theme,
                 config: config.clone(),
                 solar_pinned,
