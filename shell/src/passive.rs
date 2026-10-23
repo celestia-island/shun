@@ -228,6 +228,12 @@ struct PassiveApp {
     /// layers over the sun (`fallback::resolve_theme` — the same
     /// resolution the wizard's egui face ships).
     theme: fallback::Theme,
+    /// The wizard footer's glow cache, shared with the failure
+    /// landing's ghost buttons (the same `text_button` plates).
+    glow: fallback::GlowCache,
+    /// The details pane's JSON tree fold state (hikari's HkJsonTree
+    /// renders the same object expanded on the web face).
+    tree_open: bool,
     /// The manifest + payload the theme resolution rides — the solar
     /// clock re-resolves from them at every tick.
     config: ShunConfig,
@@ -263,11 +269,6 @@ const DONE_LINGER: Duration = Duration::from_millis(1500);
 /// a birth size has no transition to get wrong.
 pub(crate) const PASSIVE_W: f32 = 720.0;
 pub(crate) const PASSIVE_H: f32 = 620.0;
-
-/// The failure action row's width: the copy and close plates' minimum
-/// sizes plus the gap between them. The row is centered by hand from
-/// this (egui's vertical layouts left-flush their children).
-const FAILED_ROW_W: f32 = 132.0 + 8.0 + 120.0;
 
 /// The standing reason pane's fixed height — the web landing's details
 /// pane, egui-side. Part of [`FAILED_BODY_H`]; measuring a hugging
@@ -484,6 +485,72 @@ impl PassiveApp {
             theme.primary,
         );
     }
+
+    /// The web landing's HkJsonTree, egui-side: a monospace collapsible
+    /// object — a `{` header carrying the field count and a −/+ toggle,
+    /// indented `key: "value" type` rows in the token colors, the closing
+    /// brace. One click seat on the header toggles the fold.
+    fn json_tree(
+        ui: &mut egui::Ui,
+        rows: &[(String, String)],
+        open: &mut bool,
+        theme: &fallback::Theme,
+    ) {
+        let mono = |size: f32| egui::FontId::monospace(size);
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let painter = ui.painter_at(rect);
+        let toggle = if *open { "−" } else { "+" };
+        painter.text(
+            egui::pos2(rect.left() + 2.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            format!("{{ {toggle}"),
+            mono(11.5),
+            theme.text_secondary,
+        );
+        painter.text(
+            egui::pos2(rect.right(), rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            rows.len().to_string(),
+            mono(11.5),
+            theme.text_tertiary,
+        );
+        if response.clicked() {
+            *open = !*open;
+        }
+        if *open {
+            // egui's indent paints the tree's spine line for free.
+            ui.indent("passive-json-tree", |ui| {
+                for (key, value) in rows {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(
+                            RichText::new(format!("{key}: "))
+                                .color(theme.primary)
+                                .font(mono(11.5)),
+                        );
+                        ui.label(
+                            RichText::new(format!("\"{value}\""))
+                                .color(theme.success)
+                                .font(mono(11.5)),
+                        );
+                        ui.label(
+                            RichText::new("  string")
+                                .color(theme.text_tertiary)
+                                .italics()
+                                .font(mono(11.5)),
+                        );
+                    });
+                }
+            });
+        }
+        ui.label(
+            RichText::new("}")
+                .color(theme.text_secondary)
+                .font(mono(11.5)),
+        );
+    }
 }
 
 impl eframe::App for PassiveApp {
@@ -570,25 +637,47 @@ impl eframe::App for PassiveApp {
                                     .size(12.5)
                                     .color(line_color),
                             ),
-                            None => ui.label(RichText::new(line).size(12.5).color(line_color)),
+                            None => {
+                                ui.label(RichText::new(line.as_str()).size(12.5).color(line_color))
+                            }
                         };
                     } else {
                         // A settled run drops the task heading, bar and
                         // percent — the verdict IS the headline now ("still
                         // installing" over "install failed" reads as a
                         // contradiction), styled at the heading's weight.
-                        ui.label(RichText::new(line).strong().size(16.0).color(line_color));
+                        ui.label(
+                            RichText::new(line.clone())
+                                .strong()
+                                .size(16.0)
+                                .color(line_color),
+                        );
                     }
                     if let Phase::Failed = self.phase {
                         ui.add_space(14.0);
                         // The hikari error landing's details pane, egui-side:
-                        // the raw reason in a bordered frame that hugs its
-                        // content up to a cap — a two-line reason never
-                        // floats in a tall empty box, a long one scrolls.
-                        // The pane stands its FIXED height (part of
-                        // SETTLED_BODY_H) — measuring a hugging container
-                        // feeds the centering pad poisoned egui rects.
+                        // the human reason over the structured detail as a
+                        // collapsible JSON tree — the same payload the web
+                        // face's HkJsonTree renders. The pane stands its
+                        // FIXED height (part of FAILED_BODY_H): measuring a
+                        // hugging container feeds the centering pad poisoned
+                        // egui rects.
                         let detail = self.failure.clone().unwrap_or_default();
+                        let lane = if self.uninstall {
+                            "uninstall"
+                        } else {
+                            "silent-install"
+                        };
+                        let rows = [
+                            ("product".to_string(), self.product.clone()),
+                            ("version".to_string(), self.version.clone()),
+                            ("lane".to_string(), lane.to_string()),
+                            ("error".to_string(), detail.clone()),
+                        ];
+                        let mut tree_open = self.tree_open;
+                        let glow = &self.glow;
+                        let copy_label = self.strings.error_copy.clone();
+                        let close_label = self.strings.close.clone();
                         let frame_width = (ui.available_width() - 32.0).max(220.0);
                         ui.allocate_ui(egui::vec2(frame_width, FAILED_PANE_H), |ui| {
                             egui::Frame::default()
@@ -607,59 +696,94 @@ impl eframe::App for PassiveApp {
                                     egui::ScrollArea::vertical().show(ui, |ui| {
                                         ui.set_min_width(ui.available_width());
                                         ui.label(
-                                            RichText::new(detail.clone())
-                                                .size(11.5)
-                                                .color(theme.text_tertiary),
+                                            RichText::new(&detail).size(12.5).color(theme.text),
                                         );
+                                        ui.add_space(10.0);
+                                        ui.separator();
+                                        ui.add_space(6.0);
+                                        Self::json_tree(ui, &rows, &mut tree_open, &theme);
                                     });
                                 });
                         });
+                        self.tree_open = tree_open;
                         ui.add_space(14.0);
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            // Center the row by hand: a vertical layout
-                            // left-flushes its children, and the widths
-                            // here are pinned min sizes (FAILED_ROW_W),
-                            // so the offset from the right edge lands
-                            // the pair on the window's midline. Right
-                            // to left, the close seat lands rightmost —
-                            // the same pair the web landing seats.
-                            ui.add_space(((ui.available_width() - FAILED_ROW_W) / 2.0).max(12.0));
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new(&self.strings.close)
-                                            .size(13.0)
-                                            .color(theme.text_secondary),
-                                    )
-                                    .fill(theme.surface)
-                                    .stroke(Stroke::new(1.0f32, theme.border))
-                                    .corner_radius(CornerRadius::same(6))
-                                    .min_size(Vec2::new(120.0, 28.0)),
+                        // The landing's actions ride the wizard footer's
+                        // own hand-drawn ghost buttons (text_button — the
+                        // hover wash, the baseline-true text), sized from
+                        // their labels like the footer's pair, and the row
+                        // centers by the analytic label sum. Right to
+                        // left: the close seat lands rightmost.
+                        let plate_w = |label: &str| {
+                            (ui.painter()
+                                .layout_no_wrap(
+                                    label.to_owned(),
+                                    egui::FontId::proportional(13.0),
+                                    egui::Color32::WHITE,
                                 )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
+                                .size()
+                                .x
+                                + 32.0)
+                                .max(96.0)
+                        };
+                        let copy_w = plate_w(&copy_label);
+                        let close_w = plate_w(&close_label);
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.add_space(
+                                ((ui.available_width() - (copy_w + 8.0 + close_w)) / 2.0).max(12.0),
+                            );
+                            if fallback::text_button(
+                                ui,
+                                egui::vec2(close_w, 28.0),
+                                &close_label,
+                                13.0,
+                                16.0,
+                                false,
+                                theme.text_secondary,
+                                theme.surface,
+                                Some(theme.border),
+                                8,
+                                None,
+                                glow,
+                                theme.primary,
+                            )
+                            .clicked()
                             {
                                 ctx.send_viewport_cmd(ViewportCommand::Close);
                             }
                             ui.add_space(8.0);
-                            // The landing's built-in copy action, egui-side:
-                            // the whole detail onto the clipboard.
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new(&self.strings.error_copy)
-                                            .size(13.0)
-                                            .color(theme.text),
-                                    )
-                                    .fill(theme.surface)
-                                    .stroke(Stroke::new(1.0f32, theme.border))
-                                    .corner_radius(CornerRadius::same(6))
-                                    .min_size(Vec2::new(132.0, 28.0)),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
+                            // The landing's built-in copy action: the
+                            // verdict, the reason and the structured
+                            // detail — everything a bug report needs.
+                            if fallback::text_button(
+                                ui,
+                                egui::vec2(copy_w, 28.0),
+                                &copy_label,
+                                13.0,
+                                16.0,
+                                false,
+                                theme.text_secondary,
+                                theme.surface,
+                                Some(theme.border),
+                                8,
+                                None,
+                                glow,
+                                theme.primary,
+                            )
+                            .clicked()
                             {
-                                ui.ctx().copy_text(detail);
+                                let payload = serde_json::json!({
+                                    "product": self.product,
+                                    "version": self.version,
+                                    "lane": lane,
+                                    "error": detail,
+                                });
+                                ui.ctx().copy_text(format!(
+                                    "{}\n{}\n{}",
+                                    line.clone(),
+                                    detail,
+                                    serde_json::to_string_pretty(&payload)
+                                        .unwrap_or_else(|_| "{}".to_string()),
+                                ));
                             }
                         });
                     }
@@ -799,6 +923,8 @@ fn run_silent_egui(
                 failure: None,
                 close_at: None,
                 theme,
+                glow: fallback::GlowCache::default(),
+                tree_open: true,
                 config: config.clone(),
                 solar_pinned,
                 solar_tick_at: Instant::now(),

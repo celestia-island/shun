@@ -232,7 +232,7 @@ impl Theme {
 /// allocates ONE click-sensed rect, draws glow -> fill/border ->
 /// baseline-true text on it, and returns the response.
 #[allow(clippy::too_many_arguments)]
-fn text_button(
+pub(crate) fn text_button(
     ui: &mut egui::Ui,
     desired: egui::Vec2,
     label: &str,
