@@ -68,7 +68,7 @@ pub(crate) fn resize_centered(frame: &eframe::Frame, width: f32, height: f32, sc
         GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos,
     };
     let Ok(handle) = frame.window_handle() else {
         return;
