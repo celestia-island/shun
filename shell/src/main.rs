@@ -2572,7 +2572,18 @@ fn run_passive_tauri(
             passive::attach_worker(app.handle().clone(), &cli, &config, &payload);
             Ok(())
         })
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!())
+        // run_return, NOT Builder::run: `App::run` never returns — tauri
+        // tears the process down with std::process::exit(0) the moment
+        // the loop ends, so a user closing the failure pane reported
+        // success and the worker's verdict (the join below) never ran.
+        // run_return comes back here on close (the done linger, the
+        // caption X, the failure pane's button alike) and the caller
+        // owns the process exit.
+        .and_then(|app| {
+            app.run_return(|_handle, _event| {});
+            Ok(())
+        });
     // The loop is down (the window closed — on its own after the done
     // linger, by the user, or on the failure pane's close button). The
     // install worker keeps its console-only contract: join it before the
