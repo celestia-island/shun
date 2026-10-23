@@ -69,8 +69,6 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_System_Com",
   "Win32_System_SystemInformation",
 ] }
-# The OS app-theme probe (AppsUseLightTheme) for the `system` mode.
-winreg = "0.56.0"
 # The loader-parity WebView2 probe (`webview2_loader_ready`): the same
 # `webview_version()` call tauri-runtime-wry gates webview creation on,
 # so the face ladder can never disagree with the gate (the disagreement

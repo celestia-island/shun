@@ -28,7 +28,7 @@
 //! localized copy. The egui face is the FLOOR: when the webview lane
 //! cannot come up (runtime missing, face disabled, forced fallback
 //! flags), the window re-renders through the egui face's own chrome —
-//! its frameless custom title bar, its `shell.theme`/OS light-dark
+//! its frameless custom title bar, its `shell.theme`/solar-clock
 //! token resolution, its progress bar — so even the degraded path
 //! never falls back to a native-titled window. Only when no desktop
 //! session exists at all does the run stay console-only.
@@ -217,9 +217,19 @@ struct PassiveApp {
     /// the completion line is readable).
     close_at: Option<Instant>,
     /// The egui face's resolved theme: the manifest's `shell.theme`
-    /// layers over the OS light/dark side (`fallback::resolve_theme` —
-    /// the same resolution the wizard's egui face ships).
+    /// layers over the sun (`fallback::resolve_theme` — the same
+    /// resolution the wizard's egui face ships).
     theme: fallback::Theme,
+    /// The manifest + payload the theme resolution rides — the solar
+    /// clock re-resolves from them at every tick.
+    config: ShunConfig,
+    /// Whether the manifest pins the light/dark side outright: a pin
+    /// stands the solar clock down (the wizard's caption toggle does
+    /// not exist here — the passive window is a mirror).
+    solar_pinned: bool,
+    /// The solar clock's last re-check — re-evaluated every five
+    /// minutes so dawn and dusk flip a `system`-mode run.
+    solar_tick_at: Instant,
     /// The caption bar's lucide glyphs + the product logo.
     caption_icons: fallback::CaptionIcons,
     logo: Option<egui::TextureHandle>,
@@ -414,6 +424,15 @@ impl eframe::App for PassiveApp {
         while let Ok(msg) = self.receiver.try_recv() {
             self.fold(msg);
         }
+        // The solar clock: the same five-minute re-check the wizard's
+        // egui face runs — a long extraction crossing dusk flips the
+        // mirror with it (a manifest pin stands the clock down).
+        if !self.solar_pinned
+            && self.solar_tick_at.elapsed() >= Duration::from_secs(crate::solar::SOLAR_TICK_SECS)
+        {
+            self.solar_tick_at = Instant::now();
+            self.theme = fallback::resolve_theme(&self.config);
+        }
 
         let theme = self.theme;
         let (line, line_color) = match &self.phase {
@@ -598,9 +617,10 @@ fn run_silent_egui(
             let _fonts = fallback::install_system_fonts(&cc.egui_ctx);
             // The wizard face's canvas contract (see build_app): the
             // token set paints over the dark visuals — the panel fill
-            // and widget strokes below are what a light manifest or a
-            // light OS side flips.
+            // and widget strokes below are what a light manifest, a
+            // day-side sun, or a light OS floor flips.
             let theme = fallback::resolve_theme(config);
+            let solar_pinned = fallback::manifest_pins_mode(config);
             cc.egui_ctx.set_theme(egui::Theme::Dark);
             cc.egui_ctx
                 .options_mut(|o| o.theme_preference = egui::ThemePreference::Dark);
@@ -622,6 +642,9 @@ fn run_silent_egui(
                 failure: None,
                 close_at: None,
                 theme,
+                config: config.clone(),
+                solar_pinned,
+                solar_tick_at: Instant::now(),
                 caption_icons: fallback::CaptionIcons::load(&cc.egui_ctx),
                 logo: fallback::load_logo(&cc.egui_ctx, crate::LOGO_KIND, crate::LOGO_BYTES),
                 product: config.product.name.clone(),

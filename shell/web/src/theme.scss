@@ -1,12 +1,14 @@
 /* WoWSP installer shell theme tokens. Adapted from webui's theme.scss
    (shittim-chest discipline): structural tokens + color RGB-channel
    triplets seeded here, consumed by hikari components and app-local scss
-   alike. The installer follows the SYSTEM theme: light values live in
-   :root, dark overrides apply under @media (prefers-color-scheme: dark),
-   and [data-mode="dark"] keeps working as an explicit pin. hikari's own
-   theme-package tokens (--hi-color-*) are prefers-color-scheme driven;
-   only the app-hue extras are seeded here, derived from our flipping
-   tokens so they track the mode automatically. */
+   alike. The mode driver is the SOLAR CLOCK (src/solar.ts — hikari's
+   day/night rule): it pins [data-mode] explicitly, so light values live
+   in :root, [data-mode="dark"] pins the dark set, and the
+   @media (prefers-color-scheme: dark) blocks remain only as the pre-JS
+   boot floor (plus the :root[data-mode="light"] re-pin over a dark OS).
+   hikari's own theme-package tokens (--hi-color-*) derive from these
+   --color-* channels; the app-hue extras seeded below track the mode
+   automatically. */
 
 /* === Tokens === */
 /* Light palette — the :root default; [data-mode="light"] re-pins it over

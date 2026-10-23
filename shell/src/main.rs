@@ -29,6 +29,7 @@ mod markdown;
 mod passive;
 #[cfg(windows)]
 mod screenshot;
+mod solar;
 mod splash;
 mod terminal;
 mod tui;

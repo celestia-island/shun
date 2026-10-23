@@ -1,8 +1,9 @@
-import { computed, defineComponent, onMounted, ref } from "vue";
+import { computed, defineComponent, onBeforeUnmount, onMounted, ref } from "vue";
 import { CheckCircle2, XCircle } from "lucide-vue-next";
 import { HkButton, HkProgressBar } from "@celestia-island/hikari";
 
 import AppTitleBar from "./components/AppTitleBar";
+import { solarWantsDark, startSolarClock } from "./solar";
 import {
   DEFAULT_LOCALE,
   isInstallerLocale,
@@ -17,8 +18,8 @@ import { invoke, listen, tauriWindow } from "./tauri";
  * rendered by the installer's webview lane; index.html?window=passive
  * mounts this instead of the wizard). Same design surface as the wizard:
  * the hikari caption bar (custom title bar — the window is frameless),
- * the theme token stack following `shell.theme` and the OS light/dark
- * side, the hikari progress bar, and copy from the shared string table
+ * the theme token stack following `shell.theme` and the solar clock,
+ * the hikari progress bar, and copy from the shared string table
  * resolved from the SYSTEM locale — a `--silent` run never picks a
  * wizard language. No pages, no input except the caption close: closing
  * only stops the mirroring, the install itself always runs to
@@ -73,18 +74,21 @@ export default defineComponent({
       text.replaceAll("%PRODUCT%", product.value);
     const s = computed(() => strings(locale.value));
 
-    // Theme mode: the manifest pin, else the OS side — the passive
-    // window offers no toggle (it is a mirror, not a wizard), so the
-    // session pin of App.tsx does not apply; a live OS flip re-applies.
+    // Theme mode: the manifest pin, else the sun — the solar clock's
+    // day/night verdict (solar.ts), the same resolution the wizard
+    // faces run. The passive window offers no toggle (it is a mirror,
+    // not a wizard), so the session pin of App.tsx does not apply; a
+    // dawn/dusk crossing mid-run re-applies through the clock.
     const applyThemeMode = () => {
       const resolved = theme.value?.mode ?? "system";
       const dark =
         resolved === "dark" ||
-        (resolved === "system" &&
-          (window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ??
-            false));
+        (resolved !== "light" && solarWantsDark());
       document.documentElement.dataset.mode = dark ? "dark" : "light";
     };
+    // The solar clock: a long extraction crossing dawn or dusk flips
+    // the mirror with it (the clock owns the re-apply; nothing pins).
+    const stopSolarClock = startSolarClock(applyThemeMode);
 
     const closeWindow = () => {
       tauriWindow()?.close().catch(() => {});
@@ -135,9 +139,6 @@ export default defineComponent({
           version.value = view.product?.version ?? "";
           theme.value = view.theme ?? null;
           applyThemeMode();
-          window
-            .matchMedia?.("(prefers-color-scheme: dark)")
-            ?.addEventListener?.("change", applyThemeMode);
         })
         .catch(() => {});
       listen<PassiveEvent>("passive-progress", onEvent).catch(() => {});
@@ -151,6 +152,7 @@ export default defineComponent({
         })
         .catch(() => {});
     });
+    onBeforeUnmount(stopSolarClock);
 
     // The linger timer dies with the window; nothing else needs
     // explicit teardown (the backend owns the worker).
