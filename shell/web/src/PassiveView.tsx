@@ -34,15 +34,17 @@ import { invoke, listen, tauriWindow } from "./tauri";
  * the theme token stack following `shell.theme` and the solar clock,
  * the hikari progress bar, and copy from the shared string table
  * resolved from the SYSTEM locale — a `--silent` run never picks a
- * wizard language. No pages, no input except the caption close: closing
- * only stops the mirroring, the install itself always runs to
+ * wizard language. No pages, no input beyond the caption plates:
+ * closing only stops the mirroring, the install itself always runs to
  * completion (the backend worker owns it). Success lingers briefly so
  * the completion line reads, then folds the window; failure holds the
  * standard hikari error landing (the run's reason verbatim, the
- * structured detail as a JSON tree, the built-in copy action) and the
- * backend grows the window to fit it — the compact mirror is a
- * progress face, not an error report. Upgrade and uninstall runs keep
- * the same compact chrome with no extra branding beyond the caption.
+ * structured detail as a JSON tree, the built-in copy action). The
+ * window is born at its final size and never resizes — the running
+ * mirror, the done verdict and this landing lay out in the one surface
+ * (a runtime grow cannot be DPI-correct from the first frame).
+ * Upgrade and uninstall runs keep the same chrome with no extra
+ * branding beyond the caption.
  */
 
 /** What the backend worker reports (serde `kind`-tagged, see
@@ -218,7 +220,7 @@ export default defineComponent({
             )}
             subtitle={version.value ? `v${version.value}` : ""}
             showMaximize={false}
-            showMinimize={false}
+            showMinimize
           />
           <main class="passive-pane">
             {phase.value === "done" ? (

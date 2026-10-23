@@ -2558,13 +2558,19 @@ fn run_passive_tauri(
                 tauri::WebviewUrl::App("index.html?window=passive".into()),
             )
             .title(&native_title)
-            .inner_size(420.0, 240.0)
+            // Born at the final size — the one window every phase lays
+            // out in (see passive::PASSIVE_W): a runtime grow cannot be
+            // DPI-correct from the first frame.
+            .inner_size(passive::PASSIVE_W.into(), passive::PASSIVE_H.into())
             .center()
-            .always_on_top(true)
+            // A normal window: the mirror rides the desktop z-order and
+            // minimizes from its caption (see passive::PASSIVE_W) — an
+            // always-on-top, minimize-denying mirror read as hostile
+            // for an update that can outlast a minute.
             .resizable(false)
             .decorations(false)
             .shadow(true)
-            .minimizable(false)
+            .minimizable(true)
             .maximizable(false)
             .closable(true)
             .build()?;
