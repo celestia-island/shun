@@ -223,7 +223,15 @@ La voie silencieuse (`--silent --dir=<ancien répertoire>`) détecte
 via la règle une installation signalée et se relance en assistant
 interactif avec `--relocate-from <ancien répertoire>` (une nouvelle
 option CLI du shell ; elle implique la voie interactive et entre en
-conflit avec `--silent`). L'assistant s'ouvre directement à l'étape
+conflit avec `--silent`). La passation elle-même affiche le
+motif et sort avec le code `0` sans rien installer — le contrat du
+programme de mise à jour voit un succès, et le résultat appartient à
+l'assistant interactif auquel l'utilisateur fait maintenant face.
+Limite connue : une mise à jour silencieuse depuis une session
+totalement non interactive (sans bureau utilisateur) fait naître un
+assistant que personne ne voit — cette installation reste sur son
+ancienne version jusqu'à ce que quelqu'un se connecte de façon
+interactive. L'assistant s'ouvre directement à l'étape
 d'emplacement avec un encart localisé expliquant que l'ancien
 emplacement n'est plus valide, et le répertoire signalé est exclu
 des sélections rapides. Une fois la nouvelle installation posée,
@@ -234,8 +242,14 @@ marqueur portable et le désinstalleur copié ; les fichiers étrangers
 répertoire lui-même n'est supprimé qu'une fois vide. L'enregistrement
 (ARP, raccourcis) suit le nouvel emplacement — le balayage ne
 désenregistre jamais rien. Annuler l'assistant laisse l'ancienne
-installation intacte et à jour — la règle qui ne laisse jamais une
-installation en plan tient.
+installation installée et tournant sur son ancienne version — mais
+elle ne peut plus se mettre à jour silencieusement sur place :
+chaque tentative silencieuse future redéclenche la passation de la
+relocalisation et l'assistant s'ouvre à nouveau, jusqu'à ce que
+l'utilisateur complète la relocalisation. La règle qui ne laisse
+jamais une installation en plan tient — l'installation n'est pas
+cassée ; ses mises à jour silencieuses attendent simplement le
+déménagement.
 
 ## Résolution de l'emplacement d'installation
 

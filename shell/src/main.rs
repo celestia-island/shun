@@ -1269,11 +1269,17 @@ fn relocation_startup_probe(config: &ShunConfig) -> Option<String> {
 }
 
 /// Whether two path strings name the same directory — trimmed,
-/// trailing-separator-insensitive and case-insensitive (Windows path
+/// separator-normalized (internal `/` folds to `\`, so a handover path
+/// typed either way still matches) and case-insensitive (Windows path
 /// conventions; the lowercase fold only widens the relocation lane's
 /// old-folder exclusion on case-sensitive hosts, harmlessly).
 pub(crate) fn same_install_dir(a: &str, b: &str) -> bool {
-    let normalize = |path: &str| path.trim().trim_end_matches(['\\', '/']).to_lowercase();
+    let normalize = |path: &str| {
+        path.trim()
+            .trim_end_matches(['\\', '/'])
+            .replace('/', "\\")
+            .to_lowercase()
+    };
     let (a, b) = (normalize(a), normalize(b));
     !a.is_empty() && a == b
 }

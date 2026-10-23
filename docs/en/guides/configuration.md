@@ -221,7 +221,13 @@ fault the location.
 The silent lane (`--silent --dir=<old>`) detects a flagged install
 through the rule and relaunches itself as the interactive wizard
 with `--relocate-from <old-dir>` (a shell CLI flag that implies the
-interactive lane and conflicts with `--silent`). The wizard opens
+interactive lane and conflicts with `--silent`). The handover itself prints the
+reason and exits `0` without installing anything — the updater
+contract sees success, and the interactive wizard the user now faces
+owns the outcome. Known limitation: a silent update from a fully
+non-interactive session (no user desktop) spawns a wizard nobody
+sees, so such an install stays on its old version until someone
+logs in interactively. The wizard opens
 straight at the location step with a localized notice explaining the
 old location is no longer valid, and the flagged directory is
 excluded from the quick-picks. After the new install lands, only the
@@ -231,7 +237,12 @@ copied uninstaller; foreign files (the host game, say) are never
 touched, and the old directory itself is removed only once empty.
 The registration (ARP, shortcuts) follows the new location — the
 sweep never unregisters anything. Cancelling the wizard leaves the
-old install untouched and updatable — the never-strand rule holds.
+old install installed and running on its old version — it just can
+no longer silently update in place: every future silent update
+re-triggers the relocation handover, and the wizard opens again,
+until the user completes the relocation. The never-strand rule
+still holds — the install is never broken, only its silent updates
+wait for the move.
 
 ## Install location resolution
 

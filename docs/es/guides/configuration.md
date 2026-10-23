@@ -225,7 +225,14 @@ El carril silencioso (`--silent --dir=<directorio antiguo>`) detecta
 por la regla una instalación marcada y se relanza como asistente
 interactivo con `--relocate-from <directorio antiguo>` (una opción
 nueva de la CLI del shell; implica el carril interactivo y choca con
-`--silent`). El asistente abre directamente en el paso de ubicación
+`--silent`). La cesión en sí imprime el motivo y sale con
+código `0` sin instalar nada — el contrato del actualizador ve
+éxito, y el resultado pertenece al asistente interactivo al que
+ahora se enfrenta el usuario. Limitación conocida: una
+actualización silenciosa desde una sesión totalmente no interactiva
+(sin escritorio de usuario) lanza un asistente que nadie ve — esa
+instalación se queda en su versión antigua hasta que alguien inicie
+sesión de forma interactiva. El asistente abre directamente en el paso de ubicación
 con un aviso localizado que explica que la ubicación antigua ya no es
 válida, y el directorio marcado queda excluido de las selecciones
 rápidas. Tras aterrizar la instalación nueva, del directorio antiguo
@@ -235,8 +242,13 @@ copiado; los archivos ajenos (el juego anfitrión, por ejemplo) no se
 tocan jamás, y el directorio antiguo en sí solo se elimina cuando
 queda vacío. El registro (ARP, accesos directos) sigue a la ubicación
 nueva — el barrido nunca desregistra nada. Cancelar el asistente
-deja la instalación antigua intacta y actualizable — la regla de no
-dejar nunca colgada una instalación se mantiene.
+deja la instalación antigua instalada y corriendo en su versión
+antigua — pero ya no puede actualizarse en silencio in situ: cada
+intento silencioso futuro vuelve a disparar la cesión de la
+reubicación y el asistente se abre de nuevo, hasta que el usuario
+complete la reubicación. La regla de no dejar nunca colgada una
+instalación se mantiene — la instalación no queda rota; sus
+actualizaciones silenciosas simplemente esperan la mudanza.
 
 ## Resolución de la ubicación de instalación
 
