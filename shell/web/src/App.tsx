@@ -24,6 +24,7 @@ import {
 } from "@celestia-island/hikari/theme/useWallpaper";
 
 import { composeAgreementDocs } from "./agreementDoc";
+import { solarWantsDark, startSolarClock } from "./solar";
 import AppTitleBar from "./components/AppTitleBar";
 import PathField, { type DriveInfo } from "./components/PathField";
 import LogPane, { type LogLine } from "./components/LogPane";
@@ -504,11 +505,6 @@ export default defineComponent({
           theme.value = (view as { theme?: unknown }).theme as typeof theme.value;
           applyThemeMode();
           bootWallpaper();
-          // The OS theme clock: an OS light/dark flip re-applies
-          // while the mode is unpinned, so the wizard follows live.
-          prefersDark?.addEventListener?.("change", () => {
-            if (userPinned.value === null) applyThemeMode();
-          });
         })
         .catch(() => {});
       invoke<DriveInfo[]>("list_drives")
@@ -752,47 +748,38 @@ export default defineComponent({
     // timezone offset's estimate; the clock re-checks every five
     // minutes so dawn and dusk flip a live wizard. `light`/`dark` pin
     // via [data-mode]; an explicit user toggle (when the manifest
-    // allows it) wins for the session.
-    // Light/dark resolution (hikari rules, user direction): `system`
-    // follows the MACHINE's app theme — WebView2 honors Windows 11's
-    // personalization light/dark through the prefers-color-scheme
-    // query — not the sun. The query unavailable resolves LIGHT
-    // (the documented floor). A live OS flip re-applies while the
-    // wizard sits open; a user toggle (when the manifest allows it)
-    // wins for the session.
-    const systemWantsDark = (): boolean =>
-      window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
-    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)");
-    const themeMode = ref<"system" | "light" | "dark">("system");
+    // allows it) wins for the session and stands the clock down
+    // (hikari's `setMode`).
+    const themeMode = ref<"light" | "dark">(solarWantsDark() ? "dark" : "light");
     const userPinned = ref<"light" | "dark" | null>(null);
     const applyThemeMode = () => {
       const resolved =
         userPinned.value ?? theme.value?.mode ?? "system";
       // themeMode carries the EFFECTIVE side (system resolves against
-      // the OS preference), so the caption toggle's sun/moon reflects
-      // what the page actually shows instead of pinning on the raw
-      // "system".
+      // the sun), so the caption toggle's sun/moon reflects what the
+      // page actually shows instead of pinning on the raw "system".
       const effective =
-        resolved === "system"
-          ? systemWantsDark()
+        resolved === "light" || resolved === "dark"
+          ? resolved
+          : solarWantsDark()
             ? "dark"
-            : "light"
-          : resolved;
+            : "light";
       themeMode.value = effective;
-      const root = document.documentElement;
-      root.dataset.mode =
-        resolved === "system" ? "" : resolved;
+      // The verdict always pins [data-mode] explicitly — the
+      // prefers-color-scheme blocks in theme.scss are only the pre-JS
+      // boot floor now, never the live driver.
+      document.documentElement.dataset.mode = effective;
     };
     const toggleTheme = () => {
-      const dark =
-        userPinned.value === "dark" ||
-        (userPinned.value === null &&
-          (theme.value?.mode === "dark" ||
-            (theme.value?.mode ?? "system") === "system" &&
-              window.matchMedia("(prefers-color-scheme: dark)").matches));
-      userPinned.value = dark ? "light" : "dark";
+      userPinned.value = themeMode.value === "dark" ? "light" : "dark";
       applyThemeMode();
     };
+    // The solar clock: a `system`-mode face flips at dawn/dusk while
+    // the wizard sits open; a session the user pinned ignores it.
+    const stopSolarClock = startSolarClock(() => {
+      if (userPinned.value === null) applyThemeMode();
+    });
+    onBeforeUnmount(stopSolarClock);
 
     // Theme CSS: page background, per-side rail/pane layers. Without a
     // rail override the rail keeps its default translucent offset over

@@ -1082,7 +1082,9 @@ pub enum TimelineOrientation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct ThemeConfig {
-    /// `system` follows the OS preference; `light`/`dark` pin the mode.
+    /// `system` follows the sun (hikari's day/night rule — altitude
+    /// above +6° is light, civil twilight and night dark, re-checked
+    /// every five minutes); `light`/`dark` pin the mode.
     #[serde(default)]
     pub mode: Option<ThemeMode>,
     /// Accent tint override as RGB channels (drives --color-primary).
@@ -1107,7 +1109,8 @@ pub struct ThemeConfig {
     /// the title bar's right controls). `false` (the default) pins
     /// whatever `mode` resolves — the installer look stays exactly as
     /// themed. The resolution itself follows hikari's rules: `system`
-    /// tracks the OS preference live, `light`/`dark` pin.
+    /// tracks the sun live (the solar clock re-checks every five
+    /// minutes so dawn and dusk flip a face), `light`/`dark` pin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_adjustable: Option<bool>,
     /// The hikari wallpaper stack: media sources tried in order
@@ -1189,7 +1192,8 @@ impl BackgroundSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThemeMode {
-    /// Follow the OS preference.
+    /// Follow the sun — hikari's day/night rule (altitude above +6°
+    /// runs light, civil twilight and night run dark).
     #[default]
     System,
     Light,

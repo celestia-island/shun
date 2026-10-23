@@ -548,57 +548,31 @@ pub(crate) fn mix(base: Color32, over: Color32, factor: f32) -> Color32 {
     )
 }
 
-// Resolves `shell.theme.mode` (default dark; `system` asks Windows).
-/// The machine's app-theme preference: Windows 11 personalization's
-/// `AppsUseLightTheme` (1 = light). Any failure to read it — older
-/// Windows, a stripped registry — resolves LIGHT (the user direction's
-/// floor), and so does every non-Windows platform.
-#[cfg(windows)]
-fn os_prefers_light() -> bool {
-    use winreg::RegKey;
-    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    hkcu.open_subkey_with_flags(
-        r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-        KEY_READ,
-    )
-    .and_then(|key| key.get_value::<u32, _>("AppsUseLightTheme"))
-    .map(|value| value != 0)
-    .unwrap_or(true)
-}
-
-/// Non-Windows twin of [`os_prefers_light`]: there is no personalization
-/// registry to read, so the probe resolves LIGHT — the same floor the
-/// user direction set for an unreadable registry on Windows.
-#[cfg(not(windows))]
-fn os_prefers_light() -> bool {
-    true
-}
-
 /// The theme resolution shared by the wizard's egui face and the silent
 /// lane's egui passive window: the manifest's `shell.theme` (mode pin +
-/// accent + background layers) over the OS light/dark side.
+/// accent + background layers) over the sun — `system` (and unset) ask
+/// the solar clock, the same verdict the web faces resolve from
+/// `solar.ts`.
 pub(crate) fn resolve_theme(config: &ShunConfig) -> Theme {
     let shell = config.shell.clone().unwrap_or_default();
     let accent = shell.theme.as_ref().and_then(|theme| theme.accent);
     // A manifest background (solid or gradient) tints the base tokens:
     // egui has no gradient fill, so gradients mix to their midpoint —
     // honest approximation, zero extra infrastructure.
-    // Same semantics as hikari's useTheme: an unset mode defaults to
-    // dark — the installer ships dark — `system` resolves from the SUN
-    // (the solar clock refines it as fixes land and time passes), and
-    // explicit light/dark pin.
+    // Same semantics as hikari's useTheme: `system` (and unset)
+    // resolves from the SUN — the solar clock re-checks every five
+    // minutes so dawn and dusk flip a live face — and explicit
+    // light/dark pins the side outright.
     let mut theme = match shell.theme.as_ref().and_then(|theme| theme.mode) {
         Some(shun::config::ThemeMode::Light) => Theme::light(accent),
         Some(shun::config::ThemeMode::Dark) => Theme::dark(accent),
-        // `system` (and unset): follow the MACHINE's app theme —
-        // Windows 11's personalization light/dark — not the sun.
-        // Undetectable resolves light (user direction).
+        // `system` (and unset): follow the sun — day (altitude above
+        // +6°) runs light, civil twilight and night run dark.
         Some(shun::config::ThemeMode::System) | None => {
-            if os_prefers_light() {
-                Theme::light(accent)
-            } else {
+            if crate::solar::timezone_estimate_dark() {
                 Theme::dark(accent)
+            } else {
+                Theme::light(accent)
             }
         }
     };
@@ -608,6 +582,21 @@ pub(crate) fn resolve_theme(config: &ShunConfig) -> Theme {
     // manifest's theme.
     apply_theme_layers(&mut theme, &shell);
     theme
+}
+
+/// Whether the manifest pins the light/dark side outright — a pinned
+/// face never consults the solar clock (nor does its caption toggle
+/// need to stand it down, but the pin still wins over the clock's
+/// verdict at every tick).
+pub(crate) fn manifest_pins_mode(config: &ShunConfig) -> bool {
+    matches!(
+        config
+            .shell
+            .as_ref()
+            .and_then(|shell| shell.theme.as_ref())
+            .and_then(|theme| theme.mode),
+        Some(shun::config::ThemeMode::Light) | Some(shun::config::ThemeMode::Dark)
+    )
 }
 
 /// Applies the manifest's background layers onto a base token set —
@@ -1585,10 +1574,10 @@ struct FallbackApp {
     /// Set when the user toggles: the pinned mode wins for the session
     /// and the solar clock stops flipping it (hikari's `setMode`).
     mode_pinned: bool,
-    /// The Windows location fix once it lands; `None` keeps the
-    /// timezone estimate driving the solar clock.
-    /// The solar clock's last verdict and tick time — re-evaluated
-    /// every five minutes so dawn/dusk flip a `system`-mode face.
+    /// The solar clock's last re-check — re-evaluated every five
+    /// minutes so dawn and dusk flip a `system`-mode face (the
+    /// timezone estimate drives it; there is no location fix).
+    solar_tick_at: std::time::Instant,
     /// The DWM round/shadow hint is applied once, on the first frame.
     dwm_rounded: bool,
     /// The install-location candidates + drive list — probed once from
@@ -1887,13 +1876,11 @@ impl FallbackApp {
         // The toggle state mirrors what resolve_theme resolved (the
         // solar clock's first-paint verdict counts for the session
         // until the user pins — or the clock itself flips it).
-        let resolved_dark = !matches!(
-            shell.theme.as_ref().and_then(|theme| theme.mode),
-            Some(shun::config::ThemeMode::Light)
-        ) || matches!(
-            shell.theme.as_ref().and_then(|theme| theme.mode),
-            Some(shun::config::ThemeMode::Dark)
-        );
+        let resolved_dark = match shell.theme.as_ref().and_then(|theme| theme.mode) {
+            Some(shun::config::ThemeMode::Light) => false,
+            Some(shun::config::ThemeMode::Dark) => true,
+            _ => crate::solar::timezone_estimate_dark(),
+        };
         let texts = wizard_strings().texts(&language);
         let attachments: Vec<(String, String, bool, Option<u64>, bool)> =
             shun::attachments::resolve(&config, &payload)
@@ -1930,6 +1917,7 @@ impl FallbackApp {
             texts,
             dark_theme: resolved_dark,
             mode_pinned: false,
+            solar_tick_at: std::time::Instant::now(),
             dwm_rounded: false,
             splash_copy: splash_strings(),
             handoff: None,
@@ -2111,6 +2099,30 @@ impl FallbackApp {
         } else {
             egui::Visuals::light()
         });
+    }
+
+    /// The solar clock: re-ask the sun every five minutes whether the
+    /// day side still holds, and flip through [`Self::apply_mode`] when
+    /// dawn or dusk crosses the +6° band (hikari's theme clock). A user
+    /// toggle or a manifest pin stands the clock down — egui sleeps
+    /// without input, so the re-arm keeps the wakeups coming either way.
+    fn solar_tick(&mut self, ctx: &Context) {
+        ctx.request_repaint_after(std::time::Duration::from_secs(
+            crate::solar::SOLAR_TICK_SECS,
+        ));
+        if self.mode_pinned || manifest_pins_mode(&self.config) {
+            return;
+        }
+        if self.solar_tick_at.elapsed()
+            < std::time::Duration::from_secs(crate::solar::SOLAR_TICK_SECS)
+        {
+            return;
+        }
+        self.solar_tick_at = std::time::Instant::now();
+        let dark = crate::solar::timezone_estimate_dark();
+        if dark != self.dark_theme {
+            self.apply_mode(ctx, dark);
+        }
     }
 
     fn apply_language(&mut self, language: &str) {
@@ -5476,6 +5488,11 @@ impl eframe::App for FallbackApp {
             apply_dwm_rounding(frame);
             crate::dpi_fix::install(frame);
         }
+        // The solar clock: the face re-asks the sun every five minutes
+        // (also the splash phase — the splash paints the resolved
+        // tokens too, and the re-arm keeps the loop from sleeping
+        // through a dawn/dusk crossing).
+        self.solar_tick(ctx);
         // The splash phase: the same window's first act, before the
         // wizard content exists (the payload is still decoding).
         if matches!(self.stage, Stage::Splash(_)) {

@@ -56,11 +56,11 @@ silent-progress = true
 #     { image = "assets/fallback.png" },
 #   ]
 [package.metadata.shun.shell.theme]
-# `system` follows the machine's app theme (AppsUseLightTheme),
-# undetectable resolving light — the same rule the products ship.
+# `system` follows the sun (hikari's day/night rule — the solar clock
+# re-checks every five minutes) — the same rule the products ship.
 mode = "system"
 # No `background` / `rail-background` here: a pinned dark gradient
-# would fight the system theme this manifest now follows. Products
+# would fight the sun-driven theme this manifest now follows. Products
 # that pin their look (evernight's own palette) declare their layers;
 # the demo shows the unpinned system path.
 
