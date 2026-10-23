@@ -457,9 +457,20 @@ impl eframe::App for PassiveApp {
         }
         // A failed run grows its window once — the error landing needs
         // the room (see PASSIVE_FAIL_W); the compact mirror stays for
-        // the running and success phases.
+        // the running and success phases. Windows resizes in PHYSICAL
+        // pixels: the logical ViewportCommand::InnerSize grows the
+        // window without growing the render surface on DPI-scaled
+        // displays, leaving the enlarged region transparent (dpi_fix).
         if matches!(self.phase, Phase::Failed) && !self.failed_enlarged {
             self.failed_enlarged = true;
+            #[cfg(windows)]
+            crate::dpi_fix::resize_centered(
+                frame,
+                PASSIVE_FAIL_W,
+                PASSIVE_FAIL_H,
+                ctx.pixels_per_point(),
+            );
+            #[cfg(not(windows))]
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(
                 PASSIVE_FAIL_W,
                 PASSIVE_FAIL_H,

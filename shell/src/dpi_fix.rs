@@ -51,6 +51,44 @@ pub(crate) fn install(frame: &eframe::Frame) {
     }
 }
 
+/// Resizes (and re-centers on the primary) in PHYSICAL pixels, bypassing
+/// egui's logical [`egui::ViewportCommand::InnerSize`]: on DPI-scaled
+/// displays the eframe-0.32/winit-0.30 logical path can grow the window
+/// without growing the render surface — the enlarged region then stays
+/// transparent (the passive failure pane's one-shot enlarge hit exactly
+/// that). A physical `SetWindowPos` rides the ordinary `WM_SIZE` path
+/// both layers resize on, the same one a user drag takes.
+#[cfg(windows)]
+pub(crate) fn resize_centered(frame: &eframe::Frame, width: f32, height: f32, scale: f32) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos,
+    };
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(win) = handle.as_raw() else {
+        return;
+    };
+    // The same logical placement the window was created with, scaled to
+    // physical pixels for the Win32 call.
+    let pos = crate::splash::center_on_primary(width, height);
+    let (x, y) = ((pos.x * scale) as i32, (pos.y * scale) as i32);
+    let (w, h) = ((width * scale) as i32, (height * scale) as i32);
+    // SAFETY: plain SetWindowPos on our own window handle.
+    unsafe {
+        SetWindowPos(
+            win.hwnd.get() as windows_sys::Win32::Foundation::HWND,
+            std::ptr::null_mut(),
+            x,
+            y,
+            w,
+            h,
+            SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
 #[cfg(windows)]
 const SUBCLASS_ID: usize = 0x4450_4947; // "DPIG"
 
