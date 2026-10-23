@@ -504,14 +504,16 @@ impl eframe::App for PassiveApp {
                 self.caption_bar(ui);
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
                     ui.add_space(14.0);
-                    ui.label(
-                        RichText::new(&self.heading)
-                            .strong()
-                            .size(16.0)
-                            .color(theme.text),
-                    );
-                    ui.add_space(14.0);
                     if matches!(self.phase, Phase::Running) {
+                        // The mirror's running face: the task heading over
+                        // the bar and the live step.
+                        ui.label(
+                            RichText::new(&self.heading)
+                                .strong()
+                                .size(16.0)
+                                .color(theme.text),
+                        );
+                        ui.add_space(14.0);
                         self.progress_bar(ui, 300.0);
                         ui.add_space(8.0);
                         match self.percent {
@@ -523,11 +525,11 @@ impl eframe::App for PassiveApp {
                             None => ui.label(RichText::new(line).size(12.5).color(line_color)),
                         };
                     } else {
-                        // A settled run drops its bar and percent — the
-                        // line is the verdict now, and a full primary bar
-                        // under "install failed" would contradict it.
-                        ui.add_space(6.0);
-                        ui.label(RichText::new(line).size(12.5).color(line_color));
+                        // A settled run drops the task heading, bar and
+                        // percent — the verdict IS the headline now ("still
+                        // installing" over "install failed" reads as a
+                        // contradiction), styled at the heading's weight.
+                        ui.label(RichText::new(line).strong().size(16.0).color(line_color));
                     }
                     if let Phase::Failed = self.phase {
                         ui.add_space(10.0);

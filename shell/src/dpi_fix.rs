@@ -51,16 +51,22 @@ pub(crate) fn install(frame: &eframe::Frame) {
     }
 }
 
-/// Resizes (and re-centers on the primary) in PHYSICAL pixels, bypassing
-/// egui's logical [`egui::ViewportCommand::InnerSize`]: on DPI-scaled
-/// displays the eframe-0.32/winit-0.30 logical path can grow the window
-/// without growing the render surface — the enlarged region then stays
+/// Resizes (centered on the window's CURRENT monitor work area) in
+/// PHYSICAL pixels, bypassing egui's logical
+/// [`egui::ViewportCommand::InnerSize`]: on DPI-scaled displays the
+/// eframe-0.32/winit-0.30 logical path can grow the window without
+/// growing the render surface — the enlarged region then stays
 /// transparent (the passive failure pane's one-shot enlarge hit exactly
 /// that). A physical `SetWindowPos` rides the ordinary `WM_SIZE` path
-/// both layers resize on, the same one a user drag takes.
+/// both layers resize on, the same one a user drag takes. Centering
+/// uses the window's own monitor (work area), never the primary — a
+/// secondary screen keeps the window on-screen.
 #[cfg(windows)]
 pub(crate) fn resize_centered(frame: &eframe::Frame, width: f32, height: f32, scale: f32) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos,
     };
@@ -70,15 +76,33 @@ pub(crate) fn resize_centered(frame: &eframe::Frame, width: f32, height: f32, sc
     let RawWindowHandle::Win32(win) = handle.as_raw() else {
         return;
     };
-    // The same logical placement the window was created with, scaled to
-    // physical pixels for the Win32 call.
-    let pos = crate::splash::center_on_primary(width, height);
-    let (x, y) = ((pos.x * scale) as i32, (pos.y * scale) as i32);
+    let hwnd = win.hwnd.get() as windows_sys::Win32::Foundation::HWND;
     let (w, h) = ((width * scale) as i32, (height * scale) as i32);
-    // SAFETY: plain SetWindowPos on our own window handle.
+    // SAFETY: plain monitor/window queries and one SetWindowPos on our
+    // own window handle.
     unsafe {
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            // No work area to center in — grow in place instead of
+            // jumping to a guessed position.
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                w,
+                h,
+                SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
+            );
+            return;
+        }
+        let area = info.rcWork;
+        let x = area.left + (area.right - area.left - w) / 2;
+        let y = area.top + (area.bottom - area.top - h) / 2;
         SetWindowPos(
-            win.hwnd.get() as windows_sys::Win32::Foundation::HWND,
+            hwnd,
             std::ptr::null_mut(),
             x,
             y,
