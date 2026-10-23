@@ -28,7 +28,8 @@ desktop-shortcut = "ask"                   # always | never | ask (case de l'ass
 start-menu-shortcut = "always"             # always | never | ask (par défaut : always — la demande concerne le raccourci du bureau)
 scope = "ask"                              # user (par défaut) | machine | ask
 deep-links = ["shundemo"]                  # schémas d'URL détenus par l'app (myapp://…)
-root-dir-folder = "ShunDemo"              # dossier inséré sous une racine de lecteur nue (D:\ → D:\ShunDemo ; défaut : nom du produit)
+root-dir-folder = "ShunDemo"              # seulement l'ancienne voie d'insertion (forbid-drive-root = false) : dossier intercalé sous une racine de lecteur nue (D:\ → D:\ShunDemo ; défaut : nom du produit)
+# forbid-drive-root = true                 # refuser d'office une cible à la racine de lecteur nue (comportement par défaut — voir Garde anti-racine) ; false restaure la voie d'insertion ci-dessus
 
 [[package.metadata.shun.install.verbs]]    # verbes du menu contextuel (verbes de l'Explorateur / actions de bureau)
 key = "open-data"                          # id stable du verbe
@@ -75,7 +76,7 @@ require-removable = true                   # refuser les périphériques non amo
 | `logo` | path | — | Ressource logo du shell (relative au manifeste) |
 | `payload` | path | — | Répertoire empaqueté dans les artefacts |
 | `main-exe` | path | — | Point d'entrée relatif au payload (cible du raccourci) |
-| `install` | table | les deux modes | interrupteurs `local` / `portable`, nom de fichier `portable-marker`, politiques `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (remplacement de l'emplacement par défaut, variables d'environnement expansées), `verbs`, `deep-links`, `aumid`, `icon`, `root-dir-folder` (dossier intercalé sous une racine de lecteur nue, défaut : le nom du produit) |
+| `install` | table | les deux modes | interrupteurs `local` / `portable`, nom de fichier `portable-marker`, politiques `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (remplacement de l'emplacement par défaut, variables d'environnement expansées), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (refuser les cibles à la racine de lecteur nue ; activé par défaut — voir Garde anti-racine), `root-dir-folder` (dossier intercalé sous une racine de lecteur nue dans l'ancienne voie d'insertion, défaut : le nom du produit) |
 | `attachments` | tableau de tables | aucun | ressources compagnes optionnelles (packs d'assets) : `key` / `title` / `dest` / `online.url` ; les builds lite les téléchargent à l'installation |
 | `update` | table | aucune | veille de mise à jour : `sources` (URL de base miroirs, sondées dans l'ordre) + `files` résolus sous la première source joignable |
 | `webview2` | table | `skip` | stratégie runtime Windows |
@@ -123,12 +124,32 @@ d'entrée déclaré mais absent remonte l'erreur `MissingEntry` habituelle.
 Une cible qui est une racine de système de fichiers nue — un lecteur
 choisi comme `D:\` (`D:` et une racine de partage UNC
 `\\server\share` comptent aussi, tout comme le `/` POSIX) — ne reçoit
-jamais le payload directement : `InstallContext::apply_config` insère
-un niveau de dossier dessous, le nom du produit par défaut,
-personnalisable via `install.root-dir-folder`. Les assistants réécrivent
-la zone de chemin dès qu'une racine est choisie ou saisie, afin que la
-destination affichée soit toujours la réelle ; les exécutions headless
-`--dir=D:\` bénéficient de la même garde dans le flux.
+jamais le payload. Depuis 0.6.30, le défaut est de **refuser**
+l'emplacement d'office : `install.forbid-drive-root` (défaut `true`)
+fait que les gardes de répertoire partagées le rejettent — les faces
+de l'assistant marquent le chemin en ligne et bloquent leur bouton
+Suivant, et une exécution headless échoue bruyamment — parce qu'un
+payload livré sur une racine y disperse ses fichiers et qu'une
+désinstallation tenterait de balayer tout le disque. Mettre
+`forbid-drive-root = false` restaure la voie d'insertion d'avant
+0.6.30 : `InstallContext::apply_config` insère un niveau de dossier
+sous la racine, le nom du produit par défaut, personnalisable via
+`install.root-dir-folder`, et les assistants réécrivent la zone de
+chemin dès qu'une racine est choisie ou saisie.
+
+## Hooks de pré-vérification du répertoire
+
+La phase de script `check-dir` (voir la note de design sur le
+scripting) tourne dans ces mêmes gardes, avant toute écriture,
+**uniquement pour les installations fraîches** : un répertoire qui
+contient déjà une installation du produit (le manifeste sur disque ou
+l'exécutable principal est présent) est une mise à jour — sa décision
+d'emplacement a été prise à l'installation, et y opposer de nouveau
+son veto maintenant laisserait les mises à jour silencieuses en plan.
+Un hook met son veto à l'emplacement en affectant à `SHUN_DIR_BLOCKED`
+un motif lisible ; l'assistant affiche la valeur telle quelle, le
+script le localise donc via `SHUN_LANGUAGE`. Un hook qui échoue fait
+échouer la vérification avec son texte d'erreur.
 
 ## Résolution de l'emplacement d'installation
 

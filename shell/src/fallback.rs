@@ -72,6 +72,10 @@ impl Page {
     fn is_license(&self) -> bool {
         matches!(self, Page::License)
     }
+
+    fn is_location(&self) -> bool {
+        matches!(self, Page::Location)
+    }
 }
 
 /// Wizard stage — the step rail and the content area follow it.
@@ -822,6 +826,8 @@ struct Texts {
     flash_hint: String,
     warn_unwritable: String,
     warn_no_writable: String,
+    error_root: String,
+    error_copy: String,
     flavor_full: String,
     flavor_full_webview2: String,
     kind_removable: String,
@@ -898,6 +904,9 @@ pub(crate) struct SilentStrings {
     pub(crate) failed: String,
     pub(crate) failed_uninstall: String,
     pub(crate) close: String,
+    /// The failed mirror's copy-the-detail action (the hikari error
+    /// landing's built-in copy, egui-side).
+    pub(crate) error_copy: String,
     pub(crate) titlebar_installer: String,
     pub(crate) titlebar_uninstall: String,
 }
@@ -915,6 +924,16 @@ fn silent_locale(strings: &WizardStrings, product: &str) -> String {
     }
 }
 
+/// The silent lane's resolved language for consumers outside this face
+/// (the headless lane's install request): saved wizard choice, else the
+/// system locale — a `--silent` run never picks a wizard language, and
+/// its script hooks (the check-dir veto message) plus the on-disk
+/// manifest should still speak the machine's tongue.
+pub(crate) fn silent_locale_for(product: &str) -> String {
+    let strings = wizard_strings();
+    silent_locale(strings, product)
+}
+
 pub(crate) fn silent_strings(product: &str) -> SilentStrings {
     let strings = wizard_strings();
     let locale = silent_locale(strings, product);
@@ -927,6 +946,7 @@ pub(crate) fn silent_strings(product: &str) -> SilentStrings {
         failed: texts.failed.clone(),
         failed_uninstall: texts.failed_uninstall.clone(),
         close: texts.un_close.clone(),
+        error_copy: texts.error_copy.clone(),
         titlebar_installer: texts.titlebar_installer.clone(),
         titlebar_uninstall: texts.titlebar_uninstall.clone(),
     }
@@ -1459,15 +1479,13 @@ fn drive_kind_name(kind: shun::fs_probe::DriveKind) -> String {
     .to_string()
 }
 
-/// Pads one folder level under a bare filesystem root target (a picked
-/// drive like `D:\`) so the payload never lands directly on the root —
-/// the field and the done page show the real target (`install_context`
-/// re-applies the same guard).
+/// Pads one folder level under a bare filesystem root target — the
+/// legacy pad lane only. The default configuration (`forbid-drive-root`)
+/// refuses roots outright in the shared guards, so the raw path stays
+/// as typed and the refusal renders inline; `install_context` consults
+/// the same knob for the delivered path.
 fn nested_dir(config: &ShunConfig, raw: &str) -> String {
-    let folder = install_of(config).and_then(|i| i.root_dir_folder.as_deref());
-    shun::targets::install::nest_root_dir(Path::new(raw.trim()), &config.product.name, folder)
-        .to_string_lossy()
-        .into_owned()
+    shun::wizard::pad_root_dir(config, raw)
 }
 
 /// Whether the install target's desktop-shortcut policy is `ask` (the
@@ -1592,6 +1610,10 @@ struct FallbackApp {
     /// Live writability of the shown path, probed when it changes.
     dir_writable: Option<bool>,
     probed_dir: String,
+    /// The shared directory-guard verdict for the shown path (drive-root
+    /// refusal + check-dir script hooks), re-run beside the writability
+    /// probe; blocks Next while set.
+    dir_fault: Option<shun::wizard::DirCheckFault>,
     drive_open: bool,
     /// Build flavor for the location pane's identity line.
     flavor: String,
@@ -1941,6 +1963,7 @@ impl FallbackApp {
                 .collect(),
             dir_writable: None,
             probed_dir: String::new(),
+            dir_fault: None,
             drive_open: false,
             flavor,
             theme,
@@ -4076,6 +4099,23 @@ impl FallbackApp {
                     };
                     ui.label(RichText::new(warn).size(13.0).color(theme.error));
                 }
+                match &self.dir_fault {
+                    Some(shun::wizard::DirCheckFault::DriveRoot) => {
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(texts.error_root.clone())
+                                .size(13.0)
+                                .color(theme.error),
+                        );
+                    }
+                    // The script's own message, already localized through
+                    // the wizard language server-side.
+                    Some(shun::wizard::DirCheckFault::Script { message }) => {
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(message.clone()).size(13.0).color(theme.error));
+                    }
+                    _ => {}
+                }
                 ui.add_space(6.0);
                 let flavor_label = match self.flavor.as_str() {
                     "full-webview2" => texts.flavor_full_webview2.as_str(),
@@ -4363,12 +4403,20 @@ impl FallbackApp {
         }
 
         // Live writability probe on change (drives the warning and the
-        // accent candidate) — the same probe the web face rides.
+        // accent candidate) — the same probe the web face rides — plus
+        // the shared directory guards (root refusal, check-dir hooks).
         if self.probed_dir != self.dir {
             self.probed_dir = self.dir.clone();
             self.dir_writable = Some(shun::fs_probe::is_dir_writable(std::path::Path::new(
                 self.dir.trim(),
             )));
+            self.dir_fault = shun::wizard::check_install_dir(
+                &self.config,
+                &self.payload,
+                self.dir.trim(),
+                Some(&self.language),
+                self.mode != "local",
+            );
         }
     }
 
@@ -4884,7 +4932,9 @@ impl FallbackApp {
                 }
             }
             Outcome::Failed(err) => {
-                // The HAlert error analog.
+                // The HkAlert error analog, plus the hikari error
+                // landing's copy action: the failure text onto the
+                // clipboard for a bug report.
                 Frame::default()
                     .fill(theme.error_tint())
                     .stroke(Stroke::new(1.0f32, theme.error))
@@ -4901,6 +4951,24 @@ impl FallbackApp {
                             );
                             ui.add_space(4.0);
                             ui.label(RichText::new(err.clone()).size(12.5).color(theme.error));
+                            ui.add_space(6.0);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(&self.texts.error_copy)
+                                            .size(12.5)
+                                            .color(theme.text),
+                                    )
+                                    .fill(theme.surface)
+                                    .stroke(Stroke::new(1.0f32, theme.border))
+                                    .corner_radius(CornerRadius::same(6))
+                                    .min_size(egui::vec2(132.0, 26.0)),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                ui.ctx().copy_text(err.clone());
+                            }
                         });
                     });
             }
@@ -5465,10 +5533,14 @@ impl FallbackApp {
     }
 
     /// Whether the current step blocks progression (a license step
-    /// without its checkbox ticked).
+    /// without its checkbox ticked, or the location pane while the
+    /// directory guards refuse the shown path — the root refusal or a
+    /// check-dir veto; the unwritable warning alone renders inline,
+    /// letting the user read it and fix the path).
     fn step_blocked(&self) -> bool {
         // The license pane gates progression on the accept box.
-        self.pages[self.step].is_license() && !self.license_accepted
+        (self.pages[self.step].is_license() && !self.license_accepted)
+            || (self.pages[self.step].is_location() && self.dir_fault.is_some())
     }
 }
 

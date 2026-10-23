@@ -22,8 +22,8 @@ CLI이고 안정적인 라이브러리 API가 없습니다) — duckscript가 �
 runner = "duckscript"
 
 [[package.metadata.shun.script.hooks]]
-phase = "prepare"                 # prepare | post-install | pre-uninstall
-script = "installer/prepare.dk"   # `shun build`가 패키징
+phase = "check-dir"               # check-dir | prepare | post-install | pre-uninstall
+script = "installer/check-dir.dk" # `shun build`가 패키징
 ```
 
 shun 내장 기능은 duckscript 명령으로 등록됩니다: `shun_progress`,
@@ -36,6 +36,18 @@ shun 내장 기능은 duckscript 명령으로 등록됩니다: `shun_progress`,
 선택하지 않았다면 변수 자체가 없습니다. 사실을 내보내는 것이 shun이
 하는 전부이고, 설치된 애플리케이션 자체 설정에 언어를 쓰는 것은
 payload 스크립트의 몫입니다.
+
+`check-dir` 단계는 설치 위치 사전 검사입니다. 이 훅은 공유 디렉터리
+가드 안에서, 무엇이든 쓰기 전에, **신규 설치에만** 실행됩니다(제품의
+디스크상 매니페스트나 메인 실행 파일이 이미 있는 디렉터리는
+업그레이드이며 — 다시 거부하면 조용한 업데이트가 길을 잃습니다).
+훅은 `SHUN_DIR_BLOCKED`를 사람이 읽을 수 있는 이유로 설정해 제안된
+위치에 거부권을 행사합니다. 마법사는 그 값을 그대로 표시하므로
+스크립트는 `SHUN_LANGUAGE`로 현지화합니다. 오류를 낸 훅은 자신의
+오류 텍스트와 함께 검사를 실패시킵니다. `SHUN_INSTALL_DIR`은 이
+단계에서 정슬래시 형태로 도착합니다 — `get_env`로 다시 읽으세요
+(duckscript의 `${…}`는 프로세스 환경이 아니라 스크립트 변수를
+전개합니다). 하위 경로는 `/`로 연결하세요.
 
 shun 래퍼에서 정규화해야 할 함정: duckscript 인자에서 Windows
 백슬래시 경로는 이스케이프 문자입니다(정슬래시 경로를 전달하세요),

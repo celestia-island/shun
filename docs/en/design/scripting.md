@@ -22,8 +22,8 @@ API) — duckscript is the embeddable member of that family.
 runner = "duckscript"
 
 [[package.metadata.shun.script.hooks]]
-phase = "prepare"                 # prepare | post-install | pre-uninstall
-script = "installer/prepare.dk"   # packed by `shun build`
+phase = "check-dir"               # check-dir | prepare | post-install | pre-uninstall
+script = "installer/check-dir.dk" # packed by `shun build`
 ```
 
 The shun built-in surface registers as duckscript commands:
@@ -42,6 +42,18 @@ Two delivery facts ride along into every step: `SHUN_INSTALL_DIR`
 `SHUN_PORTABLE` (`1`/`0`). Post-install relocation hooks — moving
 shipped packs into a per-user cache, writing stamps, dropping the
 bootstrap subtree — branch on exactly those two.
+
+The `check-dir` phase is the install-location pre-check: its hooks run
+inside the shared directory guards, before anything is written, on
+**fresh installs only** (a directory already holding the product's
+on-disk manifest or main executable is an upgrade — re-vetoing it
+would strand silent updates). A hook vetoes the proposed location by
+setting `SHUN_DIR_BLOCKED` to a human-readable reason; the wizard
+shows the value verbatim, so the script localizes it through
+`SHUN_LANGUAGE`. A hook that errors fails the check with its error
+text. `SHUN_INSTALL_DIR` arrives in forward-slash form in this phase —
+read it back with `get_env` (duckscript `${…}` interpolates script
+variables, not the process environment) and join child paths with `/`.
 
 Gotchas to normalize in the shun wrappers: Windows backslash paths are
 escape characters in duckscript arguments (pass forward-slash paths),

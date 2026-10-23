@@ -504,6 +504,34 @@ fn check_dir_writable(dir: String) -> bool {
     shun::fs_probe::is_dir_writable(Path::new(dir.trim()))
 }
 
+/// Live install-directory guards for the path the wizard currently
+/// shows: the shared validation (empty/writability gates, the
+/// drive-root refusal, and the manifest's `check-dir` script hooks —
+/// fresh installs only). `None` clears the location; a fault renders
+/// inline and gates the Next button (the script's message is the
+/// script's own, already localized via the wizard language).
+#[tauri::command]
+async fn check_dir(
+    state: State<'_, AppState>,
+    dir: String,
+    mode: String,
+    language: Option<String>,
+) -> Result<Option<shun::wizard::DirCheckFault>, String> {
+    let config = state.config();
+    let payload = state.payload.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        shun::wizard::check_install_dir(
+            &config,
+            &payload,
+            dir.trim(),
+            language.as_deref(),
+            mode != "local",
+        )
+    })
+    .await
+    .map_err(|e| format!("the directory-check task exited abnormally: {e}"))
+}
+
 /// The installer's identity: product version plus the build flavor,
 /// shown under the install location.
 #[derive(Serialize)]
@@ -963,7 +991,15 @@ fn run_headless_with_tap(
     let request = InstallRequest {
         mode: cli.mode.clone(),
         dir,
-        language: cli.language.clone(),
+        // The silent lane never picks a wizard language — fall back to
+        // the saved preference, else the system locale, so the check-dir
+        // veto message (localized by the hook script) and the on-disk
+        // manifest carry a meaningful language on machines that never
+        // saw the wizard.
+        language: cli
+            .language
+            .clone()
+            .or_else(|| Some(fallback::silent_locale_for(&config.product.name))),
         // The gate above already re-launched elevated for machine scope;
         // reaching here with the flag set means this IS the elevated copy.
         machine,
@@ -2358,6 +2394,7 @@ fn run_shell(
             nest_root_dir,
             list_drives,
             check_dir_writable,
+            check_dir,
             get_identity,
             get_logo,
             get_license_docs,
@@ -2535,7 +2572,17 @@ fn run_passive_tauri(
             passive::attach_worker(app.handle().clone(), &cli, &config, &payload);
             Ok(())
         })
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!())
+        // run_return, NOT Builder::run: `App::run` never returns — tauri
+        // tears the process down with std::process::exit(0) the moment
+        // the loop ends, so a user closing the failure pane reported
+        // success and the worker's verdict (the join below) never ran.
+        // run_return comes back here on close (the done linger, the
+        // caption X, the failure pane's button alike) and the caller
+        // owns the process exit.
+        .map(|app| {
+            app.run_return(|_handle, _event| {});
+        });
     // The loop is down (the window closed — on its own after the done
     // linger, by the user, or on the failure pane's close button). The
     // install worker keeps its console-only contract: join it before the

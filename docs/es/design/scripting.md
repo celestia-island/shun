@@ -23,8 +23,8 @@ el miembro incrustable de esa familia.
 runner = "duckscript"
 
 [[package.metadata.shun.script.hooks]]
-phase = "prepare"                 # prepare | post-install | pre-uninstall
-script = "installer/prepare.dk"   # empaquetado por `shun build`
+phase = "check-dir"               # check-dir | prepare | post-install | pre-uninstall
+script = "installer/check-dir.dk" # empaquetado por `shun build`
 ```
 
 La superficie integrada de shun se registra como comandos duckscript:
@@ -38,6 +38,20 @@ también registrada en el manifiesto de instalación en disco). La
 variable está ausente cuando no se eligió idioma. Exportar el dato es
 todo lo que hace shun — escribir el idioma en la configuración propia
 de la aplicación instalada es tarea del script del payload.
+
+La fase `check-dir` es la comprobación previa de la ubicación de
+instalación: sus ganchos corren dentro de las protecciones de
+directorio compartidas, antes de escribir nada, **solo en
+instalaciones nuevas** (un directorio que ya contiene el manifiesto
+en disco del producto o su ejecutable principal es una actualización
+— volver a vetarla dejaría colgadas las actualizaciones silenciosas).
+Un gancho veta la ubicación propuesta asignando `SHUN_DIR_BLOCKED` a
+un motivo legible; el asistente muestra el valor tal cual, así que el
+script lo localiza mediante `SHUN_LANGUAGE`. Un gancho que da error
+tumba la comprobación con su texto de error. `SHUN_INSTALL_DIR` llega
+en forma de barra diagonal en esta fase — recupérala con `get_env`
+(el `${…}` de duckscript interpola variables de script, no el entorno
+del proceso) y une las rutas hijas con `/`.
 
 Puntos delicados a normalizar en los wrappers de shun: las rutas con
 barra invertida de Windows son caracteres de escape en los argumentos de

@@ -42,6 +42,12 @@ pub const INSTALL_DIR_ENV: &str = "SHUN_INSTALL_DIR";
 /// (portable copies keep their data beside the executable).
 pub const PORTABLE_ENV: &str = "SHUN_PORTABLE";
 
+/// The veto variable a `check-dir` script hook sets (to a
+/// human-readable reason) to refuse the proposed install directory; the
+/// wizard shows the value verbatim. Read and cleared by the check
+/// wrapper in `crate::wizard` around every check-dir run.
+pub const DIR_BLOCKED_ENV: &str = "SHUN_DIR_BLOCKED";
+
 /// Name of the uninstaller binary copied into the install directory.
 #[cfg(windows)]
 pub const UNINSTALLER_NAME: &str = "uninstall.exe";
@@ -318,13 +324,19 @@ impl InstallContext {
         self.icon = install.icon.clone();
 
         // A bare filesystem root target (a picked drive like `D:\`) never
-        // receives the payload directly — pad one folder level under it
+        // receives the payload directly. The default lane
+        // (`forbid-drive-root`, on since 0.6.30) refuses roots outright
+        // in the shared directory guards before the flow runs — padding
+        // here would mask that refusal; only the opted-out legacy pad
+        // lane rewrites the target one folder level down
         // (`root-dir-folder`, the product name by default).
-        self.install_dir = nest_root_dir(
-            &self.install_dir,
-            &self.product,
-            install.root_dir_folder.as_deref(),
-        );
+        if !install.forbid_drive_root {
+            self.install_dir = nest_root_dir(
+                &self.install_dir,
+                &self.product,
+                install.root_dir_folder.as_deref(),
+            );
+        }
     }
 }
 
@@ -1591,9 +1603,26 @@ mod tests {
             PathBuf::from("/Wowsp")
         };
 
+        // The default lane refuses roots outright (the shared directory
+        // guards reject them before the flow); apply_config must not
+        // mask that refusal with a silent rewrite.
         let mut ctx = InstallContext::new("Wowsp".into(), "1.0.0".into(), root.clone(), false);
         ctx.apply_config(
             &crate::config::InstallConfig::default(),
+            WizardAnswers::defaults(),
+        );
+        assert_eq!(
+            ctx.install_dir, root,
+            "the default (forbid-drive-root) leaves roots to the guards"
+        );
+
+        // The opted-out legacy pad lane keeps its rewrite.
+        let mut ctx = InstallContext::new("Wowsp".into(), "1.0.0".into(), root.clone(), false);
+        ctx.apply_config(
+            &crate::config::InstallConfig {
+                forbid_drive_root: false,
+                ..Default::default()
+            },
             WizardAnswers::defaults(),
         );
         assert_eq!(ctx.install_dir, padded, "roots pad under the product name");
@@ -1601,6 +1630,7 @@ mod tests {
         let mut ctx = InstallContext::new("Wowsp".into(), "1.0.0".into(), root, false);
         ctx.apply_config(
             &crate::config::InstallConfig {
+                forbid_drive_root: false,
                 root_dir_folder: Some("Wowsp CE".into()),
                 ..Default::default()
             },

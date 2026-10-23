@@ -11,6 +11,8 @@ import {
   HkAlert,
   HkButton,
   HkCheckbox,
+  HkErrorLanding,
+  HkJsonTree,
   HkProgressBar,
   HkScrollContainer,
   HkSelect,
@@ -234,6 +236,16 @@ export default defineComponent({
     // Live writability of the shown path: null while the probe is in
     // flight or the box is empty, true/false once the backend answered.
     const dirWritable = ref<boolean | null>(null);
+    // The backend's install-dir guard verdict (drive-root refusal plus
+    // the manifest's check-dir script hooks): null clears the location;
+    // "drive-root" localizes from the table while "script" carries the
+    // check script's own message verbatim (it localizes via the wizard
+    // language server-side).
+    const dirFault = ref<
+      | { kind: "empty" | "not-writable" | "drive-root" }
+      | { kind: "script"; message: string }
+      | null
+    >(null);
     const licenseDocs = ref<LicenseDoc[]>([]);
     const licenseIndex = ref(0);
     // The displayed agreement pages: the backend's copyright notice opens a
@@ -389,9 +401,11 @@ export default defineComponent({
       if (writableTimer !== null) clearTimeout(writableTimer);
       if (!target) {
         dirWritable.value = null;
+        dirFault.value = null;
         return;
       }
       dirWritable.value = null;
+      dirFault.value = null;
       writableTimer = setTimeout(() => {
         invoke<boolean>("check_dir_writable", { dir: target })
           .then((ok) => {
@@ -399,6 +413,24 @@ export default defineComponent({
           })
           .catch(() => {
             if (dir.value.trim() === target) dirWritable.value = null;
+          });
+        // The full guard set (root refusal + check-dir hooks) runs
+        // beside the probe; a script hook may take a few milliseconds,
+        // and a verdict only lands while it is still about this path.
+        void invoke<
+          | { kind: "empty" | "not-writable" | "drive-root" }
+          | { kind: "script"; message: string }
+          | null
+        >("check_dir", {
+          dir: target,
+          mode: mode.value,
+          language: locale.value,
+        })
+          .then((fault) => {
+            if (dir.value.trim() === target) dirFault.value = fault;
+          })
+          .catch(() => {
+            if (dir.value.trim() === target) dirFault.value = null;
           });
       }, 400);
     });
@@ -856,19 +888,37 @@ export default defineComponent({
             </section>
           ) : (
             <section class="wizard-pane wizard-uninstall">
-              <XCircle
-                size={56}
-                color="rgb(var(--color-error))"
-                stroke-width={1.5}
-              />
-              <p class="wizard-done__title wizard-done__title--fail">
-                {uninstallPhase.value === "repair_failed" ? s.uninstall.failedRepair : s.uninstall.failedUninstall}
-              </p>
-              <p class="wizard-uninstall__error">{uninstallError.value}</p>
-              <div class="wizard-uninstall__actions">
-                <HkButton variant="primary" onClick={closeWindow}>
-                  {s.uninstall.close}
-                </HkButton>
+              {/* The standard hikari error landing, the uninstall lane's
+                  failed page — same reason/detail/copy treatment. */}
+              <div class="wizard-done__landing">
+                <HkErrorLanding
+                  variant="inline"
+                  tone="error"
+                  title={
+                    uninstallPhase.value === "repair_failed"
+                      ? s.uninstall.failedRepair
+                      : s.uninstall.failedUninstall
+                  }
+                  description={uninstallError.value}
+                  copyText={`${uninstallPhase.value}\n${uninstallError.value}`}
+                >
+                  {{
+                    default: () => (
+                      <HkJsonTree
+                        value={{
+                          lane: uninstallPhase.value,
+                          error: uninstallError.value,
+                        }}
+                        ariaLabel={s.uninstall.failedUninstall}
+                      />
+                    ),
+                    actions: () => (
+                      <HkButton variant="primary" onClick={closeWindow}>
+                        {s.uninstall.close}
+                      </HkButton>
+                    ),
+                  }}
+                </HkErrorLanding>
               </div>
             </section>
           );
@@ -939,6 +989,12 @@ export default defineComponent({
                     ? s.target.warnUnwritable
                     : s.target.warnNoWritable}
                 </p>
+              )}
+              {dirFault.value?.kind === "drive-root" && (
+                <p class="wizard-target__warning">{s.target.errorRoot}</p>
+              )}
+              {dirFault.value?.kind === "script" && (
+                <p class="wizard-target__warning">{dirFault.value.message}</p>
               )}
               {identity.value && (
                 <p class="wizard-identity">
@@ -1077,13 +1133,51 @@ export default defineComponent({
           </section>
         ) : installFailed.value ? (
           <section class="wizard-pane wizard-done">
-            <XCircle
-              size={56}
-              color="rgb(var(--color-error))"
-              stroke-width={1.5}
-            />
-            <p class="wizard-done__title wizard-done__title--fail">{s.done.failedTitle}</p>
-            <p class="wizard-done__error">{failMessage.value}</p>
+            {/* The standard hikari error landing — reason verbatim, the
+                structured detail as a JSON tree, the built-in copy
+                action, the retry/close seats beside it. */}
+            <div class="wizard-done__landing">
+              <HkErrorLanding
+                variant="inline"
+                tone="error"
+                title={s.done.failedTitle}
+                description={failMessage.value}
+                copyText={`${s.done.failedTitle}\n${failMessage.value}\n${JSON.stringify(
+                  {
+                    product: product.value,
+                    version: identity.value?.version ?? "",
+                    lane: "wizard-install",
+                    error: failMessage.value,
+                  },
+                  null,
+                  2,
+                )}`}
+              >
+                {{
+                  default: () => (
+                    <HkJsonTree
+                      value={{
+                        product: product.value,
+                        version: identity.value?.version ?? "",
+                        lane: "wizard-install",
+                        error: failMessage.value,
+                      }}
+                      ariaLabel={s.done.failedTitle}
+                    />
+                  ),
+                  actions: () => (
+                    <>
+                      <HkButton variant="primary" onClick={start}>
+                        {s.done.retry}
+                      </HkButton>
+                      <HkButton variant="ghost" onClick={() => tauriWindow()?.close()}>
+                        {s.done.close}
+                      </HkButton>
+                    </>
+                  ),
+                }}
+              </HkErrorLanding>
+            </div>
             <div class="wizard-install__logs">
               <LogPane
                 lines={logLines.value}
@@ -1094,14 +1188,6 @@ export default defineComponent({
                   logExpanded.value = !logExpanded.value;
                 }}
               />
-            </div>
-            <div class="wizard-done__actions">
-              <HkButton variant="primary" onClick={start}>
-                {s.done.retry}
-              </HkButton>
-              <HkButton variant="ghost" onClick={() => tauriWindow()?.close()}>
-                {s.done.close}
-              </HkButton>
             </div>
           </section>
         ) : (
@@ -1203,7 +1289,7 @@ export default defineComponent({
                     <HkButton
                       variant="primary"
                       size="lg"
-                      disabled={dirWritable.value === false}
+                      disabled={dirWritable.value === false || dirFault.value !== null}
                       onClick={() => go(flow[flowIndex("mode") + 1].key)}
                     >
                       {s.nav.next}

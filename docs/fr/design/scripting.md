@@ -24,8 +24,8 @@ famille.
 runner = "duckscript"
 
 [[package.metadata.shun.script.hooks]]
-phase = "prepare"                 # prepare | post-install | pre-uninstall
-script = "installer/prepare.dk"   # empaqueté par `shun build`
+phase = "check-dir"               # check-dir | prepare | post-install | pre-uninstall
+script = "installer/check-dir.dk" # empaqueté par `shun build`
 ```
 
 La surface des built-ins shun s'enregistre en commandes duckscript :
@@ -41,6 +41,21 @@ variable est absente quand aucune langue n'a été choisie. Exporter
 l'information est tout ce que fait shun — écrire la langue dans la
 configuration propre à l'application installée relève du script du
 payload.
+
+La phase `check-dir` est la pré-vérification de l'emplacement
+d'installation : ses hooks tournent dans les gardes de répertoire
+partagées, avant toute écriture, **uniquement pour les installations
+fraîches** (un répertoire contenant déjà le manifeste sur disque du
+produit ou son exécutable principal est une mise à jour — y opposer
+de nouveau son veto laisserait les mises à jour silencieuses en plan).
+Un hook met son veto à l'emplacement proposé en affectant à
+`SHUN_DIR_BLOCKED` un motif lisible ; l'assistant affiche la valeur
+telle quelle, le script le localise donc via `SHUN_LANGUAGE`. Un hook
+qui échoue fait échouer la vérification avec son texte d'erreur.
+`SHUN_INSTALL_DIR` arrive sous forme à barres obliques dans cette
+phase — relisez-la avec `get_env` (le `${…}` de duckscript interpole
+les variables de script, pas l'environnement du processus) et joignez
+les chemins enfants avec `/`.
 
 Pièges à normaliser dans les wrappers shun : les chemins Windows à
 antislashs sont des caractères d'échappement dans les arguments

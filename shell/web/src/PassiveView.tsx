@@ -1,6 +1,19 @@
-import { computed, defineComponent, onBeforeUnmount, onMounted, ref } from "vue";
-import { CheckCircle2, XCircle } from "lucide-vue-next";
-import { HkButton, HkProgressBar } from "@celestia-island/hikari";
+import {
+  computed,
+  defineComponent,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
+import { CheckCircle2 } from "lucide-vue-next";
+import {
+  HkButton,
+  HkErrorLanding,
+  HkJsonTree,
+  HkProgressBar,
+  setLocale,
+} from "@celestia-island/hikari";
 
 import AppTitleBar from "./components/AppTitleBar";
 import { solarWantsDark, startSolarClock } from "./solar";
@@ -25,7 +38,11 @@ import { invoke, listen, tauriWindow } from "./tauri";
  * only stops the mirroring, the install itself always runs to
  * completion (the backend worker owns it). Success lingers briefly so
  * the completion line reads, then folds the window; failure holds the
- * error detail plus a close button.
+ * standard hikari error landing (the run's reason verbatim, the
+ * structured detail as a JSON tree, the built-in copy action) and the
+ * backend grows the window to fit it — the compact mirror is a
+ * progress face, not an error report. Upgrade and uninstall runs keep
+ * the same compact chrome with no extra branding beyond the caption.
  */
 
 /** What the backend worker reports (serde `kind`-tagged, see
@@ -93,6 +110,27 @@ export default defineComponent({
     const closeWindow = () => {
       tauriWindow()?.close().catch(() => {});
     };
+
+    // hikari's own component labels (the error landing's copy action)
+    // follow the same locale this window renders in.
+    watch(locale, (value) => void setLocale(value), { immediate: true });
+
+    // The structured detail behind the landing's JSON tree + the copy
+    // payload — everything a bug report needs, nothing machine-local
+    // beyond identity.
+    const detail = computed(() => ({
+      product: product.value,
+      version: version.value,
+      lane: uninstallMode.value ? "uninstall" : "silent-install",
+      error: failure.value,
+    }));
+    const copyText = computed(() => {
+      const table = s.value;
+      const failedLine = uninstallMode.value
+        ? table.uninstall.failedUninstall
+        : table.done.failedTitle;
+      return `${failedLine}\n${failure.value}\n${JSON.stringify(detail.value, null, 2)}`;
+    });
 
     let lingerTimer: ReturnType<typeof setTimeout> | null = null;
     let gotLiveEvent = false;
@@ -183,7 +221,6 @@ export default defineComponent({
             showMinimize={false}
           />
           <main class="passive-pane">
-            <img src={logoUrl.value} alt="" class="passive-logo" />
             {phase.value === "done" ? (
               <>
                 <CheckCircle2
@@ -195,21 +232,24 @@ export default defineComponent({
                 <p class="passive-heading">{doneLine}</p>
               </>
             ) : phase.value === "failed" ? (
-              <>
-                <XCircle
-                  class="passive-icon"
-                  size={44}
-                  color="rgb(var(--color-error))"
-                  stroke-width={1.5}
-                />
-                <p class="passive-heading">{failedLine}</p>
-                {failure.value ? (
-                  <p class="passive-failure">{failure.value}</p>
-                ) : null}
-                <HkButton class="passive-close" onClick={closeWindow}>
-                  {table.uninstall.close}
-                </HkButton>
-              </>
+              <div class="passive-error">
+                <HkErrorLanding
+                  variant="inline"
+                  tone="error"
+                  title={failedLine}
+                  description={failure.value}
+                  copyText={copyText.value}
+                >
+                  {{
+                    default: () => (
+                      <HkJsonTree value={detail.value} ariaLabel={failedLine} />
+                    ),
+                    actions: () => (
+                      <HkButton onClick={closeWindow}>{table.uninstall.close}</HkButton>
+                    ),
+                  }}
+                </HkErrorLanding>
+              </div>
             ) : (
               <>
                 <p class="passive-heading">{heading}</p>

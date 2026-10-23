@@ -153,6 +153,23 @@ fn install_modes_default_to_enabled() {
 }
 
 #[test]
+fn drive_roots_are_refused_by_default_and_opt_out_survives() {
+    // The guard is on unless the manifest opts into the legacy pad
+    // lane — a payload onto a bare root scatters its files there and
+    // an uninstall would sweep the whole drive.
+    assert!(shun::config::InstallConfig::default().forbid_drive_root);
+    // The opt-out survives a JSON roundtrip (the shell's staged-config
+    // shape).
+    let legacy = shun::config::InstallConfig {
+        forbid_drive_root: false,
+        ..Default::default()
+    };
+    let back: shun::config::InstallConfig =
+        serde_json::from_str(&serde_json::to_string(&legacy).unwrap()).unwrap();
+    assert!(!back.forbid_drive_root);
+}
+
+#[test]
 fn launch_after_install_survives_the_roundtrip() {
     let json = serde_json::to_value(sample()).unwrap();
     assert_eq!(json["targets"][0]["launch-after-install"], "always");

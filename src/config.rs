@@ -841,9 +841,22 @@ pub struct InstallConfig {
 
     /// Folder padded under a bare filesystem root target (a picked drive
     /// like `D:\`, a UNC share root, the POSIX `/`) so the payload never
-    /// lands directly on the root. Defaults to the product name.
+    /// lands directly on the root. Defaults to the product name. Only
+    /// consulted while `forbid-drive-root = false` (the legacy pad
+    /// lane); the default lane refuses roots outright.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_dir_folder: Option<String>,
+
+    /// Refuse a bare filesystem-root target (a picked drive like `D:\`,
+    /// a UNC share root) as the install directory. Default `true`: the
+    /// shared directory validation ([`crate::wizard::check_install_dir`])
+    /// rejects the root and every face flags it live, because a payload
+    /// delivered onto a root scatters its files there and an uninstall
+    /// would try to sweep the whole drive. `false` restores the
+    /// pre-0.6.30 pad lane: the root is silently padded one folder
+    /// level down (`root-dir-folder`, the product name by default).
+    #[serde(default = "default_true")]
+    pub forbid_drive_root: bool,
 }
 
 impl Default for InstallConfig {
@@ -863,6 +876,7 @@ impl Default for InstallConfig {
             aumid: None,
             icon: None,
             root_dir_folder: None,
+            forbid_drive_root: true,
         }
     }
 }
@@ -1350,8 +1364,10 @@ pub struct ScriptHooksConfig {
 #[serde(rename_all = "kebab-case")]
 pub struct ScriptHookConfig {
     /// Where in the flow the script runs: `prepare` (before any payload
-    /// work — the screenshot-window hook), `post-install`,
-    /// `pre-uninstall`. Unknown phases are ignored.
+    /// work — the screenshot-window hook), `check-dir` (the install-dir
+    /// guards, before anything is written — fresh installs only; a
+    /// script vetoes the location by setting `SHUN_DIR_BLOCKED`),
+    /// `post-install`, `pre-uninstall`. Unknown phases are ignored.
     pub phase: String,
     /// Payload-relative script path (packed with the payload).
     pub script: String,

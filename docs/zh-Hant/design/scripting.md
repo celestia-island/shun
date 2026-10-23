@@ -20,8 +20,8 @@ crate 是 CLI，沒有穩定函式庫 API）—— duckscript 是該家族裡可
 runner = "duckscript"
 
 [[package.metadata.shun.script.hooks]]
-phase = "prepare"                 # prepare | post-install | pre-uninstall
-script = "installer/prepare.dk"   # 由 `shun build` 打包
+phase = "check-dir"               # check-dir | prepare | post-install | pre-uninstall
+script = "installer/check-dir.dk" # 由 `shun build` 打包
 ```
 
 shun 內建介面將以 duckscript 命令形式註冊：`shun_progress`、
@@ -33,6 +33,15 @@ shun 內建介面將以 duckscript 命令形式註冊：`shun_progress`、
 記錄在磁碟上的安裝清單中）。未選擇語言時該變數不存在。shun 只
 匯出事實——把語言寫進已安裝應用自身的設定，是 payload 指令碼
 自己的事。
+
+`check-dir` 階段是安裝位置預檢：其鉤子執行在共用目錄防護之內、
+任何寫入之前，且**僅針對全新安裝**（目錄裡已有產品的磁碟清單或
+主程式即為升級——再否決會把靜默更新晾在半空）。鉤子把
+`SHUN_DIR_BLOCKED` 設為人類可讀的原因即可否決擬議位置；精靈原樣
+顯示該值，指令碼因此可透過 `SHUN_LANGUAGE` 做在地化。鉤子出錯時，
+檢查連同其錯誤文字一起失敗。`SHUN_INSTALL_DIR` 在該階段以正斜線
+形式到達——用 `get_env` 讀回（duckscript 的 `${…}` 展開的是指令碼
+變數而非處理程序環境），子路徑以 `/` 串接。
 
 需要在 shun 封裝裡正規化的坑：duckscript 參數裡 Windows 反斜線是
 逸出字元（傳正斜線路徑）；賦值必須用 `x = 命令 參數` 的輸出擷取

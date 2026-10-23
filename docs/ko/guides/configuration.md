@@ -28,7 +28,8 @@ desktop-shortcut = "ask"                   # always | never | ask(마법사 체�
 start-menu-shortcut = "always"             # always | never | ask(기본값 always, 묻는 것은 데스크톱 쪽)
 scope = "ask"                              # user(기본값) | machine | ask
 deep-links = ["shundemo"]                  # 앱이 소유한 URL 스킴(myapp://…)
-root-dir-folder = "ShunDemo"              # 드라이브 루트 바로 아래에 자동으로 깔리는 폴더 (D:\ → D:\ShunDemo, 기본값은 제품명)
+root-dir-folder = "ShunDemo"              # 레거시 패딩 레인 전용(forbid-drive-root = false): 드라이브 루트 바로 아래에 깔리는 폴더 (D:\ → D:\ShunDemo, 기본값은 제품명)
+# forbid-drive-root = true                 # 드라이브 루트 대상을 곧장 거부(기본 동작 — 「드라이브 루트 보호」 참조). false는 위의 패딩 레인을 되살림
 
 [[package.metadata.shun.install.verbs]]    # 우클릭 동사(탐색기 동사 / 데스크톱 액션)
 key = "open-data"                          # 안정적인 동사 id
@@ -74,7 +75,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 | `logo` | path | — | 셸 로고 에셋(매니페스트 기준 상대 경로) |
 | `payload` | path | — | 아티팩트로 패킹되는 디렉터리 |
 | `main-exe` | path | — | payload 상대 진입점(바로 가기 대상) |
-| `install` | table | 두 모두 켜짐 | `local` / `portable` 스위치, `portable-marker` 파일명, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 정책, `default-dir`(환경 변수가 전개되는 기본 위치 재정의), `verbs`, `deep-links`, `aumid`, `icon`, `root-dir-folder`(드라이브 루트 아래 깔리는 폴더, 기본은 제품명) |
+| `install` | table | 두 모두 켜짐 | `local` / `portable` 스위치, `portable-marker` 파일명, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 정책, `default-dir`(환경 변수가 전개되는 기본 위치 재정의), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root`(드라이브 루트 대상 거부, 기본 켜짐 — 드라이브 루트 보호 참조), `root-dir-folder`(옵트아웃한 패딩 레인에서 드라이브 루트 아래 깔리는 폴더, 기본은 제품명) |
 | `attachments` | 테이블 배열 | 없음 | 선택적 추가 리소스(에셋 팩): `key` / `title` / `dest` / `online.url`. 라이트 빌드는 설치 시 내려받기 |
 | `update` | table | 없음 | 업데이트 감시: `sources`(미러 기본 URL, 순서대로 탐색) + 첫 번째로 도달한 소스 아래에서 해석되는 `files` |
 | `webview2` | table | `skip` | Windows 런타임 전략 |
@@ -118,11 +119,28 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 
 드라이브 루트처럼 표형 파일 시스템 루트(`D:\` 외에 `D:`, UNC 공유 루트
 `\\server\share`, POSIX의 `/`도 동일)가 대상이면 페이로드가 곧바로
-루트에 놓이는 일은 없습니다. `InstallContext::apply_config`가 그 아래에
-폴더를 한 단계 깔며, 기본값은 제품명이고 `install.root-dir-folder`로
-바꿀 수 있습니다. 마법사는 루트가 선택·입력된 즉시 경로 상자를 다시
-쓰므로 표시되는 대상이 항상 실제 경로이며, 헤드리스 `--dir=D:\`
-실행 역시 플로우 안에서 같은 보호를 받습니다.
+루트에 놓이는 일은 없습니다. 0.6.30부터 기본 동작은 그 위치를
+**거부**하는 것입니다: `install.forbid-drive-root`(기본 `true`)가
+공유 디렉터리 가드에서 이를 퇴출합니다 — 위자드 화면들은 경로를
+인라인으로 표시하고「다음」버튼을 잠그며, 헤드리스 실행은 요란하게
+실패합니다 — 루트에 배달된 페이로드는 파일을 그곳에 흩뿌리고,
+제거는 디스크 전체를 쓸어버리려 들기 때문입니다.
+`forbid-drive-root = false`로 돌리면 0.6.30 이전의 패딩 레인이
+돌아옵니다: `InstallContext::apply_config`가 그 아래에 폴더를 한
+단계 깔고(기본값은 제품명, `install.root-dir-folder`로 바꿀 수
+있음), 마법사는 루트가 선택·입력된 즉시 경로 상자를 다시 씁니다.
+
+## 디렉터리 사전 검사 훅
+
+`check-dir` 스크립트 단계(스크립팅 설계 노트 참조)는 그와 같은
+가드 안에서, 무엇이든 쓰기 전에, **신규 설치에만** 실행됩니다:
+제품이 이미 설치된 디렉터리(디스크의 매니페스트나 메인 실행 파일이
+있음)는 업그레이드이며 — 그 위치 결정은 설치된 순간 내려진 것이어서,
+지금 다시 거부하면 조용한 업데이트가 길을 잃습니다. 훅은
+`SHUN_DIR_BLOCKED`를 사람이 읽을 수 있는 이유로 설정해 위치에
+거부권을 행사합니다. 마법사는 그 값을 그대로 표시하므로 스크립트는
+`SHUN_LANGUAGE`로 현지화합니다. 오류를 낸 훅은 자신의 오류 텍스트와
+함께 검사를 실패시킵니다.
 
 ## 설치 위치 결정
 

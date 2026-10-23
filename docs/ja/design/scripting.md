@@ -22,8 +22,8 @@ justfile 自身は組み込めません（`just` crate は CLI であり、安�
 runner = "duckscript"
 
 [[package.metadata.shun.script.hooks]]
-phase = "prepare"                 # prepare | post-install | pre-uninstall
-script = "installer/prepare.dk"   # `shun build` がパック
+phase = "check-dir"               # check-dir | prepare | post-install | pre-uninstall
+script = "installer/check-dir.dk" # `shun build` がパック
 ```
 
 shun の組み込み表面は duckscript コマンドとして登録されます：
@@ -37,6 +37,20 @@ shun の組み込み表面は duckscript コマンドとして登録されます
 場合、変数自体が存在しません。事実を輸出することが shun のすべて
 であり、インストールされたアプリケーション自身の設定に言語を
 書き込むのは payload スクリプトの仕事です。
+
+`check-dir` フェーズはインストール場所の事前チェックです。その
+フックは共有のディレクトリガードの中で、何も書き込まれる前に、
+**新規インストールのみ**に対して走ります（製品のオンディスクの
+マニフェストかメイン実行ファイルが既に存在するディレクトリは
+アップグレードであり —— そこへ再び異議を唱えればサイレント更新が
+行き詰まります）。フックは `SHUN_DIR_BLOCKED` に人が読める理由を
+設定して提案された場所を拒否します。ウィザードはその値をそのまま
+表示するため、スクリプトは `SHUN_LANGUAGE` でローカライズします。
+エラーを起こしたフックは、そのエラーテキストとともにチェックを
+失敗させます。`SHUN_INSTALL_DIR` はこのフェーズでは正スラッシュ
+形式で届きます —— `get_env` で読み戻してください（duckscript の
+`${…}` はスクリプト変数を展開するもので、プロセス環境ではあり
+ません）。子パスは `/` で連結します。
 
 shun ラッパーで正規化すべき落とし穴：duckscript の引数では、Windows の
 バックスラッシュパスがエスケープ文字になります（正スラッシュのパスを
