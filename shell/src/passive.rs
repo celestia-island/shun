@@ -230,10 +230,7 @@ struct PassiveApp {
     theme: fallback::Theme,
     /// The wizard footer's glow cache, shared with the failure
     /// landing's ghost buttons (the same `text_button` plates).
-    glow: fallback::GlowCache,
-    /// The details pane's JSON tree fold state (hikari's HkJsonTree
-    /// renders the same object expanded on the web face).
-    tree_open: bool,
+    glow: std::rc::Rc<fallback::GlowCache>,
     /// The manifest + payload the theme resolution rides — the solar
     /// clock re-resolves from them at every tick.
     config: ShunConfig,
@@ -270,25 +267,23 @@ const DONE_LINGER: Duration = Duration::from_millis(1500);
 pub(crate) const PASSIVE_W: f32 = 720.0;
 pub(crate) const PASSIVE_H: f32 = 620.0;
 
-/// The standing reason pane's fixed height — the web landing's details
-/// pane, egui-side. Part of [`FAILED_BODY_H`]; measuring a hugging
-/// container instead feeds the centering pad poisoned egui rects (a
-/// zero-height allocate_ui and the right-to-left row both read back
-/// infinite/full-panel cursors).
-const FAILED_PANE_H: f32 = 300.0;
+/// The standing reason pane's fixed height — roomy for the common
+/// veto (the tree folds its rows inside; a longer one scrolls), never
+/// a tall empty box. Part of FAILED_BODY_H: the centering pad is
+/// analytic, and a hugging container's height only reads back through
+/// poisoned egui rects (zero-height allocate_ui children seed the
+/// cursor with infinite/full-panel runs).
+const FAILED_PANE_H: f32 = 180.0;
 
-/// The failed block's full analytic stack: the verdict line (~22 pt),
-/// the lead-in, the standing pane, the action row's lead-in and plates.
-/// The centering pad is plain arithmetic against this — no per-frame
-/// convergence state to drift.
-const FAILED_BODY_H: f32 = 22.0 + 14.0 + FAILED_PANE_H + 14.0 + 28.0;
+/// The failed block's analytic stack: the verdict line (~24 pt), the
+/// lead-in, the standing pane, the action row's lead-in and plates.
+const FAILED_BODY_H: f32 = 24.0 + 12.0 + FAILED_PANE_H + 14.0 + 28.0;
 
 /// The done block's height: the verdict line alone.
 const SETTLED_LINE_H: f32 = 22.0;
 
 /// The running block's height: the task heading over the bar and the
-/// live step line (the compact mirror's stack, centered in the one
-/// window all three phases share).
+/// live step line.
 const RUN_BODY_H: f32 = 70.0;
 
 impl PassiveApp {
@@ -486,70 +481,43 @@ impl PassiveApp {
         );
     }
 
-    /// The web landing's HkJsonTree, egui-side: a monospace collapsible
-    /// object — a `{` header carrying the field count and a −/+ toggle,
-    /// indented `key: "value" type` rows in the token colors, the closing
-    /// brace. One click seat on the header toggles the fold.
-    fn json_tree(
-        ui: &mut egui::Ui,
-        rows: &[(String, String)],
-        open: &mut bool,
-        theme: &fallback::Theme,
-    ) {
+    /// The web landing's HkJsonTree, egui-side: a real collapsing
+    /// node (egui's own widget — the animated chevron, the whole header
+    /// as the toggle seat, the fold state persisted under the salt)
+    /// wrapping indented `key: "value" type` rows in the token colors.
+    fn json_tree(ui: &mut egui::Ui, rows: &[(String, String)], theme: &fallback::Theme) {
         let mono = |size: f32| egui::FontId::monospace(size);
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), Sense::click());
-        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-        let painter = ui.painter_at(rect);
-        let toggle = if *open { "−" } else { "+" };
-        painter.text(
-            egui::pos2(rect.left() + 2.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            format!("{{ {toggle}"),
-            mono(11.5),
-            theme.text_secondary,
-        );
-        painter.text(
-            egui::pos2(rect.right(), rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            rows.len().to_string(),
-            mono(11.5),
-            theme.text_tertiary,
-        );
-        if response.clicked() {
-            *open = !*open;
-        }
-        if *open {
-            // egui's indent paints the tree's spine line for free.
-            ui.indent("passive-json-tree", |ui| {
-                for (key, value) in rows {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.label(
-                            RichText::new(format!("{key}: "))
-                                .color(theme.primary)
-                                .font(mono(11.5)),
-                        );
-                        ui.label(
-                            RichText::new(format!("\"{value}\""))
-                                .color(theme.success)
-                                .font(mono(11.5)),
-                        );
-                        ui.label(
-                            RichText::new("  string")
-                                .color(theme.text_tertiary)
-                                .italics()
-                                .font(mono(11.5)),
-                        );
-                    });
-                }
-            });
-        }
-        ui.label(
-            RichText::new("}")
-                .color(theme.text_secondary)
-                .font(mono(11.5)),
-        );
+        egui::CollapsingHeader::new(
+            RichText::new(format!("{{ {} fields }}", rows.len()))
+                .font(mono(12.0))
+                .color(theme.text_secondary),
+        )
+        .id_salt("passive-json-tree")
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            for (key, value) in rows {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.label(
+                        RichText::new(format!("{key}: "))
+                            .color(theme.primary)
+                            .font(mono(11.5)),
+                    );
+                    ui.label(
+                        RichText::new(format!("\"{value}\""))
+                            .color(theme.success)
+                            .font(mono(11.5)),
+                    );
+                    ui.label(
+                        RichText::new("  string")
+                            .color(theme.text_tertiary)
+                            .italics()
+                            .font(mono(11.5)),
+                    );
+                });
+            }
+        });
     }
 }
 
@@ -606,13 +574,28 @@ impl eframe::App for PassiveApp {
                 self.caption_bar(ui);
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
                     let body = ui.available_height();
-                    // Every phase's block is FULLY known (verdict line,
-                    // the standing reason pane, the action row, the
-                    // running stack — see the constants), so the
-                    // centering pad is plain arithmetic. Measuring egui's
-                    // cursor instead runs into infinite/poisoned rects
-                    // across the pane's container and the right-to-left
-                    // row — and the window never resizes to chase it.
+                    let detail = self.failure.clone().unwrap_or_default();
+                    let lane = if self.uninstall {
+                        "uninstall"
+                    } else {
+                        "silent-install"
+                    };
+                    let rows = [
+                        ("product".to_string(), self.product.clone()),
+                        ("version".to_string(), self.version.clone()),
+                        ("lane".to_string(), lane.to_string()),
+                        ("error".to_string(), detail.clone()),
+                    ];
+                    let glow = std::rc::Rc::clone(&self.glow);
+                    let copy_label = self.strings.error_copy.clone();
+                    let close_label = self.strings.close.clone();
+                    // Every phase's stack is analytic (verdict, the
+                    // standing pane, the action row, the running stack —
+                    // the constants), so the centering pad is plain
+                    // arithmetic. Measuring egui's cursor or child rects
+                    // instead reads back poisoned runs (infinite after
+                    // the right-to-left row, full-panel through the
+                    // pane's container).
                     let content_h = match self.phase {
                         Phase::Failed => FAILED_BODY_H,
                         Phase::Done => SETTLED_LINE_H,
@@ -620,8 +603,8 @@ impl eframe::App for PassiveApp {
                     };
                     ui.add_space(((body - content_h) / 2.0).max(14.0));
                     if matches!(self.phase, Phase::Running) {
-                        // The mirror's running face: the task heading over
-                        // the bar and the live step.
+                        // The mirror's running face: the task heading
+                        // over the bar and the live step.
                         ui.label(
                             RichText::new(&self.heading)
                                 .strong()
@@ -633,7 +616,7 @@ impl eframe::App for PassiveApp {
                         ui.add_space(8.0);
                         match self.percent {
                             Some(percent) => ui.label(
-                                RichText::new(format!("{line} · {percent}%"))
+                                RichText::new(format!("{line} \u{b7} {percent}%"))
                                     .size(12.5)
                                     .color(line_color),
                             ),
@@ -643,41 +626,27 @@ impl eframe::App for PassiveApp {
                         };
                     } else {
                         // A settled run drops the task heading, bar and
-                        // percent — the verdict IS the headline now ("still
-                        // installing" over "install failed" reads as a
-                        // contradiction), styled at the heading's weight.
+                        // percent — the verdict IS the headline now
+                        // ("still installing" over "install failed"
+                        // reads as a contradiction), styled at the
+                        // heading's weight.
                         ui.label(
-                            RichText::new(line.clone())
+                            RichText::new(line.as_str())
                                 .strong()
                                 .size(16.0)
                                 .color(line_color),
                         );
                     }
                     if let Phase::Failed = self.phase {
-                        ui.add_space(14.0);
-                        // The hikari error landing's details pane, egui-side:
-                        // the human reason over the structured detail as a
-                        // collapsible JSON tree — the same payload the web
-                        // face's HkJsonTree renders. The pane stands its
-                        // FIXED height (part of FAILED_BODY_H): measuring a
-                        // hugging container feeds the centering pad poisoned
-                        // egui rects.
-                        let detail = self.failure.clone().unwrap_or_default();
-                        let lane = if self.uninstall {
-                            "uninstall"
-                        } else {
-                            "silent-install"
-                        };
-                        let rows = [
-                            ("product".to_string(), self.product.clone()),
-                            ("version".to_string(), self.version.clone()),
-                            ("lane".to_string(), lane.to_string()),
-                            ("error".to_string(), detail.clone()),
-                        ];
-                        let mut tree_open = self.tree_open;
-                        let glow = &self.glow;
-                        let copy_label = self.strings.error_copy.clone();
-                        let close_label = self.strings.close.clone();
+                        ui.add_space(12.0);
+                        // The landing's description: the reason verbatim
+                        // at reading size — the same seat HkErrorLanding
+                        // gives it.
+                        ui.label(RichText::new(&detail).size(12.5).color(theme.text));
+                        ui.add_space(12.0);
+                        // The details pane: the structured detail as a
+                        // collapsible JSON tree inside the standing
+                        // fixed-height frame (a longer reason scrolls).
                         let frame_width = (ui.available_width() - 32.0).max(220.0);
                         ui.allocate_ui(egui::vec2(frame_width, FAILED_PANE_H), |ui| {
                             egui::Frame::default()
@@ -695,26 +664,22 @@ impl eframe::App for PassiveApp {
                                     ));
                                     egui::ScrollArea::vertical().show(ui, |ui| {
                                         ui.set_min_width(ui.available_width());
-                                        ui.label(
-                                            RichText::new(&detail).size(12.5).color(theme.text),
-                                        );
-                                        ui.add_space(10.0);
-                                        ui.separator();
-                                        ui.add_space(6.0);
-                                        Self::json_tree(ui, &rows, &mut tree_open, &theme);
+                                        Self::json_tree(ui, &rows, &theme);
                                     });
                                 });
                         });
-                        self.tree_open = tree_open;
                         ui.add_space(14.0);
                         // The landing's actions ride the wizard footer's
                         // own hand-drawn ghost buttons (text_button — the
-                        // hover wash, the baseline-true text), sized from
-                        // their labels like the footer's pair, and the row
-                        // centers by the analytic label sum. Right to
-                        // left: the close seat lands rightmost.
-                        let plate_w = |label: &str| {
-                            (ui.painter()
+                        // hover wash, the baseline-true text). The plates
+                        // hug their labels at a 16 pt pad like the
+                        // footer's pair, so the left-drawn text lands
+                        // centered; the close seat keeps a 120 pt floor
+                        // with its pad re-derived to hold the text on the
+                        // midline. Right to left: the close seat lands
+                        // rightmost.
+                        let text_w = |label: &str| {
+                            ui.painter()
                                 .layout_no_wrap(
                                     label.to_owned(),
                                     egui::FontId::proportional(13.0),
@@ -722,11 +687,12 @@ impl eframe::App for PassiveApp {
                                 )
                                 .size()
                                 .x
-                                + 32.0)
-                                .max(96.0)
                         };
-                        let copy_w = plate_w(&copy_label);
-                        let close_w = plate_w(&close_label);
+                        let copy_text = text_w(&copy_label);
+                        let close_text = text_w(&close_label);
+                        let copy_w = copy_text + 32.0;
+                        let close_w = (close_text + 32.0).max(120.0);
+                        let close_pad = ((close_w - close_text) / 2.0).max(16.0);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.add_space(
                                 ((ui.available_width() - (copy_w + 8.0 + close_w)) / 2.0).max(12.0),
@@ -736,14 +702,14 @@ impl eframe::App for PassiveApp {
                                 egui::vec2(close_w, 28.0),
                                 &close_label,
                                 13.0,
-                                16.0,
+                                close_pad,
                                 false,
                                 theme.text_secondary,
                                 theme.surface,
                                 Some(theme.border),
                                 8,
                                 None,
-                                glow,
+                                &glow,
                                 theme.primary,
                             )
                             .clicked()
@@ -766,7 +732,7 @@ impl eframe::App for PassiveApp {
                                 Some(theme.border),
                                 8,
                                 None,
-                                glow,
+                                &glow,
                                 theme.primary,
                             )
                             .clicked()
@@ -779,7 +745,7 @@ impl eframe::App for PassiveApp {
                                 });
                                 ui.ctx().copy_text(format!(
                                     "{}\n{}\n{}",
-                                    line.clone(),
+                                    line,
                                     detail,
                                     serde_json::to_string_pretty(&payload)
                                         .unwrap_or_else(|_| "{}".to_string()),
@@ -923,8 +889,7 @@ fn run_silent_egui(
                 failure: None,
                 close_at: None,
                 theme,
-                glow: fallback::GlowCache::default(),
-                tree_open: true,
+                glow: std::rc::Rc::new(fallback::GlowCache::default()),
                 config: config.clone(),
                 solar_pinned,
                 solar_tick_at: Instant::now(),
