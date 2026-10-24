@@ -192,7 +192,6 @@ fn main() {
                             .is_some_and(|body| body.contains("ShunDemo 发行说明"))
                     {
                         step.body = Some(body);
-                        println!("cargo:rerun-if-env-changed=SHUN_RELEASE_NOTES_FETCH");
                         break;
                     }
                 }

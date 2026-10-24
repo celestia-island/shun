@@ -50,7 +50,7 @@ tauri-plugin-dialog = { version = "^2" }
 # The wallpaper fetch (the manifest's image source; the same client the
 # online payload lane rides). Platform-neutral: the fallback UI runs on
 # every host the shell builds for, and so does its wallpaper.
-ureq = "2"
+ureq = "^2"
 
 [features]
 default = ["custom-protocol"]
