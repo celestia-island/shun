@@ -3645,7 +3645,9 @@ impl FallbackApp {
         // filled across the just-drawn heading, and the fixed 300px
         // viewport neither absorbed the pane's free height nor scaled
         // with the window.
-        let card_h = (ui.available_height()).max(120.0);
+        // Reserve a footer-clearance strip below the card — the pane
+        // runs to the window bottom, where the floating footer sits.
+        let card_h = (ui.available_height() - 16.0).max(120.0);
         let card_rect = egui::Rect::from_min_size(
             pos2(ui.max_rect().left(), ui.cursor().top()),
             egui::vec2(ui.available_width(), card_h),
