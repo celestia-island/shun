@@ -11,6 +11,11 @@ __pycache__/
 # build artifact (AGENTS §7) and must NOT be ignored.
 /dist/
 node_modules/
+# The web shell's dependency tree rides a wt cache symlink — untracked, and
+# (2026-10-25) the two accidental `git add -A` inclusions of the symlink
+# itself (justfile + caller-refresh waves) both came from this path being
+# outside the root-only `node_modules/` rule. Match it anywhere.
+**/node_modules/
 
 # celestia-devtools: staged-on-demand shared justfile recipes (just fetch)
 /.just/
