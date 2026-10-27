@@ -675,6 +675,13 @@ impl Flow for InstallFlow<'_> {
                     &self.ctx.non_empty_allowlist,
                 )
             {
+                // The staged payload is this run's own litter — a
+                // refused unattended update must not leave a full
+                // extracted copy beside the install (hundreds of MB for
+                // a real product) sitting there until some later
+                // attempt cleans it. Best-effort: a failure to remove
+                // only adds to the refusal's noise.
+                let _ = std::fs::remove_dir_all(&staging_dir);
                 return Err(ShunError::Io(std::io::Error::other(format!(
                     "refusing to swap {}: the directory holds content shun never delivered (or cannot be inspected) — install into a dedicated folder, or relocate the existing install",
                     self.ctx.install_dir.display(),
@@ -939,7 +946,12 @@ fn park_file_aside(target: &Path) -> Result<PathBuf, ShunError> {
 /// never as safe. A manifest that fails to parse leaves everything
 /// unaccounted, mirroring the relocation sweep's abort-on-unknown
 /// philosophy.
-fn foreign_files_beyond_manifest(
+///
+/// Public because the wizard-level relocation probes share it: the
+/// silent lane's foreign-share handover and the location step's
+/// upgrade fault must forgive exactly the droppings this swap guard
+/// forgives, or one lane would veto what another delivers beside.
+pub fn foreign_files_beyond_manifest(
     dir: &Path,
     portable_marker: &str,
     allowlist: &[String],

@@ -230,8 +230,11 @@ renamed into the backup slot, and the backup sweep destroyed it:
   unreadable directory or an unparsable manifest counts as
   foreign, and so does a stub a `relocate` rule probes one level
   down (the shared-games-root shape). The install fails loudly
-  instead of moving foreign content: the relocation lane above
-  or a fresh location is the way out. Portable installs are
+  instead of moving foreign content — cleaning its own staged
+  payload out of the way on the refusal — and the foreign-share
+  handover below turns that refusal into the relocation wizard for
+  unattended updates: the relocation lane or a fresh location is
+  the way out. Portable installs are
   exempt — data beside the executable is that mode's design.
 - A swapped-out backup is **deleted only when shun can account
   for every file in it, at any depth**. Anything foreign is
@@ -249,7 +252,20 @@ with `--relocate-from <old-dir>` (a shell CLI flag that implies the
 interactive lane and conflicts with `--silent`). The handover itself prints the
 reason and exits `0` without installing anything — the updater
 contract sees success, and the interactive wizard the user now faces
-owns the outcome. Known limitation: a silent update from a fully
+owns the outcome.
+
+The same handover answers the rule-less shape: an install whose
+directory holds content shun never delivered (the swap-safety
+refusal above — no `dir-rules` entry names the neighbor, a player's
+own dropped folder say). The silent lane probes the manifest
+accounting before installing, so an unattended update that would
+refuse the swap instead pauses as this wizard and asks for a new
+folder, and the interactive location step faults the shared
+directory with the foreign-content message before any extraction —
+picking another folder is the way through, and the foreign files
+stay where they are either way.
+
+Known limitation: a silent update from a fully
 non-interactive session (no user desktop) spawns a wizard nobody
 sees, so such an install stays on its old version until someone
 logs in interactively. The wizard opens

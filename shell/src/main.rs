@@ -1038,14 +1038,20 @@ fn run_headless_with_tap(
         .clone()
         .or_else(|| Some(fallback::silent_locale_for(&config.product.name)));
 
-    // A location a `relocate` dir-rule flags ends the silent lane here:
-    // updating in place would endanger the foreign files sharing the
-    // folder (the update swap moves the WHOLE directory aside), so hand
-    // over to the interactive wizard's relocation pass instead — the
-    // user picks the new folder, or cancels and the old install stays
-    // on the old version. Exit 0 without installing: the updater
-    // contract sees success and the wizard owns the user's choice.
-    if let Some(reason) = shun::wizard::relocation_required(config, &dir, language.as_deref()) {
+    // A location a `relocate` dir-rule flags ends the silent lane
+    // here — and so does a directory whose content shun cannot fully
+    // account for (the rule-less shape: no dir-rule names the
+    // neighbor, but the update swap moves the WHOLE directory aside
+    // all the same, and the swap guard would fail the unattended
+    // update outright). Either way updating in place would endanger
+    // the foreign files sharing the folder, so hand over to the
+    // interactive wizard's relocation pass instead — the user picks
+    // the new folder, or cancels and the old install stays on the old
+    // version. Exit 0 without installing: the updater contract sees
+    // success and the wizard owns the user's choice.
+    if let Some(reason) = shun::wizard::relocation_required(config, &dir, language.as_deref())
+        .or_else(|| shun::wizard::foreign_share_reason(config, &dir, portable))
+    {
         println!("relocation required ({reason}): launching the setup wizard");
         spawn_relocation_wizard(&dir, language.as_deref())?;
         return Ok(());
