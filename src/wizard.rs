@@ -595,11 +595,25 @@ pub fn check_install_dir(
         return Some(DirCheckFault::NotWritable);
     }
     if upgrading {
-        // Only a `relocate` rule can fault an upgrade — a `block` rule
-        // must never strand the silent updates of an install that
-        // landed in its location before the rule existed.
-        return relocate_rule_message(config, path, language)
-            .map(|message| DirCheckFault::Rule { message });
+        // Only a `relocate` rule or foreign content can fault an
+        // upgrade — a `block` rule must never strand the silent
+        // updates of an install that landed in its location before
+        // the rule existed. Foreign content is the rule-less danger:
+        // nothing in the manifest names the neighbor, but the swap
+        // would carry it into the backup slot (see Upgrade swap
+        // safety), so the interactive location step answers with the
+        // same refusal the silent lane hands over to the wizard on.
+        // Portable mode is exempt — data beside the executable is
+        // that mode's design.
+        if let Some(message) = relocate_rule_message(config, path, language) {
+            return Some(DirCheckFault::Rule { message });
+        }
+        if !portable {
+            if let Some(message) = foreign_share_reason(config, &effective, false) {
+                return Some(DirCheckFault::Rule { message });
+            }
+        }
+        return None;
     }
     // A fresh pick answers to every rule action — a `relocate` rule
     // vetoes taking the location anew exactly like a `block` one.
@@ -660,6 +674,73 @@ pub fn relocation_required(
         return None;
     }
     relocate_rule_message(config, path, language)
+}
+
+/// Whether an existing install of this product shares its directory
+/// with content shun never delivered — the rule-less sibling of
+/// [`relocation_required`]: no `dir-rules` entry names the neighbor
+/// (a player's own folder dropped beside the app, say), but the
+/// update swap would still carry it into the backup slot and a
+/// wholesale backup delete would destroy it. The silent lane asks
+/// this beside the rule probe before updating in place and hands
+/// over to the wizard's relocation pass alike; the location step's
+/// upgrade lane faults on it for interactive runs. Portable mode is
+/// exempt (data beside the executable is that mode's design), and a
+/// fresh directory never fires it (the non-empty refusal already
+/// guards that shape). Returns a reason naming up to three foreign
+/// samples. `raw_dir` follows the same padding rules as
+/// [`check_install_dir`].
+pub fn foreign_share_reason(config: &ShunConfig, raw_dir: &str, portable: bool) -> Option<String> {
+    if portable {
+        return None;
+    }
+    let dir = raw_dir.trim().trim_end_matches('\\').to_string();
+    if dir.is_empty() {
+        return None;
+    }
+    let install = install_target_of(config);
+    let forbid_root = install.is_none_or(|i| i.forbid_drive_root);
+    let effective = if forbid_root {
+        dir
+    } else {
+        pad_root_dir(config, &dir)
+    };
+    let path = Path::new(&effective);
+    let upgrading =
+        read_installed_manifest(path).is_some() || path.join(config_main_exe(config)).is_file();
+    if !upgrading {
+        return None;
+    }
+    let marker = install
+        .and_then(|i| i.portable_marker.clone())
+        .unwrap_or_else(|| crate::targets::install::PORTABLE_MARKER.to_string());
+    let allowlist = install
+        .map(|i| i.non_empty_allowlist.clone())
+        .unwrap_or_default();
+    match crate::targets::install::foreign_files_beyond_manifest(path, &marker, &allowlist) {
+        Ok(foreign) if foreign.is_empty() => None,
+        Ok(mut foreign) => {
+            // Walk order is filesystem-dependent — sort (case-
+            // insensitive, like the accounting's keys) for a stable
+            // handover line (and stable tests).
+            foreign.sort_by_key(|path| path.to_lowercase());
+            let shown = foreign.len().min(3);
+            let sample = foreign[..shown].join(", ");
+            let ellipsis = if foreign.len() > shown { ", …" } else { "" };
+            Some(format!(
+                "the directory holds {} file(s) shun never delivered ({sample}{ellipsis}) \
+                 — relocate the install into a folder of its own",
+                foreign.len(),
+            ))
+        }
+        // An unreadable tree is unknown, never safe — treat it as
+        // foreign, exactly like the swap guard does.
+        Err(_) => Some(
+            "the directory holds content shun cannot inspect — relocate \
+             the install into a folder of its own"
+                .into(),
+        ),
+    }
 }
 
 /// The first `relocate`-action rule matching `path`, as its localized
@@ -1906,7 +1987,11 @@ end
         );
 
         // The main executable alone marks one too (the updater's
-        // `--dir` always points at the parent of the running exe).
+        // `--dir` always points at the parent of the running exe) —
+        // but without an on-disk manifest the foreign accounting
+        // cannot vouch for the executable itself, so the upgrade
+        // lane faults it like any other unaccounted content (the
+        // swap guard refuses the same shape post-extraction).
         let exe_dir = tempfile::tempdir().unwrap();
         std::fs::write(exe_dir.path().join("Wowsp.exe"), b"MZ").unwrap();
         assert_eq!(
@@ -1917,7 +2002,11 @@ end
                 None,
                 false
             ),
-            None
+            Some(DirCheckFault::Rule {
+                message: "the directory holds 1 file(s) shun never delivered (Wowsp.exe) \
+                         — relocate the install into a folder of its own"
+                    .into()
+            })
         );
     }
 
@@ -1982,8 +2071,14 @@ end
             None
         );
 
-        // …and neither does an existing install, however crowded the
-        // directory (its location decision was made when it landed).
+        // …and neither does an existing install re-answer the
+        // NON-EMPTY refusal (its location decision was made when it
+        // landed) — but a directory sharing space with foreign
+        // content now faults through the upgrade lane's foreign
+        // accounting instead: the swap would carry the neighbor into
+        // the backup slot, so the location step asks for a folder of
+        // the install's own (with no on-disk manifest, the main
+        // executable itself counts as unaccounted).
         let installed = tempfile::tempdir().unwrap();
         std::fs::write(installed.path().join("Wowsp.exe"), b"MZ").unwrap();
         std::fs::write(installed.path().join("someone-elses.dat"), b"x").unwrap();
@@ -1995,7 +2090,12 @@ end
                 None,
                 false
             ),
-            None
+            Some(DirCheckFault::Rule {
+                message: "the directory holds 2 file(s) shun never delivered \
+                         (someone-elses.dat, Wowsp.exe) — relocate the install \
+                         into a folder of its own"
+                    .into()
+            })
         );
 
         // The opt-out restores the pre-0.6.30 anything-goes lane.
@@ -2075,9 +2175,13 @@ end
             })
         );
 
-        // …never an existing install: a location disliked today must
-        // not strand the silent updates of an install that landed
-        // there yesterday.
+        // …never an existing install does the BLOCK RULE fault: a
+        // location disliked today must not strand the silent updates
+        // of an install that landed there yesterday. The foreign
+        // accounting still answers, though — the rival's file is
+        // content shun never delivered, exactly what the swap must
+        // not carry into the backup slot (the main executable counts
+        // as unaccounted too: no on-disk manifest lists it).
         let rival_installed = tempfile::tempdir().unwrap();
         std::fs::write(rival_installed.path().join("Wowsp.exe"), b"MZ").unwrap();
         std::fs::write(rival_installed.path().join("rival-tool.dat"), b"x").unwrap();
@@ -2088,6 +2192,23 @@ end
                 &rival_installed.path().to_string_lossy(),
                 None,
                 false
+            ),
+            Some(DirCheckFault::Rule {
+                message: "the directory holds 2 file(s) shun never delivered \
+                         (rival-tool.dat, Wowsp.exe) — relocate the install \
+                         into a folder of its own"
+                    .into()
+            })
+        );
+        // Portable mode is exempt from the foreign accounting — data
+        // beside the executable is that mode's design.
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &rival_installed.path().to_string_lossy(),
+                None,
+                true
             ),
             None
         );
@@ -2136,6 +2257,104 @@ end
         assert_eq!(
             relocation_required(&config, &game.path().to_string_lossy(), None),
             None
+        );
+    }
+
+    /// The rule-less sibling of the relocation probe: an install
+    /// sharing its directory with content shun never delivered hands
+    /// the silent lane over to the wizard (or faults the interactive
+    /// location step) even though no `dir-rules` entry names the
+    /// neighbor — while a clean upgrade, portable mode and fresh
+    /// directories never fire it.
+    #[test]
+    fn foreign_share_reason_covers_the_rule_less_shapes() {
+        let config = location_config(None);
+        let manifest = |entries: &[&str]| {
+            serde_json::to_vec(&crate::targets::install::InstallManifest {
+                language: None,
+                entries: entries
+                    .iter()
+                    .map(|path| crate::payload::PayloadEntry {
+                        path: (*path).into(),
+                        size: 2,
+                        sha256: String::new(),
+                    })
+                    .collect(),
+            })
+            .unwrap()
+        };
+
+        // An accounted install sharing space with one player file:
+        // the probe fires and names it.
+        let shared = tempfile::tempdir().unwrap();
+        std::fs::write(
+            shared.path().join(crate::payload::MANIFEST_PATH),
+            manifest(&["Wowsp.exe"]),
+        )
+        .unwrap();
+        std::fs::write(shared.path().join("Wowsp.exe"), b"MZ").unwrap();
+        std::fs::write(shared.path().join("战绩备份.txt"), b"stats").unwrap();
+        assert_eq!(
+            foreign_share_reason(&config, &shared.path().to_string_lossy(), false),
+            Some(
+                "the directory holds 1 file(s) shun never delivered (战绩备份.txt) \
+                 — relocate the install into a folder of its own"
+                    .into()
+            )
+        );
+
+        // A clean upgrade — every file accounted — never fires.
+        let clean = tempfile::tempdir().unwrap();
+        std::fs::write(
+            clean.path().join(crate::payload::MANIFEST_PATH),
+            manifest(&["Wowsp.exe", "data/pack.bin"]),
+        )
+        .unwrap();
+        std::fs::create_dir_all(clean.path().join("data")).unwrap();
+        std::fs::write(clean.path().join("Wowsp.exe"), b"MZ").unwrap();
+        std::fs::write(clean.path().join("data").join("pack.bin"), b"x").unwrap();
+        // Allowlisted OS droppings are forgiven like everywhere else.
+        std::fs::write(clean.path().join("Thumbs.db"), b"junk").unwrap();
+        assert_eq!(
+            foreign_share_reason(&config, &clean.path().to_string_lossy(), false),
+            None
+        );
+
+        // Portable mode never fires (data beside the executable is
+        // that mode's design)…
+        assert_eq!(
+            foreign_share_reason(&config, &shared.path().to_string_lossy(), true),
+            None
+        );
+        // …and neither does a directory with no install of ours —
+        // the fresh lane's non-empty refusal owns that shape.
+        let fresh = tempfile::tempdir().unwrap();
+        std::fs::write(fresh.path().join("someone.dat"), b"x").unwrap();
+        assert_eq!(
+            foreign_share_reason(&config, &fresh.path().to_string_lossy(), false),
+            None
+        );
+
+        // Four foreign files fold into a three-sample ellipsis, sorted
+        // for a stable line.
+        let crowded = tempfile::tempdir().unwrap();
+        std::fs::write(
+            crowded.path().join(crate::payload::MANIFEST_PATH),
+            manifest(&["Wowsp.exe"]),
+        )
+        .unwrap();
+        std::fs::write(crowded.path().join("Wowsp.exe"), b"MZ").unwrap();
+        for name in ["d.dat", "b.dat", "c.dat", "a.dat"] {
+            std::fs::write(crowded.path().join(name), b"x").unwrap();
+        }
+        assert_eq!(
+            foreign_share_reason(&config, &crowded.path().to_string_lossy(), false),
+            Some(
+                "the directory holds 4 file(s) shun never delivered \
+                 (a.dat, b.dat, c.dat, …) — relocate the install into \
+                 a folder of its own"
+                    .into()
+            )
         );
     }
 }

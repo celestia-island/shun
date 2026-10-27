@@ -236,7 +236,10 @@ intercambio atómico ganó dos suelos duros:
   manifiesto indescifrable cuenta como ajeno, y lo mismo el stub
   que una regla `relocate` encuentre un nivel por debajo (la
   forma de raíz de juegos compartida). La instalación falla con
-  claridad en lugar de mudar contenido ajeno: la salida la da el
+  claridad en lugar de mudar contenido ajeno — limpiando de paso su
+  propio payload de preparación — y la cesión de contenido ajeno de
+  abajo convierte ese rechazo en el asistente de reubicación para las
+  actualizaciones desatendidas: la salida la da el
   carril de reubicación de arriba o una carpeta nueva. Las
   instalaciones portables quedan exentas: los datos junto al
   ejecutable son el diseño de ese modo.
@@ -257,7 +260,22 @@ nueva de la CLI del shell; implica el carril interactivo y choca con
 `--silent`). La cesión en sí imprime el motivo y sale con
 código `0` sin instalar nada — el contrato del actualizador ve
 éxito, y el resultado pertenece al asistente interactivo al que
-ahora se enfrenta el usuario. Limitación conocida: una
+ahora se enfrenta el usuario.
+
+La misma cesión responde a la forma sin regla: una instalación cuyo
+directorio contiene contenido que shun nunca entregó (el rechazo de
+seguridad del intercambio de arriba — ninguna entrada `dir-rules`
+nombra al vecino, una carpeta dejada ahí por el propio jugador, por
+ejemplo). El carril silencioso sondea la cuenta del manifiesto antes
+de instalar, así que una actualización desatendida que habría
+recibido el rechazo del intercambio se pausa en cambio como este
+asistente y pide una carpeta nueva, y el paso de ubicación
+interactivo reprueba el directorio compartido con el mismo mensaje
+antes de cualquier extracción — basta elegir otra carpeta para
+seguir, y los archivos ajenos se quedan en su sitio en cualquier
+caso.
+
+Limitación conocida: una
 actualización silenciosa desde una sesión totalmente no interactiva
 (sin escritorio de usuario) lanza un asistente que nadie ve — esa
 instalación se queda en su versión antigua hasta que alguien inicie

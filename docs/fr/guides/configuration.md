@@ -234,7 +234,10 @@ gagné deux planchers durs :
   étranger, tout comme le stub qu'une règle `relocate` repère un
   niveau plus bas (la forme « racine de jeux partagée »).
   L'installation échoue bruyamment au lieu de déplacer du contenu
-  étranger : la sortie est la voie de relocalisation ci-dessus ou
+  étranger — en nettoyant au passage son propre payload intermédiaire
+  — et la passation de contenu étranger ci-dessous transforme ce
+  refus en assistant de relocalisation pour les mises à jour
+  sans surveillance : la sortie est la voie de relocalisation ci-dessus ou
   un dossier neuf. Les installations portables sont exemptées :
   des données à côté de l'exécutable, c'est le design même de ce
   mode.
@@ -256,6 +259,19 @@ conflit avec `--silent`). La passation elle-même affiche le
 motif et sort avec le code `0` sans rien installer — le contrat du
 programme de mise à jour voit un succès, et le résultat appartient à
 l'assistant interactif auquel l'utilisateur fait maintenant face.
+
+La même passation répond à la forme sans règle : une installation
+dont le répertoire contient du contenu que shun n'a jamais livré
+(le refus de sécurité du swap ci-dessus — aucune entrée `dir-rules`
+ne nomme le voisin, un dossier déposé par le joueur lui-même par
+exemple). La voie silencieuse sonde le compte du manifeste avant
+d'installer, donc une mise à jour sans surveillance qui essuyait le
+refus du swap se met plutôt en pause comme cet assistant et demande
+un nouveau dossier, et l'étape d'emplacement interactive rejette le
+répertoire partagé du même refus avant toute extraction — choisir
+un autre dossier suffit pour continuer, et les fichiers étrangers
+demeurent sur place dans tous les cas.
+
 Limite connue : une mise à jour silencieuse depuis une session
 totalement non interactive (sans bureau utilisateur) fait naître un
 assistant que personne ne voit — cette installation reste sur son
