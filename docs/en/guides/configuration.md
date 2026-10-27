@@ -43,7 +43,7 @@ root-dir-folder = "ShunDemo"               # legacy pad lane only (forbid-drive-
 # forbid-non-empty = true                  # refuse a fresh install into a non-empty directory (the default — see Install-location rules); false restores the old anything-goes lane
 # non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # junk names the non-empty refusal ignores, case-insensitive
 # [[package.metadata.shun.install.dir-rules]]  # declarative install-location rules (see Install-location rules)
-# files = ["WorldOfWarships.exe"]              # trigger names, checked as direct children of the target
+# files = ["WorldOfWarships.exe"]              # trigger names, checked as direct children of the target AND of its immediate subdirectories
 # action = "block"                             # block (default) | relocate
 # message = "This folder holds the game client."  # English reason, shown verbatim
 # [package.metadata.shun.install.dir-rules.message-locales]  # per-wizard-locale overrides (a match wins over message)
@@ -190,7 +190,7 @@ folder aside:
 
 ```toml
 [[package.metadata.shun.install.dir-rules]]
-files = ["WorldOfWarships.exe"]     # trigger names, checked as direct children of the target
+files = ["WorldOfWarships.exe"]     # trigger names, checked as direct children of the target AND of its immediate subdirectories
 action = "block"                    # block (default) | relocate
 message = "This folder holds the game client — pick another location."  # English reason, shown verbatim
 
@@ -215,6 +215,31 @@ refusal**, with the empty-path gate and the drive-root refusal
 answering before all of them and writability checked
 unconditionally. On an upgrade, only `relocate`-action rules can
 fault the location.
+
+### Upgrade swap safety
+
+Two hard floors guard the atomic swap itself, added after a
+2026-10 incident where a WoWSP install sharing a parent folder
+with the game client had the whole directory — game included —
+renamed into the backup slot, and the backup sweep destroyed it:
+
+- A local-mode upgrade **refuses to swap** a directory holding
+  anything shun never delivered — accounted against the on-disk
+  manifest, the manifest file itself, the portable marker, the
+  copied uninstaller and the allowlisted droppings — recursively, at any depth; an
+  unreadable directory or an unparsable manifest counts as
+  foreign, and so does a stub a `relocate` rule probes one level
+  down (the shared-games-root shape). The install fails loudly
+  instead of moving foreign content: the relocation lane above
+  or a fresh location is the way out. Portable installs are
+  exempt — data beside the executable is that mode's design.
+- A swapped-out backup is **deleted only when shun can account
+  for every file in it, at any depth**. Anything foreign is
+  preserved in place with a warning naming it; a stale
+  `.shun-old` blocking the slot is renamed aside under a
+  timestamped sibling instead of being destroyed; and a delete
+  that fails is reported as a warning, never swallowed
+  silently.
 
 ### Relocation
 

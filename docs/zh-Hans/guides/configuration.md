@@ -42,7 +42,7 @@ root-dir-folder = "ShunDemo"               # 仅旧垫层通道生效（forbid-d
 # forbid-non-empty = true                  # 全新安装拒绝非空目录（默认行为——见「安装位置规则」）；false 恢复从前不设防的通道
 # non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # 非空拒绝忽略的垃圾文件名（不区分大小写）
 # [[package.metadata.shun.install.dir-rules]]  # 声明式安装位置规则（见「安装位置规则」）
-# files = ["WorldOfWarships.exe"]              # 触发文件名，按目标目录的直接子项检查
+# files = ["WorldOfWarships.exe"]              # 触发文件名，按目标目录与其直接子目录的直接子项检查
 # action = "block"                             # block（默认）| relocate
 # message = "This folder holds the game client."  # 英文原因，原样显示
 # [package.metadata.shun.install.dir-rules.message-locales]  # 按向导语言覆盖（命中优先于 message）
@@ -170,7 +170,7 @@ WoWSP：玩家把插件装在游戏客户端旁边，更新的目录交换差点
 
 ```toml
 [[package.metadata.shun.install.dir-rules]]
-files = ["WorldOfWarships.exe"]     # 触发文件名，按目标目录的直接子项检查
+files = ["WorldOfWarships.exe"]     # 触发文件名，按目标目录与其直接子目录的直接子项检查
 action = "block"                    # block（默认）| relocate
 message = "This folder holds the game client — pick another location."  # 英文原因，原样显示
 
@@ -190,6 +190,24 @@ zh-Hans = "该目录是游戏客户端，请另选位置。"
 check-dir 脚本钩子 → 非空拒绝**；空路径门禁与根盘保护先于它们
 作答，可写性检查无条件执行。升级时只有 `relocate` 动作的规则
 能让位置出错。
+
+### 升级交换的安全底线
+
+2026-10 的一次事故之后，原子交换本身多了两道硬底线——当时一个
+与游戏客户端同住父目录的 WoWSP 安装，整个目录（连带游戏）被改名
+挪进了备份槽，随后备份清扫把它摧毁：
+
+- 本地模式的升级**拒绝交换**任何持有 shun 从未交付之内容的目录
+  ——账面以磁盘清单、清单文件本身、便携标记、复制的卸载器与
+  白名单垃圾文件为准——递归、任意深度；读不了的目录、解析不了的清单都算外来
+  内容，`relocate` 规则向下探一层命中的桩文件（共享游戏根形状）
+  同样算。安装会响亮地失败，而不是搬走外来内容：出路由上面的
+  搬迁车道或另选全新位置给出。便携安装豁免——可执行文件旁边放
+  数据正是该模式的设计。
+- 被换出的备份**只有在 shun 能账清其中每一个文件（任意深度）时才会
+  删除**。任何外来内容都会原地保留并给出点名警告；挡住备份槽
+  的陈旧 `.shun-old` 会被改名挪到带时间戳的兄弟位置而不是被
+  摧毁；删除失败会以警告形式报告，绝不静默吞掉。
 
 ### 搬迁
 

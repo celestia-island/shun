@@ -33,7 +33,7 @@ root-dir-folder = "ShunDemo"              # solo el carril de acolchado heredado
 # forbid-non-empty = true                  # rechazar una instalación nueva en un directorio no vacío (comportamiento por defecto — ver Reglas de ubicación de instalación); false restaura el viejo carril de «cualquier cosa vale»
 # non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # nombres de basura que el veto a directorios no vacíos ignora (sin distinguir mayúsculas)
 # [[package.metadata.shun.install.dir-rules]]  # reglas declarativas de ubicación de instalación (ver Reglas de ubicación de instalación)
-# files = ["WorldOfWarships.exe"]              # nombres detonantes, comprobados como hijos directos del destino
+# files = ["WorldOfWarships.exe"]              # nombres detonantes, comprobados como hijos directos del destino y de sus subdirectorios inmediatos
 # action = "block"                             # block (por defecto) | relocate
 # message = "This folder holds the game client."  # motivo en inglés, mostrado tal cual
 # [package.metadata.shun.install.dir-rules.message-locales]  # anulaciones por idioma del asistente (una coincidencia gana a message)
@@ -191,7 +191,7 @@ apartado la carpeta entera del juego:
 
 ```toml
 [[package.metadata.shun.install.dir-rules]]
-files = ["WorldOfWarships.exe"]     # nombres detonantes, comprobados como hijos directos del destino
+files = ["WorldOfWarships.exe"]     # nombres detonantes, comprobados como hijos directos del destino y de sus subdirectorios inmediatos
 action = "block"                    # block (por defecto) | relocate
 message = "This folder holds the game client — pick another location."  # motivo en inglés, mostrado tal cual
 
@@ -218,6 +218,35 @@ ruta vacía y la protección contra la raíz de unidad responden antes
 que todos, y la comprobación de escritura es incondicional. En una
 actualización, solo las reglas con acción `relocate` pueden reprobar
 la ubicación.
+
+### Seguridad del intercambio de actualización
+
+Tras el incidente de 2026-10 —una instalación de WoWSP que
+compartía carpeta padre con el cliente del juego vio cómo el
+directorio entero (juego incluido) se renombraba al hueco de
+respaldo y la limpieza del respaldo lo destruía—, el propio
+intercambio atómico ganó dos suelos duros:
+
+- Una actualización en modo local **se niega a intercambiar** un
+  directorio que contenga algo que shun nunca entregó: la cuenta
+  se lleva contra el manifiesto en disco, el propio archivo de
+  manifiesto, el marcador portable, el desinstalador copiado y la
+  basura permitida por la lista — de forma recursiva, a cualquier
+  profundidad; un directorio ilegible o un
+  manifiesto indescifrable cuenta como ajeno, y lo mismo el stub
+  que una regla `relocate` encuentre un nivel por debajo (la
+  forma de raíz de juegos compartida). La instalación falla con
+  claridad en lugar de mudar contenido ajeno: la salida la da el
+  carril de reubicación de arriba o una carpeta nueva. Las
+  instalaciones portables quedan exentas: los datos junto al
+  ejecutable son el diseño de ese modo.
+- Un respaldo desplazado **solo se borra cuando shun puede dar
+  cuenta de cada archivo que contiene, a cualquier profundidad**.
+  Cualquier contenido ajeno se conserva en su sitio con un aviso
+  que lo nombra; un `.shun-old` rancio que bloquee el hueco se
+  renombra aparte con un sufijo de hora en lugar de destruirse; y
+  un borrado que falla se reporta como aviso, jamás se traga en
+  silencio.
 
 ### Reubicación
 

@@ -33,7 +33,7 @@ root-dir-folder = "ShunDemo"              # 레거시 패딩 레인 전용(forbi
 # forbid-non-empty = true                  # 신규 설치에서 비어 있지 않은 디렉터리를 거부(기본 동작 — 「설치 위치 규칙」 참조). false는 예전의 무엇이든 허용하던 레인을 되살림
 # non-empty-allowlist = ["desktop.ini", "Thumbs.db", ".DS_Store"]  # 비어 있지 않음 거부가 무시하는 찌꺼기 파일명(대소문자 구분 없음)
 # [[package.metadata.shun.install.dir-rules]]  # 선언적 설치 위치 규칙(「설치 위치 규칙」 참조)
-# files = ["WorldOfWarships.exe"]              # 트리거 파일 이름, 대상 디렉터리의 직속 하위 항목으로 검사
+# files = ["WorldOfWarships.exe"]              # 트리거 파일 이름, 대상 디렉터리와 그 직속 하위 디렉터리의 직속 하위 항목으로 검사
 # action = "block"                             # block(기본) | relocate
 # message = "This folder holds the game client."  # 영어 사유, 그대로 표시
 # [package.metadata.shun.install.dir-rules.message-locales]  # 마법사 로케일별 재정의(일치가 message보다 우선)
@@ -175,7 +175,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 
 ```toml
 [[package.metadata.shun.install.dir-rules]]
-files = ["WorldOfWarships.exe"]     # 트리거 파일 이름, 대상 디렉터리의 직속 하위 항목으로 검사
+files = ["WorldOfWarships.exe"]     # 트리거 파일 이름, 대상 디렉터리와 그 직속 하위 디렉터리의 직속 하위 항목으로 검사
 action = "block"                    # block(기본) | relocate
 message = "This folder holds the game client — pick another location."  # 영어 사유, 그대로 표시
 
@@ -199,6 +199,29 @@ zh-Hans = "该目录是游戏客户端，请另选位置。"
 경로 게이트와 드라이브 루트 거부는 그 모든 것보다 앞서 답하고,
 쓰기 가능 여부는 무조건 검사됩니다. 업그레이드에서는 `relocate`
 동작의 규칙만 위치에 문제를 일으킬 수 있습니다.
+
+### 업그레이드 스왑의 안전 장치
+
+2026-10 사고 — 게임 클라이언트와 부모 폴더를 공유하던 WoWSP
+설치의 디렉터리 전체(게임 포함)가 백업 슬롯으로 개명되어 옮겨
+졌고 뒤따른 백업 청소가 그것을 파괴한 — 이후, 원자적 스왑 자체에
+두 개의 단단한 바닥이 놓였습니다:
+
+- 로컬 모드 업그레이드는 shun이 한 번도 배달한 적 없는 내용을
+  담은 디렉터리의 **스왑을 거부**합니다. 계산 기준은 디스크의
+  매니페스트, 매니페스트 파일 자체, 휴대용 마커, 복사된
+  언인스톨러, 허용 목록의 쓰레기 파일들입니다 — 재귀적으로, 모든 깊이에서. 읽을 수 없는
+  디렉터리나 해석 불가능한 매니페스트도, `relocate` 규칙이 한
+  단계 아래에서 찾아낸 스텁(공유 게임 루트 형태)도 모두 외래로
+  셈합니다. 설치는 외래 내용을 옮겨가는 대신 명확히 실패합니다
+  — 출구는 위의 재배치 레인이거나 다른 새 위치입니다. 휴대용
+  설치는 면제입니다. 실행 파일 옆에 데이터를 두는 것이 바로 그
+  모드의 설계이기 때문입니다.
+- 스왑으로 밀려난 백업은 **shun이 담긴 모든 파일을 모든 깊이에서 계산할 수
+  있을 때만 삭제됩니다**. 외래 내용은 제자리에 보존되고 지목하는
+  경고가 나가며, 슬롯을 막은 오래된 `.shun-old`는 파괴되는 대신
+  시각 찍힌 형제 이름으로 개명되고, 삭제 실패는 경고로 보고되며
+  결코 조용히 삼켜지지 않습니다.
 
 ### 재배치
 

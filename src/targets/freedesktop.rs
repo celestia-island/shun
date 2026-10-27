@@ -251,6 +251,7 @@ mod tests {
             deep_links: vec!["shundemo".into()],
             aumid: Some("celestia-island.ShunDemoTest".into()),
             icon: Some(PathBuf::from("assets/icon.png")),
+            non_empty_allowlist: Vec::new(),
             estimated_size_kb: 1,
             language: None,
         }
