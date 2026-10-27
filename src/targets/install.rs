@@ -205,6 +205,13 @@ pub struct InstallContext {
     /// Payload-relative icon file the Linux launcher references.
     pub icon: Option<PathBuf>,
 
+    /// The OS-droppings names the location guards ignore
+    /// (`install.non-empty-allowlist`; the built-in junk list by
+    /// default) — shared by the non-empty refusal and the swap's
+    /// foreign-content accounting below, so every guard forgives
+    /// the same droppings.
+    pub non_empty_allowlist: Vec<String>,
+
     /// ARP `EstimatedSize` in KiB; computed by the flow from the manifest.
     pub estimated_size_kb: u32,
 
@@ -240,6 +247,7 @@ impl InstallContext {
             deep_links: Vec::new(),
             aumid: None,
             icon: None,
+            non_empty_allowlist: crate::config::non_empty_allowlist_default(),
             estimated_size_kb: 0,
             language: None,
         }
@@ -308,6 +316,7 @@ impl InstallContext {
             .portable_marker
             .clone()
             .unwrap_or_else(|| PORTABLE_MARKER.to_string());
+        self.non_empty_allowlist = install.non_empty_allowlist.clone();
         self.verbs = install.verbs.iter().map(VerbSpec::from).collect();
         self.deep_links = install
             .deep_links
@@ -649,7 +658,45 @@ impl Flow for InstallFlow<'_> {
         // the old version.
         if self.ctx.install_dir.exists() {
             let backup = self.ctx.install_dir.with_extension("shun-old");
-            let _ = std::fs::remove_dir_all(&backup);
+            // Audit (the 2026-10 WoWSP incident): the swap renames
+            // the WHOLE install directory aside, so a directory
+            // holding content shun never delivered — a game client
+            // installed beside the app, say — would be carried into
+            // the backup slot and the retire below would destroy
+            // it. A local-mode install directory is product-owned
+            // ground (fresh picks are already refused when
+            // non-empty), so an upgrade onto foreign content
+            // refuses outright: the relocate lane (a matching
+            // dir-rule, which probes one level down since the same
+            // audit) or a fresh location is the way out. Portable
+            // installs are exempt — data beside the executable is
+            // that mode's design, and the backup retire preserves
+            // it instead of deleting it.
+            if !self.ctx.portable
+                && !tree_is_purely_shun_owned(
+                    &self.ctx.install_dir,
+                    &self.ctx.portable_marker,
+                    &self.ctx.non_empty_allowlist,
+                )
+            {
+                return Err(ShunError::Io(std::io::Error::other(format!(
+                    "refusing to swap {}: the directory holds content shun never delivered (or cannot be inspected) — install into a dedicated folder, or relocate the existing install",
+                    self.ctx.install_dir.display(),
+                ))));
+            }
+            // Free the backup slot without destroying anything shun
+            // cannot fully account for: a stale `.shun-old` holding
+            // only shun's own files goes away; anything else is
+            // renamed aside under a timestamped sibling, and the
+            // warning names where it went.
+            if backup.exists() {
+                free_backup_slot(
+                    &backup,
+                    &self.ctx.portable_marker,
+                    &self.ctx.non_empty_allowlist,
+                    on_event,
+                );
+            }
             swap_or_merge_into_place(
                 &staging_dir,
                 &self.ctx.install_dir,
@@ -677,6 +724,41 @@ impl Flow for InstallFlow<'_> {
             self.registration.register_logged(&ctx, on_event)?;
         }
 
+        // The swapped-out previous tree is destroyed only when shun
+        // can account for every file in it, at any depth; anything
+        // foreign (portable-mode user data beside the executable
+        // included) stays in place with a warning naming it. A
+        // delete that fails is a warning too — the new install is
+        // already complete and a later pass can retry the cleanup.
+        let backup = self.ctx.install_dir.with_extension("shun-old");
+        if backup.exists() {
+            if tree_is_purely_shun_owned(
+                &backup,
+                &self.ctx.portable_marker,
+                &self.ctx.non_empty_allowlist,
+            ) {
+                if let Err(e) = std::fs::remove_dir_all(&backup) {
+                    warn(
+                        on_event,
+                        "backup-kept",
+                        &format!(
+                            "could not remove the previous install at {} ({e}) — left for a later pass",
+                            backup.display()
+                        ),
+                    );
+                }
+            } else {
+                warn(
+                    on_event,
+                    "backup-kept",
+                    &format!(
+                        "the previous install at {} holds files shun never delivered — preserved in place",
+                        backup.display()
+                    ),
+                );
+            }
+        }
+
         on_event(FlowEvent::Completed);
         Ok(())
     }
@@ -694,7 +776,10 @@ const SWAP_LOCK_RETRY_POLL: std::time::Duration = std::time::Duration::from_mill
 /// rename-locked past `retry_window`, degrades to merging the staged
 /// files in place instead. Returns `true` when the atomic swap happened,
 /// `false` when the in-place merge did. The caller owns the `backup`
-/// slot's pre-clean; on the swap path this function clears it again.
+/// slot entirely — the foreign-check guarded pre-clean before this
+/// call and the equally guarded retire after the flow (an inline
+/// wholesale delete here is what once destroyed foreign trees the
+/// swap had carried aside).
 fn swap_or_merge_into_place(
     staging_dir: &Path,
     install_dir: &Path,
@@ -707,10 +792,7 @@ fn swap_or_merge_into_place(
     loop {
         match std::fs::rename(install_dir, backup) {
             Ok(()) => match std::fs::rename(staging_dir, install_dir) {
-                Ok(()) => {
-                    let _ = std::fs::remove_dir_all(backup);
-                    return Ok(true);
-                }
+                Ok(()) => return Ok(true),
                 Err(_) => {
                     // The staged side would not move — put the old tree
                     // back and let the merge lane try file by file. If
@@ -842,6 +924,149 @@ fn park_file_aside(target: &Path) -> Result<PathBuf, ShunError> {
     ));
     std::fs::rename(target, &parked)?;
     Ok(parked)
+}
+
+/// The FILES inside `dir` that nothing shun-delivered accounts for.
+/// Every file — at ANY depth, not just the top level — must be
+/// listed by the on-disk manifest (case-insensitive,
+/// separator-normalized), be the manifest file itself, the portable
+/// marker or the copied uninstaller, match the merge lane's
+/// parked-file convention (`<name>.shun-old-<nanos>`), or carry an
+/// allowlisted OS-droppings name; anything else is content an
+/// atomic swap would carry into the backup slot and a wholesale
+/// backup delete would destroy. The shared-games-root shape the
+/// 2026-10 WoWSP incident lived on sat one level down; a foreign
+/// file inside a delivered `bin\` is the same danger one level
+/// deeper, so the accounting is recursive. Empty foreign DIRECTORIES
+/// carry no data and are not reported. `Err` means the tree could
+/// not be walked: an unknown state callers must treat as foreign,
+/// never as safe. A manifest that fails to parse leaves everything
+/// unaccounted, mirroring the relocation sweep's abort-on-unknown
+/// philosophy.
+fn foreign_files_beyond_manifest(
+    dir: &Path,
+    portable_marker: &str,
+    allowlist: &[String],
+) -> std::io::Result<Vec<String>> {
+    let mut owned: std::collections::HashSet<String> = std::collections::HashSet::from([
+        MANIFEST_PATH.to_lowercase(),
+        portable_marker.to_lowercase(),
+        UNINSTALLER_NAME.to_lowercase(),
+    ]);
+    for junk in allowlist {
+        owned.insert(junk.to_lowercase());
+    }
+    if let Ok(manifest) = read_manifest(dir) {
+        owned.extend(manifest.entries.into_iter().map(|entry| {
+            entry
+                .path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_lowercase()
+        }));
+    }
+    let parked_or_dropping = |name: &str| {
+        // The merge lane's parked-file convention
+        // (`<name>.shun-old-<nanos>`, see [`park_file_aside`]) is
+        // shun's own litter even though no manifest lists it — a
+        // past in-place merge must not read as foreign content and
+        // veto the next update.
+        let parked = name
+            .rsplit_once(".shun-old-")
+            .is_some_and(|(_, ts)| !ts.is_empty() && ts.chars().all(|c| c.is_ascii_digit()));
+        parked
+            || allowlist
+                .iter()
+                .any(|junk| junk.to_lowercase() == name.to_lowercase())
+    };
+    let mut foreign = Vec::new();
+    for entry in WalkDir::new(dir) {
+        let entry =
+            entry.map_err(|e| std::io::Error::other(format!("walk {}: {e}", dir.display())))?;
+        // Files and symlinks carry data; directories are implied by
+        // the files they hold (an empty foreign directory carries
+        // nothing worth preserving).
+        if !entry.file_type().is_file() && !entry.file_type().is_symlink() {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(dir)
+            .map_err(|_| std::io::Error::other("walk entry escapes the accounting root"))?;
+        let key = relative.to_string_lossy().replace('\\', "/").to_lowercase();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !owned.contains(&key) && !parked_or_dropping(&name) {
+            foreign.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(foreign)
+}
+
+/// Whether `dir` may be destroyed wholesale: it walks clean, and
+/// every file in it is accounted for by the manifest shun left there
+/// (plus the manifest, marker, uninstaller, parked litter and
+/// allowlisted droppings). An unreadable or unaccounted tree is
+/// never safe to destroy.
+fn tree_is_purely_shun_owned(dir: &Path, portable_marker: &str, allowlist: &[String]) -> bool {
+    matches!(
+        foreign_files_beyond_manifest(dir, portable_marker, allowlist),
+        Ok(foreign) if foreign.is_empty()
+    )
+}
+
+/// Frees the `.shun-old` slot for the coming swap without destroying
+/// anything shun cannot fully account for: a purely shun-owned stale
+/// backup is deleted (a delete failure is only a warning — the swap
+/// below fails loudly on its own if the slot stays taken); anything
+/// else is renamed aside under a timestamped sibling so the data
+/// survives, and the warning says where it went.
+fn free_backup_slot(
+    backup: &Path,
+    portable_marker: &str,
+    allowlist: &[String],
+    on_event: &mut dyn FnMut(FlowEvent),
+) {
+    if tree_is_purely_shun_owned(backup, portable_marker, allowlist) {
+        if let Err(e) = std::fs::remove_dir_all(backup) {
+            warn(
+                on_event,
+                "backup-clean",
+                &format!(
+                    "could not remove the stale {} ({e}) — continuing",
+                    backup.display()
+                ),
+            );
+        }
+        return;
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let name = backup
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let aside = backup.with_file_name(format!("{name}-{ts}"));
+    match std::fs::rename(backup, &aside) {
+        Ok(()) => warn(
+            on_event,
+            "backup-kept",
+            &format!(
+                "the stale {} holds files shun never delivered — preserved as {}",
+                backup.display(),
+                aside.display()
+            ),
+        ),
+        Err(e) => warn(
+            on_event,
+            "backup-kept",
+            &format!(
+                "the stale {} holds files shun never delivered and could not be moved aside ({e}) — the swap below may fail on it",
+                backup.display()
+            ),
+        ),
+    }
 }
 
 /// Removes an install delivered by [`InstallFlow`]: registration trace,
@@ -2054,6 +2279,297 @@ mod tests {
         assert!(!dir.exists());
     }
 
+    /// A registration backend that touches nothing — the guard tests
+    /// never reach registration, and the portable-lane tests must
+    /// not write real ARP/shortcut surfaces.
+    struct NoopRegistration;
+    impl Registration for NoopRegistration {
+        fn register(&self, _ctx: &InstallContext) -> Result<(), ShunError> {
+            Ok(())
+        }
+        fn unregister(&self, _ctx: &InstallContext) -> Result<(), ShunError> {
+            Ok(())
+        }
+    }
+
+    /// A tiny two-entry payload for the flow-level guards — the
+    /// integration tests share a bigger fixture; the unit lane only
+    /// needs extraction and the on-disk manifest to work.
+    fn tiny_payload() -> crate::payload::ArchivePayload {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("bin")).unwrap();
+        std::fs::write(dir.path().join("README.txt"), b"fixture").unwrap();
+        std::fs::write(dir.path().join("bin").join("app.exe"), b"MZ").unwrap();
+        let archive = crate::payload::pack_directory(dir.path()).unwrap();
+        crate::payload::ArchivePayload::from_bytes(&archive).unwrap()
+    }
+
+    /// The accounting behind the swap guard: only what a manifest
+    /// lists (by first component), the manifest itself, the marker,
+    /// the copied uninstaller and the allowlisted droppings are
+    /// shun's; everything else is foreign.
+    #[test]
+    fn foreign_accounting_forgives_only_what_shun_delivered() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("bin")).unwrap();
+        std::fs::write(dir.path().join("bin").join("app.exe"), b"MZ").unwrap();
+        std::fs::write(dir.path().join(UNINSTALLER_NAME), b"MZ").unwrap();
+        std::fs::write(dir.path().join(".portable"), b"").unwrap();
+        std::fs::write(dir.path().join("Thumbs.db"), b"junk").unwrap();
+        std::fs::write(
+            dir.path().join(MANIFEST_PATH),
+            serde_json::to_vec(&InstallManifest {
+                language: None,
+                entries: vec![PayloadEntry {
+                    path: "bin/app.exe".into(),
+                    size: 2,
+                    sha256: "a".into(),
+                }],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        // The merge lane's parked sibling — shun's own litter,
+        // forgiven like the manifest's own files.
+        std::fs::write(
+            dir.path().join("app.exe.shun-old-1234567890"),
+            b"parked by a past merge",
+        )
+        .unwrap();
+        // The foreign neighbors: a top-level stray, a whole foreign
+        // tree one level down, AND a foreign file nested INSIDE a
+        // manifest-delivered directory — the accounting is recursive,
+        // so all three surface.
+        let game = dir.path().join("World_of_Warships_CN360");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join("WorldOfWarships.exe"), b"MZ").unwrap();
+        std::fs::write(dir.path().join("stray.dat"), b"x").unwrap();
+        std::fs::write(dir.path().join("bin").join("foreign.dll"), b"x").unwrap();
+
+        let mut foreign =
+            foreign_files_beyond_manifest(dir.path(), ".portable", &["thumbs.db".to_string()])
+                .unwrap();
+        foreign.sort();
+        assert_eq!(
+            foreign,
+            vec![
+                "World_of_Warships_CN360/WorldOfWarships.exe".to_string(),
+                "bin/foreign.dll".to_string(),
+                "stray.dat".to_string()
+            ]
+        );
+        assert!(!tree_is_purely_shun_owned(
+            dir.path(),
+            ".portable",
+            &["thumbs.db".to_string()]
+        ));
+        // Without the foreign files the tree is purely shun's own —
+        // and the allowlist (case-insensitive) is what forgives the
+        // droppings at any depth: an empty one leaves Thumbs.db foreign.
+        std::fs::remove_file(dir.path().join("stray.dat")).unwrap();
+        std::fs::remove_dir_all(&game).unwrap();
+        std::fs::remove_file(dir.path().join("bin").join("foreign.dll")).unwrap();
+        assert!(tree_is_purely_shun_owned(
+            dir.path(),
+            ".portable",
+            &["thumbs.db".to_string()]
+        ));
+        assert!(!tree_is_purely_shun_owned(dir.path(), ".portable", &[]));
+    }
+
+    /// The 2026-10 WoWSP incident shape: a local install sharing its
+    /// directory with foreign content (the game client one level
+    /// down) must never reach the swap — the flow refuses, and both
+    /// the foreign tree and the existing install stay exactly where
+    /// they were.
+    #[test]
+    fn the_swap_refuses_foreign_content_and_spares_the_tree() {
+        let dest = tempfile::tempdir().unwrap();
+        let install_dir = dest.path().join("Shared");
+        std::fs::create_dir_all(install_dir.join("bin")).unwrap();
+        std::fs::write(install_dir.join("bin").join("app.exe"), b"MZ").unwrap();
+        std::fs::write(install_dir.join(UNINSTALLER_NAME), b"MZ").unwrap();
+        std::fs::write(
+            install_dir.join(MANIFEST_PATH),
+            serde_json::to_vec(&InstallManifest {
+                language: None,
+                entries: vec![PayloadEntry {
+                    path: "bin/app.exe".into(),
+                    size: 2,
+                    sha256: "a".into(),
+                }],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let game = install_dir.join("World_of_Warships_CN360");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join("WorldOfWarships.exe"), b"MZ").unwrap();
+
+        let payload = tiny_payload();
+        let context = InstallContext::new(
+            "ShunDemo-Test-Foreign".into(),
+            "0.0.1".into(),
+            install_dir.clone(),
+            false,
+        );
+        let flow = InstallFlow {
+            payload: &payload,
+            registration: &NoopRegistration,
+            ctx: context,
+        };
+        let err = flow.run(&mut |_| {}).unwrap_err();
+        assert!(
+            err.to_string().contains("refusing to swap"),
+            "the refusal names its reason: {err}"
+        );
+        assert!(
+            game.join("WorldOfWarships.exe").is_file(),
+            "the foreign tree survives the refusal untouched"
+        );
+        assert!(
+            install_dir.join("bin").join("app.exe").is_file(),
+            "the existing install survives the refusal too"
+        );
+        assert!(
+            !install_dir.with_extension("shun-old").exists(),
+            "nothing was carried into the backup slot"
+        );
+    }
+
+    /// A portable-mode swap over a tree with user data beside the
+    /// executable (foreign by design in that mode): the swap may
+    /// proceed, but the swapped-out backup is preserved — never
+    /// wholesale-deleted — and the warning names it.
+    #[test]
+    fn a_foreign_backup_is_preserved_not_deleted() {
+        let dest = tempfile::tempdir().unwrap();
+        let install_dir = dest.path().join("PortableApp");
+        let payload = tiny_payload();
+        let context = InstallContext::new(
+            "ShunDemo-Test-PortableKeep".into(),
+            "0.0.1".into(),
+            install_dir.clone(),
+            true,
+        );
+        let flow = InstallFlow {
+            payload: &payload,
+            registration: &NoopRegistration,
+            ctx: context.clone(),
+        };
+        flow.run(&mut |_| {}).unwrap();
+        // User data lands beside the executable after the fact.
+        std::fs::write(install_dir.join("settings.db"), b"user data").unwrap();
+
+        let flow = InstallFlow {
+            payload: &payload,
+            registration: &NoopRegistration,
+            ctx: context,
+        };
+        let mut warnings = Vec::new();
+        flow.run(&mut |event| {
+            if let FlowEvent::Log {
+                record: FlowLog::Warning { detail, .. },
+            } = event
+            {
+                warnings.push(detail.clone());
+            }
+        })
+        .unwrap();
+
+        let backup = install_dir.with_extension("shun-old");
+        assert!(
+            backup.join("settings.db").is_file(),
+            "the foreign data rode into the backup"
+        );
+        assert!(
+            backup.is_dir(),
+            "the foreign backup is preserved, not deleted"
+        );
+        assert!(
+            install_dir.join("README.txt").is_file(),
+            "the new payload landed"
+        );
+        assert!(
+            warnings.iter().any(|detail| detail.contains("preserved")),
+            "a warning names the preserved tree: {warnings:?}"
+        );
+    }
+
+    /// A stale `.shun-old` from an earlier interrupted update holds
+    /// foreign content: the slot is freed by renaming the tree aside
+    /// under a timestamped sibling, the content survives, and the
+    /// fresh purely-shun-owned backup is still deleted afterwards.
+    #[test]
+    fn a_stale_foreign_backup_frees_its_slot_by_rename() {
+        let dest = tempfile::tempdir().unwrap();
+        let install_dir = dest.path().join("PortableApp");
+        let payload = tiny_payload();
+        let context = InstallContext::new(
+            "ShunDemo-Test-StaleAside".into(),
+            "0.0.1".into(),
+            install_dir.clone(),
+            true,
+        );
+        let flow = InstallFlow {
+            payload: &payload,
+            registration: &NoopRegistration,
+            ctx: context.clone(),
+        };
+        flow.run(&mut |_| {}).unwrap();
+
+        // The stale backup: shun's own shape plus a foreign file.
+        let backup = install_dir.with_extension("shun-old");
+        std::fs::create_dir_all(backup.join("bin")).unwrap();
+        std::fs::write(backup.join("bin").join("app.exe"), b"MZ").unwrap();
+        std::fs::write(backup.join("precious.bin"), b"keep me").unwrap();
+        std::fs::write(
+            backup.join(MANIFEST_PATH),
+            serde_json::to_vec(&InstallManifest {
+                language: None,
+                entries: vec![PayloadEntry {
+                    path: "bin/app.exe".into(),
+                    size: 2,
+                    sha256: "a".into(),
+                }],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let flow = InstallFlow {
+            payload: &payload,
+            registration: &NoopRegistration,
+            ctx: context,
+        };
+        flow.run(&mut |_| {}).unwrap();
+
+        let mut asides: Vec<std::path::PathBuf> = std::fs::read_dir(dest.path())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().starts_with("PortableApp.shun-old-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        asides.sort();
+        assert_eq!(
+            asides.len(),
+            1,
+            "the stale tree was renamed aside exactly once: {asides:?}"
+        );
+        assert!(
+            asides[0].join("precious.bin").is_file(),
+            "the foreign content survives the slot-freeing"
+        );
+        assert!(
+            !install_dir.with_extension("shun-old").exists(),
+            "the fresh backup (purely shun-owned) was deleted as before"
+        );
+    }
+
     /// Stages a two-file tree (one at the root, one nested) with the
     /// given `marker` content, so the swap tests can tell old and new
     /// trees apart.
@@ -2100,7 +2616,11 @@ mod tests {
             "new"
         );
         assert!(!staging_dir.exists(), "the staged tree moved in");
-        assert!(!backup.exists(), "the backup was swept");
+        assert_eq!(
+            std::fs::read_to_string(backup.join("README.txt")).unwrap(),
+            "old",
+            "the old tree waits in the caller-owned backup slot — the guarded retire above the flow decides its fate"
+        );
     }
 
     /// The two held-directory lanes, run back to back: a survivor that
@@ -2177,7 +2697,11 @@ mod tests {
             std::fs::read_to_string(tmp.path().join("app2").join("README.txt")).unwrap(),
             "new"
         );
-        assert!(!tmp.path().join("app2.shun-old").exists());
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("app2.shun-old").join("README.txt")).unwrap(),
+            "old",
+            "the old tree waits in the caller-owned backup slot for the guarded retire"
+        );
 
         drop(_survivor);
     }

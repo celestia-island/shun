@@ -157,6 +157,7 @@ fn bundle_for(install_dir: &Path, main_exe: &Path) -> Option<PathBuf> {
         deep_links: Vec::new(),
         aumid: None,
         icon: None,
+        non_empty_allowlist: Vec::new(),
         estimated_size_kb: 0,
         language: None,
     })

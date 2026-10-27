@@ -685,8 +685,14 @@ fn relocate_rule_message(
 /// `non-empty-allowlist` junk names (compared case-insensitively). A
 /// missing directory counts as empty — the flow creates it.
 fn dir_has_content_beyond(path: &Path, install: Option<&crate::config::InstallConfig>) -> bool {
-    let Ok(read_dir) = std::fs::read_dir(path) else {
-        return false;
+    let read_dir = match std::fs::read_dir(path) {
+        Ok(read_dir) => read_dir,
+        // A missing directory counts as empty — the flow creates it.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+        // An unreadable directory is unknown, not empty: the refusal
+        // must fire, or an access-denied target slips the non-empty
+        // guard and receives a payload beside content nobody can see.
+        Err(_) => return true,
     };
     let allowlist = install
         .map(|i| i.non_empty_allowlist.as_slice())
@@ -2107,6 +2113,22 @@ end
         assert_eq!(
             relocation_required(&config, &legacy.path().to_string_lossy(), Some("zh-Hans")),
             Some("这是游戏目录".to_string())
+        );
+
+        // The shared-games-root shape the 2026-10 WoWSP incident
+        // lived on: the install sits in the PARENT of a game folder
+        // — no stub at the target's own root, one level down
+        // instead. The rule's one-level-down probing must flag it
+        // for relocation before the silent swap carries the whole
+        // tree aside and the backup sweep destroys the game with it.
+        let shared_root = tempfile::tempdir().unwrap();
+        std::fs::write(shared_root.path().join("Wowsp.exe"), b"MZ").unwrap();
+        let game_child = shared_root.path().join("World_of_Warships_CN360");
+        std::fs::create_dir_all(&game_child).unwrap();
+        std::fs::write(game_child.join("WorldOfWarships.exe"), b"MZ").unwrap();
+        assert_eq!(
+            relocation_required(&config, &shared_root.path().to_string_lossy(), None),
+            Some("the game folder".to_string())
         );
 
         // A location with neither our install nor a rule stays plain —

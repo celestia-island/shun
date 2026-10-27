@@ -955,11 +955,30 @@ impl DirRuleConfig {
             .or_else(|| self.message.clone())
     }
 
-    /// Whether any trigger file sits directly inside `dir`.
+    /// Whether any trigger file sits directly inside `dir`, or
+    /// directly inside any of `dir`'s immediate subdirectories. The
+    /// atomic upgrade swap moves the WHOLE target directory aside,
+    /// so a trigger one level down (an install parked in a shared
+    /// games root whose game folder landed inside it) endangers
+    /// exactly what the rule exists to protect — probing only the
+    /// target's own root would hand that shape to the swap, and the
+    /// swapped-out backup sweep would destroy the foreign tree with
+    /// it.
     pub fn matches(&self, dir: &std::path::Path) -> bool {
-        self.files.iter().any(|name| {
-            let name = name.trim();
-            !name.is_empty() && dir.join(name).is_file()
+        let stub_present = |probe: &std::path::Path| {
+            self.files.iter().any(|name| {
+                let name = name.trim();
+                !name.is_empty() && probe.join(name).is_file()
+            })
+        };
+        if stub_present(dir) {
+            return true;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            entry.file_type().is_ok_and(|kind| kind.is_dir()) && stub_present(&entry.path())
         })
     }
 }
@@ -1057,8 +1076,10 @@ fn start_menu_shortcut_default() -> DesktopShortcutPolicy {
 
 /// The default [`InstallConfig::non_empty_allowlist`]: the OS folder
 /// junk Windows Explorer and macOS Finder drop into folders a user
-/// opens on the way to picking an install location.
-fn non_empty_allowlist_default() -> Vec<String> {
+/// opens on the way to picking an install location. Shared with the
+/// install flow's hand-built [`crate::targets::install::InstallContext`]
+/// defaults, so every guard ignores the same droppings.
+pub(crate) fn non_empty_allowlist_default() -> Vec<String> {
     ["desktop.ini", "Thumbs.db", ".DS_Store"]
         .into_iter()
         .map(str::to_string)
@@ -3470,6 +3491,54 @@ root-dir-folder = "Wowsp CE"
             matches!(&config.targets[0], TargetConfig::Install(i) if i.root_dir_folder.is_none()),
             "the knob stays optional"
         );
+    }
+
+    /// The trigger stubs are probed at the target's own root AND one
+    /// level down: the atomic swap moves the whole directory aside,
+    /// so a stub in a direct child (the shared-games-root install
+    /// shape) endangers exactly what the rule exists to protect.
+    /// Two levels down is beyond the probe — a fresh pick of that
+    /// shape still answers to the non-empty refusal.
+    #[test]
+    fn dir_rules_match_stubs_one_level_below_the_target_too() {
+        let rule = DirRuleConfig {
+            files: vec!["WorldOfWarships.exe".into()],
+            action: DirRuleAction::Relocate,
+            message: Some("the game folder".into()),
+            message_locales: Default::default(),
+        };
+        let root = tempfile::tempdir().unwrap();
+
+        // The target's own root — the classic shape.
+        let game_root = root.path().join("a");
+        std::fs::create_dir_all(&game_root).unwrap();
+        std::fs::write(game_root.join("WorldOfWarships.exe"), b"MZ").unwrap();
+        assert!(rule.matches(&game_root));
+
+        // The shared parent: the stub sits in a direct child.
+        let shared = root.path().join("b");
+        let child = shared.join("World_of_Warships_CN360");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(child.join("WorldOfWarships.exe"), b"MZ").unwrap();
+        assert!(rule.matches(&shared));
+
+        // Two levels down is beyond the probe.
+        let deep = root.path().join("c");
+        let leaf = deep.join("Games").join("World_of_Warships_CN360");
+        std::fs::create_dir_all(&leaf).unwrap();
+        std::fs::write(leaf.join("WorldOfWarships.exe"), b"MZ").unwrap();
+        assert!(!rule.matches(&deep));
+
+        // A plain directory with a same-named FILE (not a directory)
+        // child never trips the one-level-down probe.
+        let file_named_like_a_dir = root.path().join("d");
+        std::fs::create_dir_all(&file_named_like_a_dir).unwrap();
+        std::fs::write(
+            file_named_like_a_dir.join("World_of_Warships_CN360"),
+            b"not a directory",
+        )
+        .unwrap();
+        assert!(!rule.matches(&file_named_like_a_dir));
     }
 
     #[test]
