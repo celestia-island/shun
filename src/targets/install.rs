@@ -14,11 +14,7 @@ use walkdir::WalkDir;
 
 use crate::config::InstallConfig;
 use crate::error::ShunError;
-use crate::flow::{Flow, FlowEvent, FlowPhase};
-// Only the Windows registration streams warning records; the import
-// would be unused (and fatal under -D warnings) on other targets.
-#[cfg(windows)]
-use crate::flow::FlowLog;
+use crate::flow::{Flow, FlowEvent, FlowLog, FlowPhase};
 use crate::payload::{MANIFEST_PATH, PayloadEntry, PayloadSource};
 
 /// Marker file enabling portable (便捷) mode for a delivered copy.
@@ -1462,8 +1458,9 @@ fn start_menu_dir(scope: InstallScope) -> Result<PathBuf, ShunError> {
 }
 
 /// Streams one non-fatal degradation as a warning record (stderr too —
-/// headless consoles see it inline).
-#[cfg(windows)]
+/// headless consoles see it inline). Cross-platform since the swap's
+/// foreign-content guards (backup retire, stale-slot freeing) warn on
+/// every host.
 fn warn(on_event: &mut dyn FnMut(FlowEvent), code: &str, detail: &str) {
     eprintln!("shun: {code}: {detail}");
     on_event(FlowEvent::Log {
