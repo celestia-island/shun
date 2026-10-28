@@ -7,6 +7,17 @@ use shun::flow::Flow;
 #[cfg(windows)]
 use shun::targets::install::{InstallFlow, WindowsRegistration, arp_key_path};
 
+/// The executable-path portion of a registry value: the quoted first
+/// token for command lines (which legitimately carry `/uninstall`), the
+/// whole value for plain ARP paths.
+#[cfg(windows)]
+fn command_executable(value: &str) -> &str {
+    match value.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(""),
+        None => value,
+    }
+}
+
 /// Local-mode install performs real HKCU ARP registration; the uninstall
 /// pass removes every trace. Windows-only (the backend is windows).
 #[cfg(windows)]
@@ -38,6 +49,23 @@ fn local_install_registers_arp_and_uninstall_cleans() {
     assert!(uninstall_string.contains("uninstall.exe"));
     assert!(uninstall_string.contains("/uninstall"));
     assert!(install_dir.join("uninstall.exe").exists());
+
+    // A1 regression: every path the shell resolves is written in native
+    // separator form — ShellExecute answers SE_ERR_NOASSOC for a command
+    // whose executable path keeps forward slashes.
+    for name in [
+        "InstallLocation",
+        "DisplayIcon",
+        "UninstallString",
+        "ModifyPath",
+        "RepairString",
+    ] {
+        let value: String = arp.get_value(name).unwrap();
+        assert!(
+            !command_executable(&value).contains('/'),
+            "ARP {name} must use native separators: {value}"
+        );
+    }
 
     // Start-menu shortcut exists.
     let link = std::env::var("APPDATA")

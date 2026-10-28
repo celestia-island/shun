@@ -51,6 +51,35 @@ pub const UNINSTALLER_NAME: &str = "uninstall.exe";
 #[cfg(not(windows))]
 pub const UNINSTALLER_NAME: &str = "uninstall";
 
+/// A path in the native `\`-separated form every Windows registry string
+/// must carry (2026-10-28 A1).
+///
+/// An install directory can legitimately arrive with forward slashes —
+/// `--dir C:/apps/demo` from a script, or an ARP `InstallLocation` a
+/// previous install recorded verbatim — and a `Path` keeps exactly the
+/// separators it was built from. `ShellExecute` resolves a URL-protocol
+/// command whose executable path uses `/` to `SE_ERR_NOASSOC` (the deep
+/// link then silently fails although the target executable exists), and
+/// the ARP / Explorer-verb command strings feed the same resolver, so
+/// every path this backend writes into the registry goes through here.
+#[cfg(windows)]
+fn native_path(path: &Path) -> String {
+    path.to_string_lossy().replace('/', "\\")
+}
+
+/// `"<exe>" [arguments]` in native form — the command-line shape the
+/// ARP / Explorer-verb / deep-link values store.
+#[cfg(windows)]
+fn native_command(target: &Path, arguments: &str) -> String {
+    let exe = native_path(target);
+    let arguments = arguments.trim();
+    if arguments.is_empty() {
+        format!("\"{exe}\"")
+    } else {
+        format!("\"{exe}\" {arguments}")
+    }
+}
+
 /// A context-menu verb the registration backends expose on the app's
 /// launchers (Explorer verbs on Windows, Desktop Actions on Linux).
 #[derive(Debug, Clone, PartialEq)]
@@ -1272,7 +1301,10 @@ pub fn registered_install_dir(product: &str) -> Option<PathBuf> {
                 .open_subkey_with_flags(&arp, KEY_READ)
                 .ok()?;
             let location: OsString = key.get_value("InstallLocation").ok()?;
-            let path = PathBuf::from(location);
+            // Normalize on the way IN as well: a previous install may have
+            // recorded forward slashes (A1), so every surface a dir-less
+            // upgrade re-registers derives its paths from native form.
+            let path = PathBuf::from(native_path(Path::new(&location)));
             (path.is_absolute() && path.is_dir()).then_some(path)
         })
 }
@@ -1321,7 +1353,7 @@ impl Registration for WindowsRegistration {
         if let Some(publisher) = &ctx.publisher {
             key.set_value("Publisher", publisher)?;
         }
-        key.set_value("InstallLocation", &ctx.install_dir.as_os_str())?;
+        key.set_value("InstallLocation", &native_path(&ctx.install_dir))?;
         // DisplayIcon on the application executable (not the icon-less
         // uninstaller) so the Apps list shows the product icon.
         let display_icon = ctx
@@ -1329,23 +1361,19 @@ impl Registration for WindowsRegistration {
             .as_ref()
             .map(|exe| ctx.install_dir.join(exe))
             .unwrap_or_else(|| uninstaller.clone());
-        key.set_value("DisplayIcon", &display_icon.as_os_str())?;
-        key.set_value(
-            "UninstallString",
-            &format!("\"{}\" /uninstall", uninstaller.display()),
-        )?;
+        key.set_value("DisplayIcon", &native_path(&display_icon))?;
+        // Every command string the shell resolves (ARP launch, Apps list
+        // uninstall/modify/repair) carries the native separator form — a
+        // forward-slash executable path makes ShellExecute answer
+        // SE_ERR_NOASSOC (A1).
+        let uninstaller_command = format!("\"{}\" /uninstall", native_path(&uninstaller));
+        key.set_value("UninstallString", &uninstaller_command)?;
         // Maintenance entries (修改/修复): both land on the uninstaller
         // UI, which hosts the repair (re-extract) action beside the
         // uninstall one — a bare launch of the wizard would read as a
         // fresh install instead.
-        key.set_value(
-            "ModifyPath",
-            &format!("\"{}\" /uninstall", uninstaller.display()),
-        )?;
-        key.set_value(
-            "RepairString",
-            &format!("\"{}\" /uninstall", uninstaller.display()),
-        )?;
+        key.set_value("ModifyPath", &uninstaller_command)?;
+        key.set_value("RepairString", &uninstaller_command)?;
         key.set_value("EstimatedSize", &ctx.estimated_size_kb)?;
 
         // Shortcuts: the start-menu one when the context resolved
@@ -1354,7 +1382,9 @@ impl Registration for WindowsRegistration {
         // grouping / pinning identity). Machine scope writes the
         // all-users Start Menu and the public desktop.
         if let Some(main_exe) = &ctx.main_exe {
-            let target = ctx.install_dir.join(main_exe);
+            // The shell resolves .lnk targets through the same path parser:
+            // write the native separator form (A1).
+            let target = PathBuf::from(native_path(&ctx.install_dir.join(main_exe)));
             let stem = shortcut_stem(&ctx.product);
 
             let mut start_menu_link = None;
@@ -1399,6 +1429,12 @@ impl Registration for WindowsRegistration {
             notify_shell_change(&changed);
         }
 
+        // The deep-link / verb registration just wrote fresh
+        // HKCU\Software\Classes protocol classes; flush the shell's
+        // association cache after every surface, not only when the
+        // shortcut notification happened to run.
+        notify_association_change();
+
         Ok(())
     }
 
@@ -1437,6 +1473,9 @@ impl Registration for WindowsRegistration {
             }
             notify_shell_change(&changed);
         }
+        // The protocol classes are gone: let the shell drop the cached
+        // association instead of offering a dead handler until reboot.
+        notify_association_change();
 
         // The uninstaller binary deletes itself (it is usually the process
         // being run) — see `schedule_self_delete`.
@@ -1484,16 +1523,13 @@ fn warn(on_event: &mut dyn FnMut(FlowEvent), code: &str, detail: &str) {
 }
 
 /// Notifies the shell that shortcut surfaces changed
-/// (`SHChangeNotify`): per-item updates for the `.lnk` files plus one
-/// association-change flush, so the Start menu, desktop, and icon
-/// caches refresh immediately instead of on Explorer's own schedule —
-/// the standard installer finisher.
+/// (`SHChangeNotify` per-item updates for the `.lnk` files), so the Start
+/// menu, desktop, and icon caches refresh immediately instead of on
+/// Explorer's own schedule — the standard installer finisher.
 #[cfg(windows)]
 fn notify_shell_change(paths: &[PathBuf]) {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::UI::Shell::{
-        SHCNE_ASSOCCHANGED, SHCNE_UPDATEITEM, SHCNF_PATH, SHChangeNotify,
-    };
+    use windows_sys::Win32::UI::Shell::{SHCNE_UPDATEITEM, SHCNF_PATH, SHChangeNotify};
 
     unsafe {
         for path in paths {
@@ -1505,6 +1541,19 @@ fn notify_shell_change(paths: &[PathBuf]) {
                 std::ptr::null(),
             );
         }
+    }
+}
+
+/// Flushes the shell's association cache (`SHCNE_ASSOCCHANGED`) — the
+/// notification that makes `ShellExecute` re-read the protocol classes a
+/// fresh registration wrote instead of serving the association it picked
+/// before the install. Called after the registration surfaces and after
+/// their teardown (A1 follow-up, 2026-10-28).
+#[cfg(windows)]
+fn notify_association_change() {
+    use windows_sys::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHChangeNotify};
+
+    unsafe {
         SHChangeNotify(
             SHCNE_ASSOCCHANGED as i32,
             0,
@@ -1589,20 +1638,14 @@ fn applications_key(main_exe: &Path) -> String {
 #[cfg(windows)]
 fn verb_command(ctx: &InstallContext, main_exe: &Path, target: &VerbTarget) -> String {
     match target {
-        VerbTarget::DataFolder => format!("explorer.exe \"{}\"", ctx.install_dir.display()),
+        VerbTarget::DataFolder => {
+            format!("explorer.exe \"{}\"", native_path(&ctx.install_dir))
+        }
         VerbTarget::Uninstall => format!(
             "\"{}\" /uninstall",
-            ctx.install_dir.join(UNINSTALLER_NAME).display()
+            native_path(&ctx.install_dir.join(UNINSTALLER_NAME))
         ),
-        VerbTarget::App { arguments } => {
-            let exe = ctx.install_dir.join(main_exe).display().to_string();
-            let arguments = arguments.trim();
-            if arguments.is_empty() {
-                format!("\"{exe}\"")
-            } else {
-                format!("\"{exe}\" {arguments}")
-            }
-        }
+        VerbTarget::App { arguments } => native_command(&ctx.install_dir.join(main_exe), arguments),
     }
 }
 
@@ -1753,7 +1796,7 @@ fn register_deep_links(ctx: &InstallContext, main_exe: &Path) -> Result<(), Shun
         key.set_value("URL Protocol", &"")?;
         let (open, _) =
             root.create_subkey(format!(r"Software\Classes\{scheme}\shell\open\command"))?;
-        open.set_value("", &format!("\"{}\" \"%1\"", exe.display()))?;
+        open.set_value("", &native_command(&exe, "\"%1\""))?;
     }
     Ok(())
 }
@@ -2713,5 +2756,45 @@ mod tests {
         );
 
         drop(_survivor);
+    }
+
+    /// Registry strings must be native `\`-separated: ShellExecute answers
+    /// `SE_ERR_NOASSOC` for a URL-protocol command whose executable path
+    /// keeps forward slashes (2026-10-28 A1) — the deep link then fails
+    /// although the target executable exists.
+    #[cfg(windows)]
+    #[test]
+    fn native_path_normalizes_every_separator_form() {
+        assert_eq!(native_path(Path::new(r"C:\Apps\Demo")), r"C:\Apps\Demo");
+        assert_eq!(native_path(Path::new("C:/Apps/Demo")), r"C:\Apps\Demo");
+        assert_eq!(
+            native_path(Path::new(r"C:/Apps\Demo/data")),
+            r"C:\Apps\Demo\data"
+        );
+        assert_eq!(
+            native_path(Path::new(r"\\server\share\app")),
+            r"\\server\share\app"
+        );
+        assert_eq!(
+            native_path(Path::new("C:/Apps/Demo/数据")),
+            r"C:\Apps\Demo\数据"
+        );
+    }
+
+    /// The command-line shape ARP / explorer verbs / deep links store:
+    /// quoted native executable, optional arguments, no forward slashes.
+    #[cfg(windows)]
+    #[test]
+    fn native_command_quotes_the_native_exe_path() {
+        let cmd = native_command(Path::new("C:/Apps/Demo/bin/shun-demo.exe"), "\"%1\"");
+        assert_eq!(cmd, r#""C:\Apps\Demo\bin\shun-demo.exe" "%1""#);
+        assert!(
+            !cmd.contains('/'),
+            "shell commands carry no forward separator: {cmd}"
+        );
+        assert_eq!(
+            native_command(Path::new("C:/Apps/Demo/bin/shun-demo.exe"), "  "),
+            r#""C:\Apps\Demo\bin\shun-demo.exe""#
+        );
     }
 }
