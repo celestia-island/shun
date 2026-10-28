@@ -24,7 +24,7 @@ mod registration {
     use shun::payload::{PayloadEntry, PayloadSource};
     use shun::targets::install::{
         InstallContext, InstallFlow, VerbSpec, VerbTarget, WindowsRegistration, arp_key_path,
-        uninstall,
+        registered_install_dir, uninstall,
     };
 
     /// Runs a full local install for `product` and uninstalls it when the
@@ -117,6 +117,22 @@ mod registration {
 
     fn stem(product: &str) -> String {
         shun::targets::install::shortcut_stem(product)
+    }
+
+    /// A path in the native `\`-separated form the registration surfaces
+    /// must store (A1: ShellExecute rejects forward-slash command paths).
+    fn native_string(path: &Path) -> String {
+        path.to_string_lossy().replace('/', "\\")
+    }
+
+    /// The executable-path portion of a registry value: the quoted first
+    /// token for command lines (which legitimately carry `/uninstall` /
+    /// `--flag` arguments), the whole value for plain ARP paths.
+    fn command_executable(value: &str) -> &str {
+        match value.strip_prefix('"') {
+            Some(rest) => rest.split('"').next().unwrap_or(""),
+            None => value,
+        }
     }
 
     /// Fields of a `.lnk` as the Windows shell resolves them, read back
@@ -347,7 +363,7 @@ mod registration {
         // carries no icon) — the ARP entry renders the product icon.
         assert_eq!(
             string("DisplayIcon"),
-            install_dir.join("bin/shun-demo.exe").display().to_string()
+            native_string(&install_dir.join("bin/shun-demo.exe"))
         );
         let uninstall_string = string("UninstallString");
         assert!(
@@ -814,13 +830,14 @@ mod registration {
             format!("explorer.exe \"{}\"", install_dir.display())
         );
         let (_display, command) = verb("safe-mode");
-        // Registry verb commands keep the raw payload path spelling (no
-        // shell normalization happens on the way in).
+        // Verb commands are written in native separator form: the shell
+        // resolves them, so a forward-slash payload path would break the
+        // launch the same way the deep link did (A1).
         assert_eq!(
             command,
             format!(
                 "\"{}\" --safe",
-                install_dir.join("bin/shun-demo.exe").display()
+                native_string(&install_dir.join("bin/shun-demo.exe"))
             )
         );
         let (_display, command) = verb("uninstall-it");
@@ -880,7 +897,7 @@ mod registration {
         let view = read_shortcut_via_shell(&link);
         assert_eq!(
             view.target,
-            install_dir.join("bin/shun-demo.exe").display().to_string()
+            native_string(&install_dir.join("bin/shun-demo.exe"))
         );
 
         uninstall(&guard.ctx, &WindowsRegistration).unwrap();
@@ -992,9 +1009,91 @@ mod registration {
             command,
             format!(
                 "\"{}\" \"%1\"",
-                install_dir.join("bin/shun-demo.exe").display()
+                native_string(&install_dir.join("bin/shun-demo.exe"))
             )
         );
+        assert!(
+            !command.contains('/'),
+            "the command carries native separators (A1): {command}"
+        );
+
+        uninstall(&guard.ctx, &WindowsRegistration).unwrap();
+        assert!(
+            hkcu.open_subkey_with_flags(format!(r"Software\Classes\{scheme}"), KEY_READ)
+                .is_err(),
+            "protocol class removed by uninstall"
+        );
+        drop(guard);
+    }
+
+    /// A forward-slash install directory (a scripted `--dir C:/...`, or an
+    /// ARP `InstallLocation` a previous install recorded verbatim) must not
+    /// leak `/` separators into any registry command — the 2026-10-28 A1
+    /// regression: the deep link registered that way resolved to
+    /// `SE_ERR_NOASSOC` although the target executable existed.
+    #[test]
+    fn registration_normalizes_a_forward_slash_install_dir() {
+        use winreg::RegKey;
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
+
+        let product = "ShunDemo-Test-FwdSlash";
+        let scheme = "shundemo-test-fwd";
+        let dir = tempfile::tempdir().unwrap();
+        let native_dir = dir.path().join("fwd-install");
+        let forward_dir = PathBuf::from(native_dir.to_string_lossy().replace('\\', "/"));
+        assert!(
+            forward_dir.to_string_lossy().contains('/'),
+            "fixture builds a forward-slash path"
+        );
+
+        let (guard, _installed_at) = Installed::in_dir(product, forward_dir, &|ctx| {
+            ctx.deep_links = vec![scheme.to_string()];
+        });
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let arp = hkcu
+            .open_subkey_with_flags(arp_key_path(product), KEY_READ)
+            .unwrap();
+        let string = |name: &str| -> String { arp.get_value(name).unwrap() };
+        assert_eq!(
+            string("InstallLocation"),
+            native_dir.to_string_lossy().into_owned()
+        );
+        for name in [
+            "InstallLocation",
+            "DisplayIcon",
+            "UninstallString",
+            "ModifyPath",
+            "RepairString",
+        ] {
+            let value = string(name);
+            assert!(
+                !command_executable(&value).contains('/'),
+                "ARP {name} must be native-separated (A1): {value}"
+            );
+        }
+
+        let open = hkcu
+            .open_subkey_with_flags(
+                format!(r"Software\Classes\{scheme}\shell\open\command"),
+                KEY_READ,
+            )
+            .unwrap();
+        let command: String = open.get_value("").unwrap();
+        assert!(
+            !command.contains('/'),
+            "deep-link command must be native-separated (A1): {command}"
+        );
+        assert!(
+            command.contains(&native_string(
+                &native_dir.join("bin").join("shun-demo.exe")
+            )),
+            "deep-link command targets the installed app: {command}"
+        );
+
+        // The dir-less upgrade lane reads the ARP location back: it must be
+        // native too, or the re-registered surfaces would regress again.
+        assert_eq!(registered_install_dir(product).unwrap(), native_dir);
 
         uninstall(&guard.ctx, &WindowsRegistration).unwrap();
         assert!(
