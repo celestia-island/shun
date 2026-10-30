@@ -8,6 +8,6 @@ on:
 
 jobs:
   rules-lint:
-    uses: celestia-island/celestia-devtools/.github/workflows/rules-lint.yml@v2026.10
+    uses: celestia-island/celestia-devtools/.github/workflows/rules-lint.yml@v2026.11
     with:
-      devtools-ref: v2026.10
+      devtools-ref: v2026.11
