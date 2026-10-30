@@ -1,21 +1,4 @@
-# Lint this repository's rules tree.
-#
-# AGENTS.md here is injected into every agent that works inside this repository, so a
-# credential written in it reaches the same audience as the workspace-wide file, and a
-# skill whose frontmatter fails to parse is dropped from the catalog silently while its
-# pointer still claims the rules are loaded. `celestia-rules-lint` reports both.
-#
-# Public repository: AGENTS §8.2 allows GitHub-hosted jobs here, and this check is
-# sub-minute and stdlib-only, so hosting it keeps it off the self-hosted queue.
-
 name: Rules Lint
-
-# One in-flight run per ref: a superseded push cancels its
-# predecessor instead of queueing behind it (farm-pressure
-# relief, AGENTS ci-ops 8.3.3).
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 on:
   pull_request:
@@ -25,6 +8,6 @@ on:
 
 jobs:
   rules-lint:
-    uses: celestia-island/celestia-devtools/.github/workflows/rules-lint.yml@master
+    uses: celestia-island/celestia-devtools/.github/workflows/rules-lint.yml@v2026.10
     with:
-      runs-on: '["ubuntu-latest"]'
+      devtools-ref: v2026.10
