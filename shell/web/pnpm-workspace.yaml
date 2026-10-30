@@ -1,5 +1,11 @@
 allowBuilds:
   '@parcel/watcher': true
   esbuild: true
+# Explicit base is required: pnpm 11's built-in release-age cutoff ignores
+# this exclude list unless minimumReleaseAge itself is set (frontend-pnpm).
+minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
-  - '@celestia-island/hikari@0.40.18 || 0.55.194'
+  # 0.55.241 same-day pickup: the shared lucide number stepper column and
+  # everything since 0.55.194 (family contract sweeps) — shun's PathField
+  # composes HkInput, so the whole input surface rides this bump.
+  - '@celestia-island/hikari@0.40.18 || 0.55.194 || 0.55.241'

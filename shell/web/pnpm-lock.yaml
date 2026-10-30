@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@celestia-island/hikari':
-        specifier: ^0.55.194
-        version: 0.55.194(@types/three@0.186.0)(three@0.185.1)(vue@3.5.42(typescript@7.0.2))
+        specifier: ^0.55.241
+        version: 0.55.241(@types/three@0.186.0)(three@0.185.1)(vue@3.5.42(typescript@7.0.2))
       lucide-vue-next:
         specifier: ^*
         version: 1.0.0(vue@3.5.42(typescript@7.0.2))
@@ -153,8 +153,8 @@ packages:
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
 
-  '@celestia-island/hikari@0.55.194':
-    resolution: {integrity: sha512-y7gbiXJqgE+tlAEBXPF2L9OoWThYvmrAATG3ubaqitJTRO66iN65xhPimVXaUSXclXtP9t3PSwya9+iOCrSAow==}
+  '@celestia-island/hikari@0.55.241':
+    resolution: {integrity: sha512-llwQBsLvdp8JOeUqYotJRtHWVYC6JoHzyzsgz3ZTWNU+IO5Rn7D9OtcsI4N/ZhfizyoxYUiAxHVTebXoPFrReA==}
     peerDependencies:
       '@types/three': ^*
       three: ^0.185
@@ -561,13 +561,13 @@ packages:
   '@xterm/addon-fit@0.11.0':
     resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
 
-  '@xterm/addon-image@0.10.0-beta.310':
-    resolution: {integrity: sha512-8fzgYV7HC9iWlw8ChZgnPmCXeBoYkC3Kyo9C0vyOQWD7Cm/bebKNNWhzNlDt5Qxbv+UBPbgkcO4i3dTYnggkRw==}
+  '@xterm/addon-image@0.10.0-beta.330':
+    resolution: {integrity: sha512-nqp4blbna8By6+i8Ud4gZUw/IbRcqtYES/vqkpRWHjQ47gkSdeTSpCJo8JwXKykZ9M0T+zdjB95FTk9IuNi+eg==}
     peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.315
+      '@xterm/xterm': ^6.1.0-beta.335
 
-  '@xterm/xterm@6.1.0-beta.315':
-    resolution: {integrity: sha512-w7MeKxi6vbxE3IOFRiwgugkM6FZonE9gF9KyJ0OiE5HbYZOm38bz+CTGZg3+wqA6porJnHfjzX1KaihInP+iWg==}
+  '@xterm/xterm@6.1.0-beta.335':
+    resolution: {integrity: sha512-EuT2IsDmTId4VvghIbYlGCxVudHdqjaR+SRpULpSwhH/Dgw0xzbUfnIFgXGdzksiaXhbMh7y7QXt49PZCuGkRg==}
 
   baseline-browser-mapping@2.11.21:
     resolution: {integrity: sha512-uh8vpY/1/YyFkunIDFH/12p7/7VdPKA1hejMVEbdkEaWnUz0Hesvx5EbiU6XxjyHZIOju+ZMbQJkRh+es3/spQ==}
@@ -760,8 +760,8 @@ packages:
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
-  marked@18.1.1:
-    resolution: {integrity: sha512-zEGgrtUG8crk+TrMacJSVABU4DYDDkS8uqgU3ohrn/2fW9C2AEfUrO3m6IhpIpQpl7YcVpiXXC9cSMWDANT3dg==}
+  marked@18.1.2:
+    resolution: {integrity: sha512-DfOnvLAQ6WYeWxWO1u4RyFOeqyHup6dks5PPqnoFiooU7ipRvidO/2j8plhAHIiZg574E9ZlzSjUiPMLAzFkgg==}
     engines: {node: '>= 20'}
     hasBin: true
 
@@ -1063,18 +1063,18 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@celestia-island/hikari@0.55.194(@types/three@0.186.0)(three@0.185.1)(vue@3.5.42(typescript@7.0.2))':
+  '@celestia-island/hikari@0.55.241(@types/three@0.186.0)(three@0.185.1)(vue@3.5.42(typescript@7.0.2))':
     dependencies:
       '@celestia-island/tairitsu-transport': 0.2.0
       '@types/three': 0.186.0
       '@xterm/addon-fit': 0.11.0
-      '@xterm/addon-image': 0.10.0-beta.310(@xterm/xterm@6.1.0-beta.315)
-      '@xterm/xterm': 6.1.0-beta.315
+      '@xterm/addon-image': 0.10.0-beta.330(@xterm/xterm@6.1.0-beta.335)
+      '@xterm/xterm': 6.1.0-beta.335
       dompurify: 3.4.17
       echarts: 6.1.0
       highlight.js: 11.12.0
       lucide-vue-next: 1.0.0(vue@3.5.42(typescript@7.0.2))
-      marked: 18.1.1
+      marked: 18.1.2
       three: 0.185.1
       vue: 3.5.42(typescript@7.0.2)
 
@@ -1388,11 +1388,11 @@ snapshots:
 
   '@xterm/addon-fit@0.11.0': {}
 
-  '@xterm/addon-image@0.10.0-beta.310(@xterm/xterm@6.1.0-beta.315)':
+  '@xterm/addon-image@0.10.0-beta.330(@xterm/xterm@6.1.0-beta.335)':
     dependencies:
-      '@xterm/xterm': 6.1.0-beta.315
+      '@xterm/xterm': 6.1.0-beta.335
 
-  '@xterm/xterm@6.1.0-beta.315': {}
+  '@xterm/xterm@6.1.0-beta.335': {}
 
   baseline-browser-mapping@2.11.21: {}
 
@@ -1527,7 +1527,7 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  marked@18.1.1: {}
+  marked@18.1.2: {}
 
   meshoptimizer@1.1.1: {}
 
