@@ -22,6 +22,15 @@ fn system_ping() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(r"C:\Windows\System32\ping.exe"))
 }
 
+/// The 32-bit ping under SysWOW64 — a REAL same-named image at a
+/// different path. Absent only where WoW64 is (a non-x64 host).
+#[cfg(windows)]
+fn wow64_ping() -> PathBuf {
+    std::env::var("WINDIR")
+        .map(|windows_dir| Path::new(&windows_dir).join("SysWOW64").join("ping.exe"))
+        .unwrap_or_else(|_| PathBuf::from(r"C:\Windows\SysWOW64\ping.exe"))
+}
+
 /// Spawns the System32 ping as a long-running loop (~90 s of self-exit
 /// slack should an assertion fail before the shutdown runs).
 #[cfg(windows)]
@@ -35,8 +44,8 @@ fn spawn_ping_holder() -> std::process::Child {
 }
 
 /// Spawns `image` through `cmd /c` — the literal `cmd` program keeps
-/// the spawn itself static while the copied image rides as an
-/// argument. `cmd` waits for the image to exit.
+/// the spawn itself static while the image path rides as an argument.
+/// `cmd` waits for the image to exit.
 #[cfg(windows)]
 fn spawn_holder_via_cmd(image: &Path) -> std::process::Child {
     Command::new("cmd")
@@ -107,43 +116,46 @@ fn detects_and_stops_a_running_instance_by_exact_path() {
 fn a_same_named_process_at_another_path_is_not_matched() {
     use shun::targets::instance::{running_instances, stop_instances};
 
-    // A copy of ping under a temp directory: same image bytes, a
-    // DIFFERENT image path. The old name-based guard would have killed
-    // it together with the original; the Restart Manager matches by
-    // path and must keep the two apart.
-    let dir = tempfile::tempdir().unwrap();
-    let copy = dir.path().join("ping-copy.exe");
-    std::fs::copy(system_ping(), &copy).expect("copy the ping image");
-    let mut holder = spawn_holder_via_cmd(&copy);
+    // The SysWOW64 ping: same image NAME as the System32 one, a
+    // DIFFERENT image path — and no copying of system binaries (which
+    // CI-runner anti-malware treats as suspicious). The old name-based
+    // guard would have killed the two together; the Restart Manager
+    // matches by path and must keep them apart. Skipped on hosts
+    // without WoW64 (the image simply is not there).
+    let wow_ping = wow64_ping();
+    if !wow_ping.is_file() {
+        eprintln!("SysWOW64\\ping.exe absent on this host — probe skipped");
+        return;
+    }
+    let mut holder = spawn_holder_via_cmd(&wow_ping);
 
-    // The copy shows up under its own path — the pids it lists are the
-    // cmd-wrapped holder's family, none of which may leak into a query
-    // against the system path.
-    let copy_instances = wait_for_instances(&copy, Duration::from_secs(5));
+    // The WOW64 holder shows up under its own path — its pids may
+    // never leak into a query against the System32 path.
+    let wow_instances = wait_for_instances(&wow_ping, Duration::from_secs(5));
     assert!(
-        !copy_instances.is_empty(),
-        "the copied holder is detected under its own path"
+        !wow_instances.is_empty(),
+        "the WOW64 holder is detected under its own path: {wow_instances:?}"
     );
-    let copy_pids: std::collections::HashSet<u32> = copy_instances.iter().map(|i| i.pid).collect();
+    let wow_pids: std::collections::HashSet<u32> = wow_instances.iter().map(|i| i.pid).collect();
     assert!(
         !running_instances(&system_ping())
             .expect("the sibling detection session opens")
             .iter()
-            .any(|i| copy_pids.contains(&i.pid)),
-        "the copy must not be matched against the system path"
+            .any(|i| wow_pids.contains(&i.pid)),
+        "the WOW64 holder must not be matched against the System32 path"
     );
 
-    // The shutdown takes the copy down and clears its path.
-    let survivors = stop_instances(&copy).expect("the shutdown session opens");
+    // The shutdown takes the WOW64 holder down and clears its path.
+    let survivors = stop_instances(&wow_ping).expect("the shutdown session opens");
     assert!(
         survivors.is_empty(),
-        "the copied holder stops: {survivors:?}"
+        "the WOW64 holder stops: {survivors:?}"
     );
     let _ = holder.wait();
     assert!(
-        running_instances(&copy)
+        running_instances(&wow_ping)
             .expect("the post-shutdown session opens")
             .is_empty(),
-        "the copy's path is clear afterwards"
+        "the WOW64 holder's path is clear afterwards"
     );
 }
