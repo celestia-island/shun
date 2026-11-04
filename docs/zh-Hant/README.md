@@ -38,7 +38,7 @@ shun 打包桌面軟體發布的**交付**半邊。一份配置——應用自�
   - `install` —— 各平台 NSIS 式註冊：Windows ARP 條目、捷徑（帶 AUMID）、Explorer 右鍵動詞、深連結，使用者級或機器級（自提權）；Linux `.desktop` 啟動器 + 桌面動作；macOS `.app` 補全 + Launch Services——以及任何平台都不寫系統狀態的便攜模式；
   - `flash` —— 映像寫入區塊裝置並做寫後校驗。
 
-向導本身是**宣告式管線**（`mode | scope | license | content | pairing | install`，自由排序），安裝頁顯示真實的按階段加權進度條與可摺疊終端機，逐行記錄每個檔案操作——詳細度由 `shell.log-level` 配置。
+向導本身是**宣告式管線**（`mode | scope | license | content | install`，自由排序），安裝頁顯示真實的按階段加權進度條與可摺疊終端機，逐行記錄每個檔案操作——詳細度由 `shell.log-level` 配置。
 
 Windows 上殼有四副面孔：hikari WebView UI、內嵌的**egui 降級介面**（完全不需要 WebView2）、ratatui 終端機精靈與 headless CLI——同一流程、同一清單（`--no-webview` 強制 egui，`--no-gui` 強制終端機；`--fallback` 為舊拼寫）。固定版本 WebView2 執行時可隨載荷攜帶，安裝殼與已裝應用共享一份副本。
 

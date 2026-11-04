@@ -68,7 +68,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # 有序向导管线（可选）
 columns = 2              # 可选：模式网格列数；默认每个模式一列
-kind = "mode"                              # mode | scope | license | content | pairing | install
+kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # 按步骤覆盖：center | start（默认由 kind 决定）
 
 [[package.metadata.shun.steps]]
@@ -96,7 +96,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
-| `steps` | 表格数组 | 默认管线 | 有序向导管线（`mode`/`scope`/`license`/`content`/`pairing`/`install`，自由排序；恰好一个 `install`） |
+| `steps` | 表格数组 | 默认管线 | 有序向导管线（`mode`/`scope`/`license`/`content`/`install`，自由排序；恰好一个 `install`） |
 | `script` | table | 无 | payload 脚本钩子：`runner` + `hooks[]`（`phase`/`script`）——见脚本设计笔记 |
 | `variant` | 表格数组 | 无 | 由 `shun build --variant` 旗标选取的命名构建配置 |
 | `signing` | table | 不签名 | 应用于构建产物的 Authenticode / codesign 配置 |
@@ -376,39 +376,6 @@ accent = [34, 211, 238]    # RGB 通道——覆盖 --color-primary
 环境变量拿到它，同时它也被写入磁盘上的安装清单（修复/更新等后续
 流程可以读取）。往已安装应用自身的配置里写什么由 payload 的脚本
 决定——shun 只导出事实。
-
-## 配对步骤
-
-`pairing` 步骤为本机申领凭据——反向通道：本机显示验证码，操作员
-在控制面板里输入它。一个窗格，两条通道：
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "pairing"
-
-[package.metadata.shun.steps.pairing.source]
-kind = "gateway"                     # gateway | scripts
-official = "https://gateway.example.test"   # 预选的网关根 URL
-# allow-custom = true                # 同时提供自定义网关输入（默认开启）
-
-[package.metadata.shun.steps.pairing.identity]
-node-id = true                       # 网关协议以此为主键
-name = false                         # 可选设备名（按主机名预填）
-# tier = 1                           # 申领时赋予的层级（产品固定时声明）
-
-# env-file = "pairing.env"           # gateway 通道：申领到的凭据写入安装目录内的
-                                     #   位置（.env 风格）
-```
-
-- `gateway` —— 内置 JSON-RPC 客户端（`pairing.request` 铸码、
-  `pairing.await` 长轮询、`pairing.accept` 交付凭据）。目标机器无需
-  任何脚本运行时；该通道要求 `node-id` 与 `env-file`。
-- `scripts` —— 产品自有激活：`request` / `await` / `record` 三份
-  payload 相对路径的 Python 脚本（`python3`，宿主机只有无版本号
-  名字时回退 `python`）。窗格答案以单个 JSON 对象从脚本 **stdin**
-  传入——绝不走 argv；每个阶段的 stdout 必须恰好一个 JSON 值；
-  `record` 持久化申领结果（`env-file` 会随配置携带但不被消费）。
-  每个阶段都有时限：挂死的脚本会被杀死，而不是干等。
 
 ## Payload 来源
 

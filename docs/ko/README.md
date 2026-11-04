@@ -38,7 +38,7 @@ shun은 데스크톱 소프트웨어 배포의 **배포** 절반을 패키징합
   - `install` — 플랫폼별 NSIS식 등록: Windows ARP 항목, 바로 가기(AUMID 포함), 탐색기 상황에 맞는 메뉴 동사, 딥 링크, 사용자별 또는 시스템 전체(자가 승격); Linux `.desktop` 런처 + 데스크톱 액션; macOS `.app` 완성 + Launch Services — 그리고 어느 플랫폼에서도 시스템 상태를 쓰지 않는 휴대용 모드;
   - `flash` — 이미지를 블록 디바이스에 쓰고 쓰기 후 검증.
 
-마법사 자체는 **선언형 파이프라인**(`mode | scope | license | content | pairing | install`, 자유 순서)이며, 설치 화면에는 단계 가중 실제 진행률 바와 접을 수 있는 터미널이 있어 모든 파일 작업을 한 줄씩 기록합니다 — 상세도는 `shell.log-level`로 설정.
+마법사 자체는 **선언형 파이프라인**(`mode | scope | license | content | install`, 자유 순서)이며, 설치 화면에는 단계 가중 실제 진행률 바와 접을 수 있는 터미널이 있어 모든 파일 작업을 한 줄씩 기록합니다 — 상세도는 `shell.log-level`로 설정.
 
 Windows에서 셸은 네 얼굴을 가집니다: hikari WebView UI, WebView2가 전혀 필요 없는 내장 **egui 폴백**, ratatui 터미널 마법사, 헤드리스 CLI — 같은 플로, 같은 매니페스트(`--no-webview`로 egui 강제, `--no-gui`로 터미널 강제. `--fallback`은 이전 표기). 고정 버전 WebView2 런타임은 페이로드에 실어갈 수 있으며 셸과 설치된 앱이 한 사본을 공유.
 

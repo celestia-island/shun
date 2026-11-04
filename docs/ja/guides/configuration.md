@@ -59,7 +59,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # 順序付きウィザードパイプライン（任意）
 columns = 2              # 任意：モードグリッドの列数（既定はモードごとに 1 列）
-kind = "mode"                              # mode | scope | license | content | pairing | install
+kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # ステップ単位の上書き：center | start（既定は kind 次第）
 
 [[package.metadata.shun.steps]]
@@ -87,7 +87,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 | `attachments` | テーブル配列 | なし | 追加リソース（アセットパック）：`key` / `title` / `dest` / `online.url`。ライト版はインストール時にダウンロード |
 | `update` | table | なし | 更新ウォッチ：`sources`（ミラー基底 URL、順にプローブ）+ 最初に到達したソース配下で解決される `files` |
 | `webview2` | table | `skip` | Windows ランタイム戦略 |
-| `steps` | テーブル配列 | 既定パイプライン | 順序付きウィザードパイプライン（`mode`/`scope`/`license`/`content`/`pairing`/`install`、自由順序。`install` はちょうど 1 つ） |
+| `steps` | テーブル配列 | 既定パイプライン | 順序付きウィザードパイプライン（`mode`/`scope`/`license`/`content`/`install`、自由順序。`install` はちょうど 1 つ） |
 | `script` | table | なし | payload スクリプトフック：`runner` + `hooks[]`（`phase`/`script`）——スクリプト設計ノート参照 |
 | `variant` | テーブル配列 | なし | `shun build --variant` で選択される名前付きビルド構成 |
 | `signing` | table | 未署名 | 成果物に適用する Authenticode / codesign プロファイル |
@@ -443,44 +443,6 @@ CLI 面（`--silent`、ARP のアンインストール文字列）は基盤で�
 参照できます）。インストールされたアプリケーション自身の設定に何を
 書き込むかは payload のスクリプト次第です — shun が輸出するのは
 事実だけです。
-
-## ペアリングステップ
-
-`pairing` ステップ種はこのマシンのために資格情報を要求します——
-逆方向レーン：このマシンがコードを表示し、オペレーターが管理
-パネルに入力します。1 つのペイン、2 つのレーン：
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "pairing"
-
-[package.metadata.shun.steps.pairing.source]
-kind = "gateway"                     # gateway | scripts
-official = "https://gateway.example.test"   # 事前選択されるゲートウェイ基底 URL
-# allow-custom = true                # カスタムゲートウェイ入力も提供（既定オン）
-
-[package.metadata.shun.steps.pairing.identity]
-node-id = true                       # ゲートウェイプロトコルの主キー
-name = false                         # 任意のデバイス名（ホスト名で事前入力）
-# tier = 1                           # 要求時に付与されるティア（製品が固定する場合）
-
-# env-file = "pairing.env"           # gateway レーン：要求された資格情報の
-                                     #   インストールディレクトリ内の書き込み先（.env 形式）
-```
-
-- `gateway` —— 内蔵 JSON-RPC クライアント（`pairing.request` が
-  コードを発行、`pairing.await` がロングポール、`pairing.accept` が
-  資格情報を配達）。対象マシンにスクリプトランタイムは不要です。
-  このレーンには `node-id` と `env-file` が必要です。
-- `scripts` —— 製品独自のアクティベーション：`request` / `await` /
-  `record` の payload 相対 Python スクリプト（`python3`、バージョン
-  なし名のみのホストでは `python` にフォールバック）。ペインの回答は
-  スクリプトの **stdin** に 1 つの JSON オブジェクトとして渡されます
-  ——argv は決して使いません。各フェーズの stdout は正確に 1 つの
-  JSON 値である必要があります。`record` が要求結果を永続化します
-  （`env-file` は運ばれますが消費されません）。各フェーズには
-  デッドラインがあり、フリーズしたスクリプトは待たされず終了され
-  ます。
 
 ## payload の供給元
 

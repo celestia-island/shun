@@ -302,37 +302,6 @@ clang 包裝為連結器、TLS 走 ohos-openssl）；Tauri-on-OHOS 打包
 精靈從固定的 模式 → 安裝 序列變為**宣告式、有序、自由組合**的
 管線。六種步驟：
 
-```toml
-[[package.metadata.shun.steps]]
-kind = "mode"                    # 交付方式 + 目錄；內嵌 `ask` 原則的
-                                 # 開關（桌面捷徑、安裝範圍）
-[[package.metadata.shun.steps]]
-kind = "scope"                   # 獨立的使用者/機器安裝範圍選擇
-[[package.metadata.shun.steps]]
-kind = "license"                 # 授權協議（license / license-locales）
-[[package.metadata.shun.steps]]
-kind = "content"                 # 自訂 markdown 面板
-title = "發佈說明"
-markdown = "notes.md"         # 相對清單檔案
-[[package.metadata.shun.steps]]
-kind = "pairing"                 # 首跑裝置配對（至多一個，須在 install 之前）
-[steps.pairing.source]
-kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
-official = "https://gateway.example/server"
-allow-custom = true
-[steps.pairing.identity]
-node-id = true                   # required on the gateway lane
-[steps.pairing]
-env-file = "product.env"         # credential landing (gateway lane)
-[[package.metadata.shun.steps]]
-kind = "install"                 # 交付執行（必須恰好一個）
-```
-
-配對面板（大號配對碼、本地走秒倒計時、複製、自動換碼、成功卡）是
-外殼的預製模板，webview 面已隨本次交付上線；egui/tui 回退面仍會靜默
-跳過該步驟，回退面下的安裝保持未配對（已登記邊界：回退面板留待後續）。
-
 不宣告 `steps` = 預設管線（模式 → 有授權則授權 → 安裝），舊的
 `custom-steps` 按各自 `after` 機碼注入；兩者同時宣告是配置錯誤，
 `install` 步驟零個或多個同樣是。安裝範圍之問與桌面捷徑開關出現在

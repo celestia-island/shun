@@ -372,40 +372,6 @@ Windows; бэкенды Linux/macOS явно её отвергают. Интег
 конвейер вместо фиксированной последовательности режим → установка. Шесть
 видов шагов:
 
-```toml
-[[package.metadata.shun.steps]]
-kind = "mode"                    # режим доставки + каталог; встраивает
-                                 # переключатели `ask` (ярлык на рабочем столе, область)
-[[package.metadata.shun.steps]]
-kind = "scope"                   # отдельный выбор user/machine
-[[package.metadata.shun.steps]]
-kind = "license"                 # панель лицензии (license / license-locales)
-[[package.metadata.shun.steps]]
-kind = "content"                 # произвольная markdown-панель
-title = "Release notes"
-markdown = "notes.md"         # относительно манифеста
-[[package.metadata.shun.steps]]
-kind = "pairing"                 # сопряжение устройства при первом запуске
-                                 # (не более одного, до install)
-[steps.pairing.source]
-kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
-official = "https://gateway.example/server"
-allow-custom = true
-[steps.pairing.identity]
-node-id = true                   # required on the gateway lane
-[steps.pairing]
-env-file = "product.env"         # credential landing (gateway lane)
-[[package.metadata.shun.steps]]
-kind = "install"                 # запуск доставки (ровно один обязателен)
-```
-
-Панель сопряжения (крупный код, локальный обратный отсчёт, копирование,
-автообновление, карточка успеха) — готовый шаблон оболочки, и в webview-лице
-он уже работает; лица egui/tui всё ещё пропускают шаг молча, поэтому
-установка на резервном лице идёт без сопряжения (зарегистрированная
-граница: резервная панель — будущая работа).
-
 Отсутствие `steps` = конвейер по умолчанию (режим →
 лицензия-если-объявлена → установка) с легаси-`custom-steps`, внедрёнными
 после их ключей `after`; объявить и то и другое — конфигурационная ошибка,

@@ -28,7 +28,7 @@ tar.workspace = true
 zstd.workspace = true
 sha2.workspace = true
 walkdir.workspace = true
-# `json` enables `Request::send_json` (the pairing gateway client posts
+# `json` enables `Request::send_json` (HTTP clients post
 # JSON-RPC bodies).
 ureq = { version = "^2", optional = true, features = ["json"] }
 clap = { version = "^4", features = ["derive"], optional = true }

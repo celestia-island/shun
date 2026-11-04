@@ -359,56 +359,7 @@ administrator shell exercises it).
 ### The wizard pipeline — `[[package.metadata.shun.steps]]`
 
 The wizard is now a declarative, ordered, freely composed pipeline
-instead of a fixed mode → install sequence. Six step kinds:
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "mode"                    # delivery mode + directory; embeds the
-                                 # `ask` toggles (desktop shortcut, scope)
-[[package.metadata.shun.steps]]
-kind = "scope"                   # standalone user/machine choice
-[[package.metadata.shun.steps]]
-kind = "license"                 # license pane (license / license-locales)
-[[package.metadata.shun.steps]]
-kind = "content"                 # custom markdown pane
-title = "Release notes"
-markdown = "notes.md"         # relative to the manifest
-[[package.metadata.shun.steps]]
-kind = "pairing"                 # first-run device claim (at most one,
-                                 # before the install step)
-[steps.pairing.source]
-kind = "gateway"                 # built-in gateway client (JSON-RPC over
-official = "https://gateway.example/server"   # http(s); no scripting
-allow-custom = true              # runtime needed on the target machine)
-[steps.pairing.identity]         # what the pane collects before minting
-node-id = true                   # required on the gateway lane
-name = true                      # optional device name
-tier = 2                         # pinned tier, when the product has one
-[steps.pairing]
-env-file = "product.env"         # where the claimed credential lands
-                                 # (required on the gateway lane; must stay
-                                 # a relative path inside the install)
-# Scripts lane instead of the built-in protocol — `python3 <script>`
-# per phase (falling back to `python` where that is all the host
-# ships): `request` mints, `await` long-polls, `record` persists. The
-# pane's answers arrive as one JSON object on the script's STDIN
-# (never argv — process listings are world-readable); stdout must be
-# exactly one JSON value; a non-zero exit surfaces the script's stderr
-# in the pane; every phase runs under a deadline. Paths are
-# PAYLOAD-relative (like every other script hook): the shell STAGES
-# the payload's installer/ subtree from the embedded archive the
-# first time the lane runs, so the scripts execute from any CWD —
-# in `just demo` and in a built installer alike. Containment is
-# lexical (no absolute paths, `..`, drive prefixes, backslashes).
-[[package.metadata.shun.steps]]
-kind = "install"                 # the delivery run (exactly one required)
-```
-
-The pairing pane itself (big code, locally ticking countdown, copy,
-auto-refresh, success card) is the shell's prefabricated template and
-ships in the webview face — the egui/tui fallbacks still skip the step
-silently, so a fallback-face install proceeds unpaired (a registered
-boundary: the fallback pairing pane is future work).
+instead of a fixed mode → install sequence. Five step kinds:
 
 Absent `steps` = the default pipeline (mode → license-when-declared →
 install) with the legacy `custom-steps` injected after their `after`

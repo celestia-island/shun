@@ -61,7 +61,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # упорядоченный конвейер мастера (опционально)
 columns = 2              # число колонок сетки режимов (по умолчанию — по одной на режим)
-kind = "mode"                              # mode | scope | license | content | pairing | install
+kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # переопределение шага: center | start (по умолчанию от kind)
 
 [[package.metadata.shun.steps]]
@@ -89,7 +89,7 @@ require-removable = true                   # отказывать несъёмн
 | `attachments` | массив таблиц | нет | необязательные сопутствующие ресурсы (паки ассетов): `key` / `title` / `dest` / `online.url`; lite-сборки скачивают их при установке |
 | `update` | table | нет | слежение за обновлениями: `sources` (базовые URL зеркал, опрашиваются по порядку) + `files`, разрешаемые под первым доступным зеркалом |
 | `webview2` | table | `skip` | стратегия рантайма Windows |
-| `steps` | массив таблиц | конвейер по умолчанию | упорядоченный конвейер мастера (`mode`/`scope`/`license`/`content`/`pairing`/`install`, в любом порядке; ровно один `install`) |
+| `steps` | массив таблиц | конвейер по умолчанию | упорядоченный конвейер мастера (`mode`/`scope`/`license`/`content`/`install`, в любом порядке; ровно один `install`) |
 | `script` | table | нет | хуки скриптов payload: `runner` + `hooks[]` (`phase`/`script`) — см. заметку о скриптинге |
 | `variant` | массив таблиц | нет | именованные конфигурации артефактов, выбираемые флагом `shun build --variant` |
 | `signing` | table | без подписи | профиль Authenticode / codesign, применяемый к артефактам |
@@ -444,43 +444,6 @@ accent = [34, 211, 238]    # каналы RGB — переопределяют -
 в манифест установки на диске (его видят проходы ремонта/обновления).
 Что именно записать в настройки самого установленного приложения,
 решает сценарий payload — shun лишь экспортирует сам факт.
-
-## Шаг сопряжения
-
-Вид шага `pairing` запрашивает учётные данные для этой машины —
-инверсная полоса: машина показывает код, оператор вводит его в панель
-управления. Одна панель, две полосы:
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "pairing"
-
-[package.metadata.shun.steps.pairing.source]
-kind = "gateway"                     # gateway | scripts
-official = "https://gateway.example.test"   # предвыбранный базовый URL шлюза
-# allow-custom = true                # предлагать и ввод своего шлюза (по умолчанию)
-
-[package.metadata.shun.steps.pairing.identity]
-node-id = true                       # протокол шлюза индексируется по нему
-name = false                         # необязательное имя устройства (предзаполнено hostname)
-# tier = 1                           # уровень, выдаваемый при заявке, если продукт его фиксирует
-
-# env-file = "pairing.env"           # полоса gateway: куда полученные учётные данные
-                                     #   попадают внутри каталога установки (в стиле .env)
-```
-
-- `gateway` — встроенный JSON-RPC-клиент (`pairing.request` выпускает
-  код, `pairing.await` ждёт в long-poll, `pairing.accept` доставляет
-  учётные данные). Скриптовый рантайм на целевой машине не нужен;
-  полоса требует `node-id` и `env-file`.
-- `scripts` — собственная активация продукта: скрипты Python
-  `request` / `await` / `record` относительно payload (`python3`, с
-  откатом на `python`, если у хоста только имя без версии). Ответы
-  панели приходят одним JSON-объектом на **stdin** скрипта — никогда
-  через argv, — а stdout каждой фазы должен быть ровно одним
-  JSON-значением; `record` сохраняет заявку (`env-file` переносится,
-  но не потребляется). Каждая фаза идёт под дедлайном: зависший скрипт
-  убивают, а не ждут.
 
 ## Источник payload
 
