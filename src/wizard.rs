@@ -867,14 +867,7 @@ pub fn run_install(
     let install_dir = ctx.install_dir.clone();
     let main_exe = core.main_exe();
     let previous = read_installed_manifest(&install_dir).unwrap_or_default();
-    if install_dir.join(&main_exe).is_file() {
-        on_event(&FlowEvent::Progress {
-            phase: FlowPhase::Prepare,
-            step: format!("Stopping {main_exe}"),
-            percent: None,
-        });
-    }
-    stop_running_app(&install_dir, &main_exe);
+    stop_previous_instance(&install_dir, &main_exe, on_event)?;
     // Prepare-phase script hooks (docs/en/design/scripting.md): the
     // payload may carry runner scripts that hold the flow's opening —
     // the demo's screenshot-window delay rides this.
@@ -936,13 +929,17 @@ pub fn run_install(
     {
         let old_path = PathBuf::from(old);
         if !same_location(&old_path, &install_dir) {
-            if old_path.join(&main_exe).is_file() {
-                on_event(&FlowEvent::Progress {
-                    phase: FlowPhase::Prepare,
-                    step: format!("Stopping the previous {main_exe}"),
-                    percent: None,
+            // Same guard as the delivery's overwrite hygiene, but the
+            // relocation's cleanup stays best-effort: the new install
+            // has already landed, so a survivor is a reported leftover
+            // (the sweep below skips the files it holds), never fatal.
+            if let Err(e) = stop_previous_instance(&old_path, &main_exe, on_event) {
+                on_event(&FlowEvent::Log {
+                    record: FlowLog::Warning {
+                        code: "instance-stop".into(),
+                        detail: e,
+                    },
                 });
-                stop_running_app(&old_path, &main_exe);
             }
             let marker = ctx.portable_marker.clone();
             let step = match crate::targets::install::relocate_cleanup(&old_path, &marker) {
@@ -1000,6 +997,12 @@ pub fn run_uninstall_with_events(
     on_event: &mut dyn FnMut(&FlowEvent),
 ) -> Result<(), String> {
     let ctx = core.uninstall_context()?;
+    // Stop the running instance before anything reads or removes: an
+    // app still holding its payload files open makes the manifest pass
+    // below silently skip the locked ones — a "successful" uninstall
+    // that leaves the binary behind. This guard fails loudly instead,
+    // before a single file has gone missing.
+    stop_previous_instance(&ctx.install_dir, &core.main_exe(), on_event)?;
     // pre-uninstall hooks: after the uninstall context resolves (the
     // install dir this process sits in), before any removal work. The
     // scripts read from that dir on disk — the uninstaller carries no
@@ -1347,28 +1350,71 @@ fn manifest_language_of(install_dir: &Path) -> Option<String> {
         .filter(|l| !l.trim().is_empty())
 }
 
-/// Stops a running main executable before an overwrite install replaces
-/// its payload: Windows locks a running image, so the extraction would
-/// fail with os error 5. Returns whether a previous install was found.
-#[cfg(windows)]
-pub fn stop_running_app(install_dir: &Path, main_exe: &str) -> bool {
-    use std::os::windows::process::CommandExt;
-
-    if !install_dir.join(main_exe).is_file() {
-        return false;
+/// Stops the previous install's running instance before the delivery
+/// replaces — or the uninstall removes — its payload: Windows locks a
+/// running image, so an instance left alive would strand the update on
+/// the old executable (the merge lane parks it aside and the app keeps
+/// running the old code) or make the uninstall's manifest pass skip
+/// every locked file silently. The guard runs on the Windows Restart
+/// Manager over the previous executable's FULL path
+/// ([`crate::targets::instance`]): graceful close first, forced
+/// termination for what ignores it, and a verified survivor list. A
+/// survivor fails the lane loudly — closing the app is the one thing
+/// the flow cannot finish on the user's behalf. A session that cannot
+/// even be established degrades to a warning: the swap's own
+/// retry/merge lanes remain the tolerance for what the guard cannot
+/// see. No-op when the previous install has no executable on disk or
+/// nothing is running from it.
+fn stop_previous_instance(
+    install_dir: &Path,
+    main_exe: &str,
+    on_event: &mut dyn FnMut(&FlowEvent),
+) -> Result<(), String> {
+    let exe = install_dir.join(main_exe);
+    if !exe.is_file() {
+        return Ok(());
     }
-    let _ = std::process::Command::new("taskkill")
-        .args(["/F", "/IM", main_exe])
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .status();
-    std::thread::sleep(std::time::Duration::from_millis(800));
-    true
-}
-
-/// Non-Windows: no image-name file lock to fight.
-#[cfg(not(windows))]
-pub fn stop_running_app(_install_dir: &Path, _main_exe: &str) -> bool {
-    false
+    let detected = match crate::targets::instance::running_instances(&exe) {
+        Ok(instances) => instances,
+        Err(e) => {
+            let detail = format!(
+                "the running-instance check for {main_exe} failed ({e}) — continuing; the delivery may still hit a lock"
+            );
+            eprintln!("shun: instance-check: {detail}");
+            on_event(&FlowEvent::Log {
+                record: FlowLog::Warning {
+                    code: "instance-check".into(),
+                    detail,
+                },
+            });
+            return Ok(());
+        }
+    };
+    if detected.is_empty() {
+        return Ok(());
+    }
+    on_event(&FlowEvent::Progress {
+        phase: FlowPhase::Prepare,
+        step: format!(
+            "Stopping {} running instance(s) of {main_exe}",
+            detected.len()
+        ),
+        percent: None,
+    });
+    match crate::targets::instance::stop_instances(&exe) {
+        Ok(survivors) if survivors.is_empty() => Ok(()),
+        Ok(survivors) => {
+            let pids = survivors
+                .iter()
+                .map(|instance| instance.pid.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "{main_exe} is still running (pid {pids}) and did not respond to the shutdown request — close it and retry"
+            ))
+        }
+        Err(e) => Err(format!("could not stop the running {main_exe}: {e}")),
+    }
 }
 
 /// The installer-owned files that live in the install dir but are never

@@ -10,6 +10,7 @@
 pub mod flash;
 pub mod freedesktop;
 pub mod install;
+pub mod instance;
 pub mod macos;
 pub mod plist;
 
