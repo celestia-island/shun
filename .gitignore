@@ -15,7 +15,13 @@ node_modules/
 # (2026-10-25) the two accidental `git add -A` inclusions of the symlink
 # itself (justfile + caller-refresh waves) both came from this path being
 # outside the root-only `node_modules/` rule. Match it anywhere.
-**/node_modules/
+#
+# The trailing-slash form above only matches DIRECTORIES, so the symlink form
+# (`node_modules -> /machine-local/path`, created by the worktree cache link)
+# walked straight past it and got committed twice more — most recently in the
+# devtools-anchor wave. This pattern has no trailing slash on purpose: it
+# matches a file, a directory AND a symlink of that name at any depth.
+**/node_modules
 
 # celestia-devtools: staged-on-demand shared justfile recipes (just fetch)
 /.just/
