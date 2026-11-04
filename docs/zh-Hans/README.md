@@ -41,8 +41,7 @@ shun 打包桌面软件发布的**交付**半边。一份配置——应用自�
     Services——以及任何平台都不写系统状态的便携模式；
   - `flash` —— 镜像写入块设备并做写后校验。
 
-向导本身是**声明式管线**（`mode | scope | license | content | pairing |
-install`，自由排序），安装页显示真实的按阶段加权进度条与可折叠终端，
+向导本身是**声明式管线**（`mode | scope | license | content | install`，自由排序），安装页显示真实的按阶段加权进度条与可折叠终端，
 逐行记录每个文件操作——详细度由 `shell.log-level` 配置。
 
 Windows 上壳有四副面孔：hikari WebView UI、内嵌的**egui 降级界面**

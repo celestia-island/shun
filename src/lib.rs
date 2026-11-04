@@ -16,9 +16,9 @@
 //!
 //! # Cargo features
 //!
-//! `online` (default) ships the networked payload source and the pairing
-//! gateway client; `cli` (default) ships the build CLI's extras; and
-//! `scripting` (default) ships the embedded duckscript interpreter behind
+//! `online` (default) ships the networked payload source; `cli` (default)
+//! ships the build CLI's extras; and `scripting` (default) ships the embedded
+//! duckscript interpreter behind
 //! manifest `script` hooks. Embedded consumers building with
 //! `default-features = false` keep none of the three — a lean dependency
 //! graph with no scripting runtime, and a manifest that still declares
@@ -43,8 +43,6 @@ pub mod flow;
 pub mod fs_probe;
 pub mod msix;
 #[cfg(feature = "online")]
-pub mod pairing;
-pub mod pairing_scripts;
 pub mod payload;
 // The online payload source rides the optional `ureq` dependency; without
 // the feature the crate still builds for offline consumers (found by the

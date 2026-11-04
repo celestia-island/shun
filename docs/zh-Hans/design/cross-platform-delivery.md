@@ -297,38 +297,7 @@ Windows；Linux/macOS 后端明确拒绝。集成测试在非提权运行器上�
 ### 向导管线 —— `[[package.metadata.shun.steps]]`
 
 向导从固定的 模式 → 安装 序列变为**声明式、有序、自由组合**的
-管线。六种步骤：
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "mode"                    # 交付方式 + 目录；内嵌 `ask` 策略的
-                                 # 开关（桌面快捷方式、安装范围）
-[[package.metadata.shun.steps]]
-kind = "scope"                   # 独立的用户/机器安装范围选择
-[[package.metadata.shun.steps]]
-kind = "license"                 # 许可协议（license / license-locales）
-[[package.metadata.shun.steps]]
-kind = "content"                 # 自定义 markdown 面板
-title = "发布说明"
-markdown = "notes.md"         # 相对清单文件
-[[package.metadata.shun.steps]]
-kind = "pairing"                 # 首跑设备配对（至多一个，须在 install 之前）
-[steps.pairing.source]
-kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
-official = "https://gateway.example/server"
-allow-custom = true
-[steps.pairing.identity]
-node-id = true                   # required on the gateway lane
-[steps.pairing]
-env-file = "product.env"         # credential landing (gateway lane)
-[[package.metadata.shun.steps]]
-kind = "install"                 # 交付运行（必须恰好一个）
-```
-
-配对面板（大号配对码、本地走秒倒计时、复制、自动换码、成功卡）是
-外壳的预制模板，webview 面已随本次交付上线；egui/tui 回退面仍会静默
-跳过该步骤，回退面下的安装保持未配对（已登记边界：回退面板留待后续）。
+管线。五种步骤：
 
 不声明 `steps` = 默认管线（模式 → 有许可则许可 → 安装），旧的
 `custom-steps` 按各自 `after` 键注入；两者同时声明是配置错误，

@@ -60,7 +60,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # pipeline ordonné de l'assistant (optionnel)
 columns = 2              # colonnes de la grille des modes (par défaut : une par mode)
-kind = "mode"                              # mode | scope | license | content | pairing | install
+kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # remplacement par étape : center | start (défaut du kind)
 
 [[package.metadata.shun.steps]]
@@ -88,7 +88,7 @@ require-removable = true                   # refuser les périphériques non amo
 | `attachments` | tableau de tables | aucun | ressources compagnes optionnelles (packs d'assets) : `key` / `title` / `dest` / `online.url` ; les builds lite les téléchargent à l'installation |
 | `update` | table | aucune | veille de mise à jour : `sources` (URL de base miroirs, sondées dans l'ordre) + `files` résolus sous la première source joignable |
 | `webview2` | table | `skip` | stratégie runtime Windows |
-| `steps` | tableau de tables | pipeline par défaut | pipeline ordonné de l'assistant (`mode`/`scope`/`license`/`content`/`pairing`/`install`, ordre libre ; exactement un `install`) |
+| `steps` | tableau de tables | pipeline par défaut | pipeline ordonné de l'assistant (`mode`/`scope`/`license`/`content`/`install`, ordre libre ; exactement un `install`) |
 | `script` | table | aucun | hooks de scripts du payload : `runner` + `hooks[]` (`phase`/`script`) — voir la note de design sur le scripting |
 | `variant` | tableau de tables | aucune | configurations d'artefacts nommées sélectionnées par `shun build --variant` |
 | `signing` | table | non signé | profil Authenticode / codesign appliqué aux artefacts |
@@ -466,43 +466,6 @@ et elle est consignée dans le manifeste d'installation sur disque
 (visible pour les passes de réparation/mise à jour). Ce qui est écrit
 dans la configuration propre à l'application installée relève des
 scripts du payload — shun n'exporte que l'information.
-
-## Étape d'appairage
-
-Le type d'étape `pairing` réclame un identifiant pour cette machine —
-la voie inversée : cette machine affiche un code, un opérateur le tape
-dans un panneau de contrôle. Un volet, deux voies :
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "pairing"
-
-[package.metadata.shun.steps.pairing.source]
-kind = "gateway"                     # gateway | scripts
-official = "https://gateway.example.test"   # URL de base de passerelle présélectionnée
-# allow-custom = true                # offrir aussi une saisie de passerelle (défaut)
-
-[package.metadata.shun.steps.pairing.identity]
-node-id = true                       # le protocole passerelle s'y indexe
-name = false                         # nom de périphérique optionnel (prérempli du hostname)
-# tier = 1                           # palier provisionné à la réclamation, si le produit l'épingle
-
-# env-file = "pairing.env"           # voie gateway : où l'identifiant réclamé atterrit
-                                     #   dans le répertoire d'installation (style .env)
-```
-
-- `gateway` — le client JSON-RPC intégré (`pairing.request` émet le
-  code, `pairing.await` scrute en long-poll, `pairing.accept` livre
-  l'identifiant). Aucun runtime de script requis sur la machine cible ;
-  la voie exige `node-id` et `env-file`.
-- `scripts` — activation propriétaire : scripts Python `request` /
-  `await` / `record` relatifs au payload (`python3`, repli sur `python`
-  si l'hôte n'a que le nom sans version). Les réponses du volet
-  arrivent en un seul objet JSON sur l'**stdin** du script — jamais en
-  argv — et le stdout de chaque phase doit être exactement une valeur
-  JSON ; `record` persiste la réclamation (un `env-file` est transporté
-  mais non consommé). Chaque phase court sous une échéance : un script
-  bloqué est tué, pas attendu.
 
 ## Source du payload
 

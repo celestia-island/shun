@@ -39,7 +39,7 @@ construcción como el shell de ejecución:
   - `install` — registro estilo NSIS, por plataforma: entradas ARP de Windows, atajos (con AUMID), verbos del menú contextual del Explorador, enlaces profundos, por usuario o por máquina (autoelevación); lanzadores `.desktop` de Linux con acciones de escritorio; completado `.app` de macOS más Launch Services — y un modo portable que no escribe estado del sistema en ninguna parte;
   - `flash` — escribir una imagen en un dispositivo de bloques con verificación posterior.
 
-El asistente en sí es un **pipeline declarativo** (`mode | scope | license | content | pairing | install`, orden libre); su panel de instalación muestra una barra de progreso real ponderada por fases y un terminal plegable que registra cada operación de fichero — la verbosidad se configura con `shell.log-level`.
+El asistente en sí es un **pipeline declarativo** (`mode | scope | license | content | install`, orden libre); su panel de instalación muestra una barra de progreso real ponderada por fases y un terminal plegable que registra cada operación de fichero — la verbosidad se configura con `shell.log-level`.
 
 En Windows el shell tiene cuatro caras: una interfaz WebView hikari, un **fallback egui** incrustado que no necesita WebView2 en absoluto, un asistente de terminal ratatui y el CLI headless — mismo flujo, mismo manifiesto (`--no-webview` fuerza egui, `--no-gui` el terminal; `--fallback` es la grafía antigua). Un runtime WebView2 de versión fija puede viajar dentro del payload, una copia compartida por el shell y la aplicación instalada.
 

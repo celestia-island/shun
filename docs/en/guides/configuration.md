@@ -70,7 +70,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # ordered wizard pipeline (optional)
 columns = 2             # optional mode-grid columns; defaults to one column per mode
-kind = "mode"                              # mode | scope | license | content | pairing | install
+kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # per-step override: center | start (default from kind)
 
 [[package.metadata.shun.steps]]
@@ -98,7 +98,7 @@ require-removable = true                   # refuse non-removable devices
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
-| `steps` | array of tables | default pipeline | Ordered wizard pipeline (`mode`/`scope`/`license`/`content`/`pairing`/`install`, freely ordered; exactly one `install`) |
+| `steps` | array of tables | default pipeline | Ordered wizard pipeline (`mode`/`scope`/`license`/`content`/`install`, freely ordered; exactly one `install`) |
 | `script` | table | none | Payload script hooks: `runner` + `hooks[]` (`phase`/`script`) — see the scripting design note |
 | `variant` | array of tables | none | Named artifact configurations the `shun build --variant` flag selects |
 | `signing` | table | unsigned | Authenticode / codesign profile applied to built artifacts |
@@ -445,42 +445,6 @@ receive it as the `SHUN_LANGUAGE` environment variable, and it is
 recorded in the on-disk install manifest (so repair/update passes can
 see it). What lands in the installed application's own configuration
 is up to the payload's scripts — shun only exports the fact.
-
-## Pairing step
-
-The `pairing` step kind claims a credential for this machine — the
-inverted lane: this machine displays a code, an operator types it into
-a control panel. One pane, two lanes:
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "pairing"
-
-[package.metadata.shun.steps.pairing.source]
-kind = "gateway"                     # gateway | scripts
-official = "https://gateway.example.test"   # preselected gateway base URL
-# allow-custom = true                # also offer a custom gateway input (default)
-
-[package.metadata.shun.steps.pairing.identity]
-node-id = true                       # the gateway protocol keys on it
-name = false                         # optional device name (hostname prefill)
-# tier = 1                           # tier provisioned on claim, when the product pins one
-
-# env-file = "pairing.env"           # gateway lane: where the claimed credential lands
-                                     #   inside the install dir (.env style)
-```
-
-- `gateway` — the built-in JSON-RPC client (`pairing.request` mints
-  the code, `pairing.await` long-polls, `pairing.accept` delivers the
-  credential). No scripting runtime needed on the target machine; the
-  lane requires `node-id` and `env-file`.
-- `scripts` — product-owned activation: `request` / `await` / `record`
-  payload-relative Python scripts (`python3`, falling back to
-  `python`). The pane's answers arrive as one JSON object on the
-  script's **stdin** — never argv — and each phase's stdout must be
-  exactly one JSON value; `record` persists the claim (an `env-file`
-  is carried but unconsumed). Every phase runs under a deadline: a
-  hung script is killed, not waited out.
 
 ## Source
 

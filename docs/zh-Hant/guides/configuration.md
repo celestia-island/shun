@@ -57,7 +57,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # 有序的精靈管線（可選）
 columns = 2              # 可選：模式網格欄數；預設每個模式一欄
-kind = "mode"                              # mode | scope | license | content | pairing | install
+kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # 按步驟覆寫：center | start（預設由 kind 決定）
 
 [[package.metadata.shun.steps]]
@@ -85,7 +85,7 @@ require-removable = true                   # 拒絕非可移除裝置
 | `attachments` | 表格陣列 | 無 | 選用附件資源（資產包）：`key` / `title` / `dest` / `online.url`；精簡版在安裝時下載 |
 | `update` | table | 無 | 更新監視：`sources`（鏡像根 URL，按順序探測）+ `files`，解析到第一個可達源之下 |
 | `webview2` | table | `skip` | Windows 執行階段策略 |
-| `steps` | 表格陣列 | 預設管線 | 有序精靈管線（`mode`/`scope`/`license`/`content`/`pairing`/`install`，自由排序；恰好一個 `install`） |
+| `steps` | 表格陣列 | 預設管線 | 有序精靈管線（`mode`/`scope`/`license`/`content`/`install`，自由排序；恰好一個 `install`） |
 | `script` | table | 無 | payload 指令碼鉤子：`runner` + `hooks[]`（`phase`/`script`）——見指令碼設計筆記 |
 | `variant` | 表格陣列 | 無 | 由 `shun build --variant` 選取的命名建置設定 |
 | `signing` | table | 不簽署 | 套用於建置產物的 Authenticode / codesign 設定 |
@@ -369,39 +369,6 @@ accent = [34, 211, 238]    # RGB 色頻——覆寫 --color-primary
 環境變數取得它，同時它也被寫入磁碟上的安裝清單（修復/更新等後續
 流程可以讀取）。要往已安裝應用程式自身的設定裡寫什麼由 payload 的
 指令碼決定——shun 只匯出事實。
-
-## 配對步驟
-
-`pairing` 步驟為本機申領憑證——反向通道：本機顯示驗證碼，操作員在
-控制面板裡輸入它。一個窗格，兩條通道：
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "pairing"
-
-[package.metadata.shun.steps.pairing.source]
-kind = "gateway"                     # gateway | scripts
-official = "https://gateway.example.test"   # 預選的閘道根 URL
-# allow-custom = true                # 同時提供自訂閘道輸入（預設開啟）
-
-[package.metadata.shun.steps.pairing.identity]
-node-id = true                       # 閘道協定以此為主鍵
-name = false                         # 可選裝置名（按主機名預填）
-# tier = 1                           # 申領時賦予的層級（產品固定時宣告）
-
-# env-file = "pairing.env"           # gateway 通道：申領到的憑證寫入安裝目錄內
-                                     #   的位置（.env 風格）
-```
-
-- `gateway` —— 內建 JSON-RPC 用戶端（`pairing.request` 鑄碼、
-  `pairing.await` 長輪詢、`pairing.accept` 交付憑證）。目標機器無需
-  任何指令碼執行環境；該通道要求 `node-id` 與 `env-file`。
-- `scripts` —— 產品自有啟用：`request` / `await` / `record` 三份
-  payload 相對路徑的 Python 指令碼（`python3`，宿主機只有無版本號
-  名字時回退 `python`）。窗格答案以單一 JSON 物件從指令碼 **stdin**
-  傳入——絕不走 argv；每個階段的 stdout 必須恰好一個 JSON 值；
-  `record` 持久化申領結果（`env-file` 會隨設定攜帶但不被消費）。
-  每個階段都有時限：掛死的指令碼會被終結，而不是乾等。
 
 ## Payload 來源
 

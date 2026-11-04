@@ -406,44 +406,8 @@ l'exerce).
 ### Le pipeline de l'assistant — `[[package.metadata.shun.steps]]`
 
 L'assistant est désormais un pipeline déclaratif, ordonné et librement
-composé, au lieu d'une séquence fixe mode → installation. Six types
+composé, au lieu d'une séquence fixe mode → installation. Cinq types
 d'étapes :
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "mode"                    # mode de livraison + répertoire ; embarque
-                                 # les interrupteurs `ask` (raccourci
-                                 # bureau, portée)
-[[package.metadata.shun.steps]]
-kind = "scope"                   # choix autonome utilisateur/machine
-[[package.metadata.shun.steps]]
-kind = "license"                 # volet de licence (license / license-locales)
-[[package.metadata.shun.steps]]
-kind = "content"                 # volet markdown personnalisé
-title = "Release notes"
-markdown = "notes.md"         # relatif au manifeste
-[[package.metadata.shun.steps]]
-kind = "pairing"                 # appairage de l'appareil au premier lancement
-                                 # (au plus un, avant install)
-[steps.pairing.source]
-kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
-official = "https://gateway.example/server"
-allow-custom = true
-[steps.pairing.identity]
-node-id = true                   # required on the gateway lane
-[steps.pairing]
-env-file = "product.env"         # credential landing (gateway lane)
-[[package.metadata.shun.steps]]
-kind = "install"                 # l'exécution de livraison (exactement une requise)
-```
-
-Le volet d'appairage (code en grand, compte à rebours local, copie,
-rafraîchissement automatique, carte de succès) est le gabarit préfabriqué
-du shell et est déjà servi par la face webview — les faces egui/tui
-l'omettent encore silencieusement, donc une installation sur une face de
-secours reste non appairée (frontière enregistrée : le volet de secours
-reste à venir).
 
 Sans `steps` = le pipeline par défaut (mode → licence-si-déclarée →
 install) avec les `custom-steps` historiques injectés après leurs clés

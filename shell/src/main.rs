@@ -343,13 +343,6 @@ struct AppState {
     /// default, and the composed install request carries it so the
     /// flow sweeps only the product's own files out of it.
     relocate_from: Option<String>,
-    /// The declared pairing step, when the pipeline has one — the pane's
-    /// lane contract (gateway protocol vs product scripts) and its
-    /// credential landing. Resolved once from the embedded pipeline.
-    pairing: Option<shun::config::PairingStepConfig>,
-    /// The staged payload subtree the scripts lane resolves against
-    /// (lazily extracted; see [`pairing_scripts_stage`]).
-    pairing_stage: std::sync::Mutex<Option<std::path::PathBuf>>,
 }
 
 impl AppState {
@@ -2147,390 +2140,6 @@ fn run_tauri(
     )
 }
 
-// ── Pairing step commands (the prefabricated pane's backend) ──────────────
-//
-// Both lanes surface the same three verbs: mint a display code, long-poll
-// its outcome, persist the claim. The gateway lane rides the built-in
-// JSON-RPC client; the scripts lane shells out to the product's python3
-// helpers with the pane's answers on stdin. Answers never travel argv.
-
-/// Stages the payload's pairing scripts into a private temp dir the
-/// first time the lane runs, and returns the dir on every later call.
-///
-/// Pairing runs BEFORE the install extracts anything, so the declared
-/// (payload-relative) script paths have nothing to resolve against at
-/// runtime — this materializes just that subtree from the EMBEDDED
-/// archive (the same single-copy bootstrap the WebView2 runtime uses),
-/// so the lane works in `just demo`, in a built installer, and from any
-/// CWD. The OS temp reaper owns the dir; the payload is immutable for
-/// the process lifetime so a leftover from this pid is fine.
-fn pairing_scripts_stage(state: &State<'_, AppState>) -> Result<std::path::PathBuf, String> {
-    let mut guard = state.pairing_stage.lock().expect("pairing stage lock");
-    if let Some(dir) = guard.as_ref() {
-        return Ok(dir.clone());
-    }
-    let dir = std::env::temp_dir().join(format!("shun-pairing-scripts-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("stage pairing scripts: {e}"))?;
-    state
-        .payload
-        .extract_prefix(&dir, std::path::Path::new("installer"), &mut |_event| {})
-        .map_err(|e| format!("stage pairing scripts: {e}"))?;
-    *guard = Some(dir.clone());
-    Ok(dir)
-}
-
-/// The pane's request payload: everything the lane may need, unused
-/// fields simply ignored per lane.
-#[derive(serde::Deserialize, serde::Serialize)]
-struct PairingRequestArgs {
-    gateway: Option<String>,
-    node_id: String,
-    name: Option<String>,
-    tier: Option<u8>,
-}
-
-/// One minted display code.
-#[derive(serde::Serialize)]
-struct PairingCodeView {
-    code: String,
-    expires_in: i64,
-}
-
-#[tauri::command]
-async fn pairing_request(
-    state: State<'_, AppState>,
-    args: PairingRequestArgs,
-) -> Result<PairingCodeView, String> {
-    let pairing = state
-        .pairing
-        .clone()
-        .ok_or("this build declares no pairing step")?;
-    let script = match &pairing.source {
-        shun::config::PairingSource::Gateway { .. } => None,
-        shun::config::PairingSource::Scripts {
-            request,
-            r#await: _,
-            record: _,
-        } => Some(request.clone()),
-    };
-    match script {
-        None => {
-            let gateway = args
-                .gateway
-                .clone()
-                .unwrap_or_else(|| official_gateway(&pairing));
-            // #113 turned PairingClient::new into a Result (https
-            // enforcement); propagate it here until the pairing follow-up
-            // lands its own call-site shape (this hunk is droppable).
-            let client = shun::pairing::PairingClient::new(&gateway)?;
-            // The installer's self-profile rides with the mint so the
-            // panel's inspect step can show what is asking to enroll.
-            let sys = get_device_sys();
-            tauri::async_runtime::spawn_blocking(move || {
-                client
-                    .request_sys(&args.node_id, args.name.as_deref(), args.tier, &sys)
-                    .map(|code| PairingCodeView {
-                        code: code.code,
-                        expires_in: code.expires_in,
-                    })
-            })
-            .await
-            .map_err(|e| format!("join: {e}"))?
-        }
-        Some(request) => {
-            let stage = pairing_scripts_stage(&state)?;
-            tauri::async_runtime::spawn_blocking(move || {
-                // Payload-relative declared path → staged absolute path.
-                let script = stage.join(&request);
-                let answers =
-                    serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
-                let answer = shun::pairing_scripts::run_pairing_script(
-                    &script,
-                    &answers,
-                    std::time::Duration::from_secs(45),
-                )?;
-                Ok(PairingCodeView {
-                    code: answer["code"]
-                        .as_str()
-                        .ok_or("the request script minted no code")?
-                        .to_string(),
-                    expires_in: answer["expires_in"].as_i64().unwrap_or(300),
-                })
-            })
-            .await
-            .map_err(|e| format!("join: {e}"))?
-        }
-    }
-}
-
-/// The pane's await payload: the displayed code plus the identity it was
-/// minted under (the scripts lane forwards everything; the gateway lane
-/// keys on node_id).
-#[derive(serde::Deserialize, serde::Serialize)]
-struct PairingAwaitArgs {
-    gateway: Option<String>,
-    node_id: String,
-    code: String,
-    name: Option<String>,
-    tier: Option<u8>,
-}
-
-#[tauri::command]
-async fn pairing_await(
-    state: State<'_, AppState>,
-    args: PairingAwaitArgs,
-) -> Result<serde_json::Value, String> {
-    let pairing = state
-        .pairing
-        .clone()
-        .ok_or("this build declares no pairing step")?;
-    let script = match &pairing.source {
-        shun::config::PairingSource::Gateway { .. } => None,
-        shun::config::PairingSource::Scripts {
-            request: _,
-            r#await: await_script,
-            record: _,
-        } => Some(await_script.clone()),
-    };
-    match script {
-        None => {
-            let gateway = args
-                .gateway
-                .clone()
-                .unwrap_or_else(|| official_gateway(&pairing));
-            let client = shun::pairing::PairingClient::new(&gateway)?;
-            tauri::async_runtime::spawn_blocking(move || {
-                client
-                    .await_code(&args.node_id, &args.code)
-                    .map(|answer| serde_json::to_value(&answer).unwrap_or_default())
-            })
-            .await
-            .map_err(|e| format!("join: {e}"))?
-        }
-        Some(await_script) => {
-            let stage = pairing_scripts_stage(&state)?;
-            tauri::async_runtime::spawn_blocking(move || {
-                // Payload-relative declared path → staged absolute path.
-                let script = stage.join(&await_script);
-                let answers =
-                    serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
-                // The await phase legitimately parks: the gateway window is
-                // ~20s, scripts get the same budget plus headroom.
-                shun::pairing_scripts::run_pairing_script(
-                    &script,
-                    &answers,
-                    std::time::Duration::from_secs(45),
-                )
-            })
-            .await
-            .map_err(|e| format!("join: {e}"))?
-        }
-    }
-}
-
-/// The claim as the pane hands it back for persistence.
-#[derive(serde::Deserialize, serde::Serialize)]
-struct PairingRecordArgs {
-    gateway: Option<String>,
-    node_id: String,
-    device_secret: String,
-    owner: String,
-    pairing_code: String,
-}
-
-#[tauri::command]
-async fn pairing_record(
-    state: State<'_, AppState>,
-    args: PairingRecordArgs,
-) -> Result<bool, String> {
-    let pairing = state
-        .pairing
-        .clone()
-        .ok_or("this build declares no pairing step")?;
-    let script = match &pairing.source {
-        shun::config::PairingSource::Gateway { .. } => None,
-        // The gateway lane persists through the env-file handoff at
-        // install time (write_pairing_env); recording now is a no-op so
-        // the pane's call is lane-uniform.
-        shun::config::PairingSource::Scripts {
-            request: _,
-            r#await: _,
-            record,
-        } => Some(record.clone()),
-    };
-    match script {
-        None => Ok(true),
-        Some(record) => {
-            let stage = pairing_scripts_stage(&state)?;
-            tauri::async_runtime::spawn_blocking(move || {
-                // Payload-relative declared path → staged absolute path.
-                let script = stage.join(&record);
-                let answers =
-                    serde_json::to_value(&args).map_err(|e| format!("encode answers: {e}"))?;
-                shun::pairing_scripts::run_pairing_script(
-                    &script,
-                    &answers,
-                    std::time::Duration::from_secs(45),
-                )?;
-                Ok(true)
-            })
-            .await
-            .map_err(|e| format!("join: {e}"))?
-        }
-    }
-}
-
-/// The installer's self-reported system profile for the pairing
-/// inspect step: the panel's step-two preview renders this verbatim.
-/// Stdlib-only (no sysinfo dep): OS/arch from the compile-time consts,
-/// CPU count from the runtime, memory from the OS-appropriate file.
-/// Everything is best-effort — a missing value is simply omitted and
-/// the panel skips its row.
-#[tauri::command]
-fn get_device_sys() -> serde_json::Value {
-    let mut sys = serde_json::Map::new();
-    sys.insert("os".into(), format_os().into());
-    sys.insert("arch".into(), std::env::consts::ARCH.into());
-    sys.insert(
-        "cpu_cores".into(),
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(0)
-            .into(),
-    );
-    if let Some(gb) = total_memory_gb() {
-        sys.insert("memory_gb".into(), gb.into());
-    }
-    if let Some(host) = nonempty(
-        std::env::var("COMPUTERNAME")
-            .or_else(|_| std::env::var("HOSTNAME"))
-            .ok(),
-    ) {
-        sys.insert("hostname".into(), host.into());
-    }
-    serde_json::Value::Object(sys)
-}
-
-/// The human OS label: the compile-time family plus, on Windows, the
-/// release from the registry-free `winver` fallback (the manifest's
-/// product name is enough for the preview).
-fn format_os() -> String {
-    match std::env::consts::OS {
-        "windows" => "Windows".into(),
-        "macos" => "macOS".into(),
-        "linux" => "Linux".into(),
-        other => other.into(),
-    }
-}
-
-/// Total physical memory in whole GB (best-effort `/proc/meminfo` on
-/// Linux; `GlobalMemoryStatusEx` on Windows via the existing
-/// windows-sys dep — but keeping this stdlib-only, so Windows reads the
-/// same value the pane already knows: none, and the panel just skips
-/// the row).
-fn total_memory_gb() -> Option<u64> {
-    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let line = info.lines().find(|l| l.starts_with("MemTotal:"))?;
-    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
-    Some(kb / 1_048_576)
-}
-
-fn nonempty(s: Option<String>) -> Option<String> {
-    s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
-}
-
-/// The machine's hostname: the device-name field's placeholder (and the
-/// pane's prefill source on hosts where the saved identity has no name).
-#[tauri::command]
-fn get_device_hostname() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .map(|n| n.trim().to_string())
-        .ok()
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "device".into())
-}
-
-/// Cashes a gateway-lane claim for `write_pairing_env` at install time.
-#[tauri::command]
-async fn pairing_claim(
-    state: State<'_, AppState>,
-    outcome: shun::wizard::PairingOutcome,
-) -> Result<bool, String> {
-    let mut core = state.core.lock().expect("wizard core");
-    core.pairing_outcome = Some(outcome);
-    Ok(true)
-}
-
-/// Writes the claimed credential into the install dir as the manifest's
-/// `env-file` (write-then-rename; 0600 on unix). A run without a claim
-/// is a no-op so unpaired installs proceed untouched.
-#[tauri::command]
-fn write_pairing_env(state: State<'_, AppState>, dir: String) -> Result<bool, String> {
-    let Some(outcome) = state
-        .core
-        .lock()
-        .expect("wizard core")
-        .pairing_outcome
-        .clone()
-    else {
-        return Ok(false);
-    };
-    let pairing = state
-        .pairing
-        .clone()
-        .ok_or("this build declares no pairing step")?;
-    // A scripts lane persists through its `record` script; an env-file
-    // there is optional and its absence must not abort the finish flow.
-    let Some(env_file) = pairing.env_file.as_deref() else {
-        return Ok(false);
-    };
-    let path = std::path::Path::new(dir.trim()).join(env_file);
-    let mut body = String::new();
-    use std::fmt::Write as _;
-    let _ = writeln!(body, "# Written by the installer's first-run pairing step.");
-    let _ = writeln!(
-        body,
-        "# The device credential below was issued once by the pairing"
-    );
-    let _ = writeln!(body, "# service; treat it like a password.");
-    // Every VALUE passes env_safe: no control characters, no newlines —
-    // a hostile or MITM'd gateway must not smuggle extra KEY=VALUE
-    // lines into the file the installed product parses at startup.
-    let _ = writeln!(body, "SERVER_URL={}", env_safe(&outcome.gateway));
-    let _ = writeln!(body, "DEVICE_SECRET={}", env_safe(&outcome.device_secret));
-    let _ = writeln!(body, "BOOTSTRAP_NODE_ID={}", env_safe(&outcome.node_id));
-    let _ = writeln!(body, "BOOTSTRAP_GATEWAY={}", env_safe(&outcome.gateway));
-    let tmp = path.with_extension("env.tmp");
-    std::fs::write(&tmp, body).map_err(|e| format!("write pairing credential: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
-    std::fs::rename(&tmp, &path).map_err(|e| format!("install pairing credential: {e}"))?;
-    Ok(true)
-}
-
-/// One env-file VALUE: control characters and whitespace stripped —
-/// hostile input can never break the line or smuggle another one.
-fn env_safe(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| !c.is_control() && !c.is_whitespace())
-        .collect::<String>()
-        .trim_end_matches('/')
-        .to_string()
-}
-
-/// The official gateway URL preselected in the pane (gateway lane).
-fn official_gateway(pairing: &shun::config::PairingStepConfig) -> String {
-    match &pairing.source {
-        shun::config::PairingSource::Gateway { official, .. } => official.clone(),
-        _ => String::new(),
-    }
-}
-
 /// Runs the shell: webview face first, egui fallback when the webview
 /// stack is unavailable.
 fn run_shell(
@@ -2545,15 +2154,11 @@ fn run_shell(
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage({
-            let steps: Vec<shun::config::ResolvedStep> =
-                serde_json::from_str(SHUN_STEPS_JSON).expect("embedded wizard pipeline parses");
             AppState {
                 core: std::sync::Mutex::new(core),
                 payload,
                 uninstall_mode,
                 relocate_from: relocate_from.clone(),
-                pairing: steps.into_iter().find_map(|s| s.pairing),
-                pairing_stage: std::sync::Mutex::new(None),
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -2577,13 +2182,6 @@ fn run_shell(
             launch_app,
             start_install,
             download_attachment,
-            pairing_request,
-            get_device_sys,
-            pairing_await,
-            pairing_record,
-            pairing_claim,
-            get_device_hostname,
-            write_pairing_env
         ])
         .setup(move |app| {
             #[cfg(windows)]
@@ -2702,8 +2300,6 @@ fn run_passive_tauri(
     let core = WizardCore::new(config.clone(), wizard_license_docs());
     let result = tauri::Builder::default()
         .manage({
-            let steps: Vec<shun::config::ResolvedStep> =
-                serde_json::from_str(SHUN_STEPS_JSON).expect("embedded wizard pipeline parses");
             AppState {
                 core: std::sync::Mutex::new(core),
                 payload: payload.clone(),
@@ -2712,8 +2308,6 @@ fn run_passive_tauri(
                 // relocation lane never mounts it (run_headless spawns
                 // the interactive wizard instead).
                 relocate_from: None,
-                pairing: steps.into_iter().find_map(|s| s.pairing),
-                pairing_stage: std::sync::Mutex::new(None),
             }
         })
         // The passive page is a mirror, not a wizard: it reads identity,

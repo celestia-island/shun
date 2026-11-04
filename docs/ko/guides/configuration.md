@@ -59,7 +59,7 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 
 [[package.metadata.shun.steps]]            # 순서가 있는 마법사 파이프라인(선택)
 columns = 2              # 선택: 모드 그리드 열 수 (기본은 모드별 1열)
-kind = "mode"                              # mode | scope | license | content | pairing | install
+kind = "mode"                              # mode | scope | license | content | install
 align = "center"                           # 단계별 재정의: center | start(기본은 kind에 따름)
 
 [[package.metadata.shun.steps]]
@@ -87,7 +87,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 | `attachments` | 테이블 배열 | 없음 | 선택적 추가 리소스(에셋 팩): `key` / `title` / `dest` / `online.url`. 라이트 빌드는 설치 시 내려받기 |
 | `update` | table | 없음 | 업데이트 감시: `sources`(미러 기본 URL, 순서대로 탐색) + 첫 번째로 도달한 소스 아래에서 해석되는 `files` |
 | `webview2` | table | `skip` | Windows 런타임 전략 |
-| `steps` | 테이블 배열 | 기본 파이프라인 | 순서가 있는 위자드 파이프라인(`mode`/`scope`/`license`/`content`/`pairing`/`install`, 자유 순서. `install`은 정확히 하나) |
+| `steps` | 테이블 배열 | 기본 파이프라인 | 순서가 있는 위자드 파이프라인(`mode`/`scope`/`license`/`content`/`install`, 자유 순서. `install`은 정확히 하나) |
 | `script` | table | 없음 | payload 스크립트 훅: `runner` + `hooks[]`(`phase`/`script`) — 스크립팅 설계 노트 참조 |
 | `variant` | 테이블 배열 | 없음 | `shun build --variant`로 선택되는 이름 있는 빌드 구성 |
 | `signing` | table | 미서명 | 빌드 산출물에 적용되는 Authenticode / codesign 프로필 |
@@ -417,43 +417,6 @@ CLI 화면(`--silent`, ARP 제거 문자열)은 기반이라 비활성화할 수
 기록되어(복구/업데이트 패스에서 참조) 나중에 확인할 수 있습니다.
 설치된 애플리케이션 자체 설정에 무엇을 쓸지는 payload 스크립트의
 몫입니다 — shun은 사실만 내보냅니다.
-
-## 페어링 단계
-
-`pairing` 단계 종류는 이 머신을 위해 자격 증명을 청구합니다 — 역방향
-레인: 이 머신이 코드를 표시하고 운영자가 제어 패널에 입력합니다.
-하나의 창, 두 개의 레인:
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "pairing"
-
-[package.metadata.shun.steps.pairing.source]
-kind = "gateway"                     # gateway | scripts
-official = "https://gateway.example.test"   # 미리 선택되는 게이트웨이 기본 URL
-# allow-custom = true                # 사용자 지정 게이트웨이 입력도 제공(기본 켜짐)
-
-[package.metadata.shun.steps.pairing.identity]
-node-id = true                       # 게이트웨이 프로토콜의 키
-name = false                         # 선택적 장치 이름(호스트명으로 미리 채움)
-# tier = 1                           # 청구 시 부여되는 티어(제품이 고정할 때)
-
-# env-file = "pairing.env"           # gateway 레인: 청구된 자격 증명이 설치
-                                     #   디렉터리 안에 기록되는 위치(.env 형식)
-```
-
-- `gateway` — 내장 JSON-RPC 클라이언트(`pairing.request`가 코드를
-  발급, `pairing.await`가 롱폴, `pairing.accept`가 자격 증명을
-  전달). 대상 머신에 스크립트 런타임이 필요 없습니다. 이 레인은
-  `node-id`와 `env-file`을 요구합니다.
-- `scripts` — 제품 자체 활성화: `request` / `await` / `record`
-  payload 상대 Python 스크립트(`python3`, 버전 없는 이름만 있는
-  호스트에서는 `python`으로 폴백). 창의 응답은 스크립트의 **stdin**으로
-  하나의 JSON 객체로 전달됩니다 — argv는 절대 쓰지 않습니다. 각
-  단계의 stdout은 정확히 하나의 JSON 값이어야 합니다. `record`가
-  청구 결과를 저장합니다(`env-file`은 전달되지만 소비되지 않음).
-  모든 단계에는 기한이 있어 멈춘 스크립트는 기다리지 않고
-  종료됩니다.
 
 ## payload 공급원
 

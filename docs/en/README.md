@@ -47,7 +47,7 @@ runtime shell:
     verification.
 
 The wizard itself is a **declarative pipeline**
-(`mode | scope | license | content | pairing | install`, freely
+(`mode | scope | license | content | install`, freely
 ordered), its
 install pane shows a real phase-weighted progress bar and a collapsible
 terminal logging every file operation — verbosity configurable via

@@ -368,42 +368,8 @@ Tauri-on-OHOS のパッケージング**中〜難**（上流未マージ）；eg
 ### ウィザードパイプライン —— `[[package.metadata.shun.steps]]`
 
 ウィザードは、固定の モード → インストール 連鎖ではなく、**宣言的で、
-順序付きで、自由に合成できる**パイプラインになりました。6 種類のステップ
+順序付きで、自由に合成できる**パイプラインになりました。5 種類のステップ
 です：
-
-```toml
-[[package.metadata.shun.steps]]
-kind = "mode"                    # 配布モード + ディレクトリ；`ask` の
-                                 # トグル（デスクトップショートカット、スコープ）を内蔵
-[[package.metadata.shun.steps]]
-kind = "scope"                   # スタンドアロンの user/machine 選択
-[[package.metadata.shun.steps]]
-kind = "license"                 # ライセンスペイン（license / license-locales）
-[[package.metadata.shun.steps]]
-kind = "content"                 # カスタム markdown ペイン
-title = "Release notes"
-markdown = "notes.md"         # マニフェストからの相対
-[[package.metadata.shun.steps]]
-kind = "pairing"                 # 初回実行時のデバイス ペアリング
-                                 # （最大 1 つ、install より前）
-[steps.pairing.source]
-kind = "gateway"                 # built-in gateway client (JSON-RPC
-                                 # over http(s); see docs/en for the scripts lane (payload-relative paths) and the validation
-official = "https://gateway.example/server"
-allow-custom = true
-[steps.pairing.identity]
-node-id = true                   # required on the gateway lane
-[steps.pairing]
-env-file = "product.env"         # credential landing (gateway lane)
-[[package.metadata.shun.steps]]
-kind = "install"                 # 配布実行（ちょうど 1 つ必須）
-```
-
-ペアリング画面（大きなコード・ローカル刻みのカウントダウン・コピー・
-自動更新・成功カード）はシェルのプリセットされたテンプレートで、webview 面
-では既に提供されます。egui/tui のフォールバック面はまだこのステップを
-黙ってスキップするため、フォールバック面でのインストールはペアリングなしで
-進みます（登録済みの境界：フォールバックパネルは今後の作業）。
 
 `steps` を宣言しない場合は既定のパイプライン（モード → 宣言されていれば
 ライセンス → インストール）になり、従来の `custom-steps` は各自の `after`
