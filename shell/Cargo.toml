@@ -37,7 +37,11 @@ image = { version = "0.25.9", default-features = false, features = ["png", "jpeg
 # (lucide-vue-next) — the egui face rasterizes the identical SVG path
 # data instead of hand-drawn lookalikes.
 resvg = "0.45"
-rfd = "0.17.2"
+# Pinned on the same backend tauri-plugin-dialog defaults to (gtk3):
+# rfd 0.17 flipped its own default to xdg-portal, and the feature
+# unification of the two exclusive backends is a build error (rfd's
+# build script refuses both at once).
+rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 serde.workspace = true
 serde_json = "^1"
 base64 = "^0.22"
