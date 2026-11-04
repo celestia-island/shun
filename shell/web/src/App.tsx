@@ -42,6 +42,18 @@ import { renderRichText } from "./richText";
 import { invoke, listen, openDirectory, tauriWindow } from "./tauri";
 
 /**
+ * The only sanctioned bridge from manifest-controlled rich text to
+ * `innerHTML`: `renderRichText` HTML-escapes the WHOLE source before
+ * any transform runs (see ./richText.ts), so the output carries only
+ * the renderer's own tags and every document body rendered below is
+ * inert markup. Route every rich-text sink through this call — a bare
+ * `renderRichText(...)` at an `innerHTML` sink hides the boundary.
+ */
+function sanitizedRichText(body: string): string {
+  return renderRichText(body);
+}
+
+/**
  * Installer shell UI — a step-driven delivery wizard rendered with hikari
  * components: a left step rail (language → location → license → install →
  * done), centered panes, the backend-resolved license agreement, and
@@ -1054,7 +1066,7 @@ export default defineComponent({
                 <HkScrollContainer class="license-box" axis="vertical">
                   <div
                     class="license-doc"
-                    innerHTML={renderRichText(contentStep?.body ?? "")}
+                    innerHTML={sanitizedRichText(contentStep?.body ?? "")}
                   />
                 </HkScrollContainer>
               </section>
@@ -1067,7 +1079,7 @@ export default defineComponent({
             <HkScrollContainer class="license-box" axis="vertical">
               <div
                 class="license-doc"
-                innerHTML={renderRichText(
+                innerHTML={sanitizedRichText(
                   agreementDocs.value[licenseIndex.value]?.body ?? "",
                 )}
               />
