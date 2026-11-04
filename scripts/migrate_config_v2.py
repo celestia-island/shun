@@ -1,7 +1,8 @@
 # ruff: noqa
 # One-shot migration: config.rs v2 schema (shell ui / source / license / custom steps).
-p = "src/config.rs"
-s = open(p, encoding="utf-8").read()
+import pathlib
+
+s = pathlib.Path("src/config.rs").read_text(encoding="utf-8")
 
 old1 = '''/// Top-level shun configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -245,5 +246,8 @@ new5 = '''        draft.into_config(cargo_toml)
 assert old5 in s, "from_cargo_manifest tail not found"
 s = s.replace(old5, new5, 1)
 
-open(p, "w", encoding="utf-8", newline="\n").write(s)
+target = pathlib.Path("src/config.rs").resolve()
+if not target.is_relative_to(pathlib.Path.cwd()):
+    raise SystemExit(f"refusing to write outside the repository root: {target}")
+target.write_text(s, encoding="utf-8", newline="\n")
 print("config v2 written")
