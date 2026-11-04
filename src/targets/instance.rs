@@ -238,6 +238,10 @@ impl RunningInstance {
 
 #[cfg(test)]
 mod tests {
+    // The only test below is Windows-only (the RM_PROCESS_INFO shape
+    // is a Windows type), so the import follows the same gate — an
+    // ungated import is an unused-import error on the Linux lane.
+    #[cfg(windows)]
     use super::RunningInstance;
 
     /// The display name survives the lossy UTF-16 round trip; the pid
