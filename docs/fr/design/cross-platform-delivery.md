@@ -406,15 +406,8 @@ l'exerce).
 ### Le pipeline de l'assistant — `[[package.metadata.shun.steps]]`
 
 L'assistant est désormais un pipeline déclaratif, ordonné et librement
-composé, au lieu d'une séquence fixe mode → installation. Six types
+composé, au lieu d'une séquence fixe mode → installation. Cinq types
 d'étapes :
-
-Le volet d'appairage (code en grand, compte à rebours local, copie,
-rafraîchissement automatique, carte de succès) est le gabarit préfabriqué
-du shell et est déjà servi par la face webview — les faces egui/tui
-l'omettent encore silencieusement, donc une installation sur une face de
-secours reste non appairée (frontière enregistrée : le volet de secours
-reste à venir).
 
 Sans `steps` = le pipeline par défaut (mode → licence-si-déclarée →
 install) avec les `custom-steps` historiques injectés après leurs clés

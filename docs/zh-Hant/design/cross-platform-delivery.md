@@ -300,7 +300,7 @@ clang 包裝為連結器、TLS 走 ohos-openssl）；Tauri-on-OHOS 打包
 ### 精靈管線 —— `[[package.metadata.shun.steps]]`
 
 精靈從固定的 模式 → 安裝 序列變為**宣告式、有序、自由組合**的
-管線。六種步驟：
+管線。五種步驟：
 
 不宣告 `steps` = 預設管線（模式 → 有授權則授權 → 安裝），舊的
 `custom-steps` 按各自 `after` 機碼注入；兩者同時宣告是配置錯誤，

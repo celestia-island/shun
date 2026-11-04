@@ -397,7 +397,7 @@ administrador lo ejercita).
 ### El pipeline del asistente — `[[package.metadata.shun.steps]]`
 
 El asistente es ahora un pipeline declarativo, ordenado y de composición
-libre, en lugar de una secuencia fija de modo → instalación. Seis tipos
+libre, en lugar de una secuencia fija de modo → instalación. Cinco tipos
 de paso:
 
 Sin `steps` = el pipeline por defecto (modo → licencia-si-se-declaró →

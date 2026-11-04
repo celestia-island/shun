@@ -2140,77 +2140,6 @@ fn run_tauri(
     )
 }
 
-/// The installer's self-reported system profile: the panel's
-/// step-two preview renders this verbatim.
-/// Stdlib-only (no sysinfo dep): OS/arch from the compile-time consts,
-/// CPU count from the runtime, memory from the OS-appropriate file.
-/// Everything is best-effort — a missing value is simply omitted and
-/// the panel skips its row.
-#[tauri::command]
-fn get_device_sys() -> serde_json::Value {
-    let mut sys = serde_json::Map::new();
-    sys.insert("os".into(), format_os().into());
-    sys.insert("arch".into(), std::env::consts::ARCH.into());
-    sys.insert(
-        "cpu_cores".into(),
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(0)
-            .into(),
-    );
-    if let Some(gb) = total_memory_gb() {
-        sys.insert("memory_gb".into(), gb.into());
-    }
-    if let Some(host) = nonempty(
-        std::env::var("COMPUTERNAME")
-            .or_else(|_| std::env::var("HOSTNAME"))
-            .ok(),
-    ) {
-        sys.insert("hostname".into(), host.into());
-    }
-    serde_json::Value::Object(sys)
-}
-
-/// The human OS label: the compile-time family plus, on Windows, the
-/// release from the registry-free `winver` fallback (the manifest's
-/// product name is enough for the preview).
-fn format_os() -> String {
-    match std::env::consts::OS {
-        "windows" => "Windows".into(),
-        "macos" => "macOS".into(),
-        "linux" => "Linux".into(),
-        other => other.into(),
-    }
-}
-
-/// Total physical memory in whole GB (best-effort `/proc/meminfo` on
-/// Linux; `GlobalMemoryStatusEx` on Windows via the existing
-/// windows-sys dep — but keeping this stdlib-only, so Windows reads the
-/// same value the pane already knows: none, and the panel just skips
-/// the row).
-fn total_memory_gb() -> Option<u64> {
-    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let line = info.lines().find(|l| l.starts_with("MemTotal:"))?;
-    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
-    Some(kb / 1_048_576)
-}
-
-fn nonempty(s: Option<String>) -> Option<String> {
-    s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
-}
-
-/// The machine's hostname: the device-name field's placeholder (and the
-/// pane's prefill source on hosts where the saved identity has no name).
-#[tauri::command]
-fn get_device_hostname() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .map(|n| n.trim().to_string())
-        .ok()
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "device".into())
-}
-
 /// Runs the shell: webview face first, egui fallback when the webview
 /// stack is unavailable.
 fn run_shell(
@@ -2253,8 +2182,6 @@ fn run_shell(
             launch_app,
             start_install,
             download_attachment,
-            get_device_sys,
-            get_device_hostname
         ])
         .setup(move |app| {
             #[cfg(windows)]
