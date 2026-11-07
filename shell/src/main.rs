@@ -31,6 +31,7 @@ mod passive;
 mod screenshot;
 mod solar;
 mod splash;
+mod stamp_loader;
 mod terminal;
 mod tui;
 mod webview_hardening;
@@ -64,8 +65,8 @@ const SHUN_LICENSE_DOCS_JSON: &str =
     include_str!(concat!(env!("OUT_DIR"), "/shun-license-docs.json"));
 /// The product logo embedded by build.rs (kind file + bytes) — both GUIs
 /// render it in their caption bars.
-pub(crate) const LOGO_KIND: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-logo-kind.txt"));
-pub(crate) const LOGO_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shun-logo.bin"));
+const LOGO_KIND: &str = include_str!(concat!(env!("OUT_DIR"), "/shun-logo-kind.txt"));
+const LOGO_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shun-logo.bin"));
 /// Build flavor marker (the `shun build --variant` env channel), embedded
 /// at compile time; "full" when unset.
 const SHUN_FLAVOR: &str = match option_env!("SHUN_FLAVOR") {
@@ -73,13 +74,65 @@ const SHUN_FLAVOR: &str = match option_env!("SHUN_FLAVOR") {
     None => "full",
 };
 
+/// The embedded-data accessors. Every reader of the build-time embeds
+/// goes through these, so a stamped container (see `stamp_loader`)
+/// overrides the compile-time values in one place — and nothing can
+/// accidentally read a generic placeholder directly.
+fn config_json() -> &'static str {
+    stamp_loader::stamp()
+        .map(|s| s.config_json)
+        .unwrap_or(SHUN_CONFIG_JSON)
+}
+
+fn steps_json() -> &'static str {
+    stamp_loader::stamp()
+        .map(|s| s.steps_json)
+        .unwrap_or(SHUN_STEPS_JSON)
+}
+
+fn license_docs_json() -> &'static str {
+    stamp_loader::stamp()
+        .map(|s| s.license_docs_json)
+        .unwrap_or(SHUN_LICENSE_DOCS_JSON)
+}
+
+pub(crate) fn logo_bytes() -> &'static [u8] {
+    stamp_loader::stamp()
+        .map(|s| s.logo_bytes)
+        .unwrap_or(LOGO_BYTES)
+}
+
+pub(crate) fn logo_kind() -> &'static str {
+    stamp_loader::stamp()
+        .map(|s| s.logo_kind)
+        .unwrap_or(LOGO_KIND)
+}
+
+pub(crate) fn payload_bytes() -> &'static [u8] {
+    stamp_loader::stamp()
+        .map(|s| s.payload)
+        .unwrap_or(EMBEDDED_PAYLOAD)
+}
+
+pub(crate) fn flavor() -> &'static str {
+    stamp_loader::stamp()
+        .and_then(|s| s.flavor)
+        .unwrap_or(SHUN_FLAVOR)
+}
+
+/// The stamped product's sanitized name for the per-run setup log
+/// directory (`diag`); None keeps the compile-time default.
+pub(crate) fn stamped_log_name() -> Option<&'static str> {
+    stamp_loader::stamp().and_then(|s| s.log_name)
+}
+
 /// The per-locale license documents, keyed by locale (`en`, `zh-Hans`,
 /// ...). Empty when the config declares no license at all.
 type LicenseDocs = BTreeMap<String, Vec<ResolvedLicenseDoc>>;
 
 /// Parses the embedded per-locale license document map.
 fn license_docs() -> LicenseDocs {
-    serde_json::from_str(SHUN_LICENSE_DOCS_JSON).expect("embedded license docs parse")
+    serde_json::from_str(license_docs_json()).expect("embedded license docs parse")
 }
 
 /// The wizard-model license documents (`title` flattened), as the TUI
@@ -409,7 +462,7 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
     ShellView {
         product: config.product.clone(),
         modes,
-        steps: serde_json::from_str(SHUN_STEPS_JSON).expect("embedded wizard pipeline parses"),
+        steps: serde_json::from_str(steps_json()).expect("embedded wizard pipeline parses"),
         license_docs: license_docs(),
         timeline: shell.timeline,
         theme: shell.theme,
@@ -571,7 +624,7 @@ struct Identity {
 fn get_identity(state: State<'_, AppState>) -> Identity {
     Identity {
         version: state.config().product.version,
-        flavor: SHUN_FLAVOR.trim().to_string(),
+        flavor: flavor().trim().to_string(),
     }
 }
 
@@ -588,7 +641,7 @@ struct LogoView {
 
 #[tauri::command]
 fn get_logo() -> Option<LogoView> {
-    let kind = LOGO_KIND.trim();
+    let kind = logo_kind().trim();
     match kind {
         "webp" | "png" | "jpg" | "jpeg" => {
             use base64::Engine as _;
@@ -598,7 +651,7 @@ fn get_logo() -> Option<LogoView> {
                 } else {
                     kind.into()
                 },
-                data: base64::engine::general_purpose::STANDARD.encode(LOGO_BYTES),
+                data: base64::engine::general_purpose::STANDARD.encode(logo_bytes()),
             })
         }
         _ => None,
@@ -1525,6 +1578,17 @@ fn absolutize(raw: String, base: &Path) -> String {
 }
 
 fn main() {
+    // Stamp container FIRST: a present-but-corrupt container is fatal
+    // (never degrade to the compile-time embeds — installing the
+    // placeholder data instead of the product's is the worst possible
+    // outcome), and every accessor below prefers it when present.
+    if let Err(e) = stamp_loader::init() {
+        native_fatal_box(
+            "Installer is corrupt",
+            &format!("The installer's stamp container failed verification:\n{e}"),
+        );
+        std::process::exit(1);
+    }
     // parse_from takes argv0 first — feed the program name before the
     // (normalized) real arguments, or the first flag would be eaten as
     // the binary name and every face flag silently ignored.
@@ -1543,8 +1607,7 @@ fn main() {
     {
         cli.uninstall = true;
     }
-    let config: ShunConfig =
-        serde_json::from_str(SHUN_CONFIG_JSON).expect("embedded config decodes");
+    let config: ShunConfig = serde_json::from_str(config_json()).expect("embedded config decodes");
     let faces = faces_of(&config);
     // Console first, capabilities after: a GUI-subsystem binary launched
     // from a terminal holds no std handles until the parent console is
@@ -1627,7 +1690,7 @@ fn main() {
         let tauri_possible =
             webview_face_candidate && faces.contains(&shun::config::UiFace::Webview);
         let init_rx = splash::spawn_init(
-            EMBEDDED_PAYLOAD,
+            payload_bytes(),
             config.clone(),
             tauri_possible,
             cli.uninstall,
@@ -1668,8 +1731,8 @@ fn main() {
             reason,
             cli.uninstall,
             relocate_from.clone(),
-            LOGO_KIND.trim(),
-            LOGO_BYTES,
+            logo_kind().trim(),
+            logo_bytes(),
             license_docs(),
         );
         // Either the wizard ran to completion (no handoff) or the
@@ -1717,7 +1780,7 @@ fn main() {
     // then the ladder. Nothing installs the runtime here either: the
     // runtime install lives in the install step (the headless track
     // under its manifest knob, the wizard behind a consent ask).
-    let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
+    let payload = ArchivePayload::from_bytes(payload_bytes()).expect("embedded payload decodes");
     let caps = refine_caps_with_loader(UiCapabilities::probe());
     let face = resolve_face(&cli, &caps, &faces);
 
@@ -1782,8 +1845,8 @@ fn run_egui_face(
             reason,
             uninstall,
             relocate_from,
-            LOGO_KIND.trim(),
-            LOGO_BYTES,
+            logo_kind().trim(),
+            logo_bytes(),
             license_docs(),
         );
     });
@@ -2076,9 +2139,8 @@ pub(crate) fn acquire_webview2_at_install(
 /// path hands ownership to tauri, and the egui fallback needs its own
 /// pair — one extra payload decode, paid only on that rare path.
 fn embedded_pair() -> (ShunConfig, ArchivePayload) {
-    let config: ShunConfig =
-        serde_json::from_str(SHUN_CONFIG_JSON).expect("embedded config decodes");
-    let payload = ArchivePayload::from_bytes(EMBEDDED_PAYLOAD).expect("embedded payload decodes");
+    let config: ShunConfig = serde_json::from_str(config_json()).expect("embedded config decodes");
+    let payload = ArchivePayload::from_bytes(payload_bytes()).expect("embedded payload decodes");
     (config, payload)
 }
 
@@ -2093,7 +2155,7 @@ fn native_fatal_box(title: &str, body: &str) {
 }
 
 /// The embedded product logo as raw RGBA, when the manifest declares
-/// one (`LOGO_KIND`/`LOGO_BYTES`) — the window-icon source for the
+/// one (`logo_kind`/`logo_bytes`) — the window-icon source for the
 /// webview face. `None` leaves the exe-resource icon in place.
 fn decode_logo_rgba(bytes: &[u8]) -> Option<image::RgbaImage> {
     if bytes.is_empty() {
@@ -2244,7 +2306,7 @@ fn polish_window(window: &tauri::WebviewWindow) {
     // The window/taskbar icon follows the manifest's product logo — the
     // same bytes the egui face renders into its viewport — instead of the
     // generic exe resource.
-    if let Some(rgba) = decode_logo_rgba(LOGO_BYTES) {
+    if let Some(rgba) = decode_logo_rgba(logo_bytes()) {
         let (width, height) = (rgba.width(), rgba.height());
         let _ = window
             .set_icon(tauri::image::Image::new_owned(

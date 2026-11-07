@@ -44,6 +44,11 @@ pub mod fs_probe;
 pub mod msix;
 #[cfg(feature = "online")]
 pub mod payload;
+// The stamp container: generic shells made product-specific by appended
+// data (see the module docs). Shares the payload pipeline's packing, so
+// it rides the same feature gate.
+#[cfg(feature = "online")]
+pub mod stamp;
 // The online payload source rides the optional `ureq` dependency; without
 // the feature the crate still builds for offline consumers (found by the
 // evernight flasher integrating with default-features = false).

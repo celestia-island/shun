@@ -853,7 +853,7 @@ fn run_silent_egui(
     }
 
     let options = eframe::NativeOptions {
-        viewport: fallback::icon_viewport_builder(crate::LOGO_KIND, crate::LOGO_BYTES)
+        viewport: fallback::icon_viewport_builder(crate::logo_kind(), crate::logo_bytes())
             .with_decorations(false)
             .with_inner_size([PASSIVE_W, PASSIVE_H])
             .with_resizable(false)
@@ -902,7 +902,7 @@ fn run_silent_egui(
                 solar_pinned,
                 solar_tick_at: Instant::now(),
                 caption_icons: fallback::CaptionIcons::load(&cc.egui_ctx),
-                logo: fallback::load_logo(&cc.egui_ctx, crate::LOGO_KIND, crate::LOGO_BYTES),
+                logo: fallback::load_logo(&cc.egui_ctx, crate::logo_kind(), crate::logo_bytes()),
                 product: config.product.name.clone(),
                 titlebar_word,
                 version: format!("v{}", config.product.version),

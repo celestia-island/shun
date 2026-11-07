@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 
-use crate::SHUN_FLAVOR;
+use crate::flavor;
 use egui::{
     Align, Button, Color32, Context, CornerRadius, FontDefinitions, FontFamily, Frame, Layout,
     Margin, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2, pos2, vec2,
@@ -3044,7 +3044,7 @@ fn build_app(
             license_docs,
             wallpaper_rx,
             caption_icons,
-            SHUN_FLAVOR.trim().to_string(),
+            flavor().trim().to_string(),
         )
     }
 }

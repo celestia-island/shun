@@ -514,6 +514,36 @@ Applying a variant swaps the payload directory and the shell's face
 list; `env` rides the shell build so flavors can embed markers.
 Unknown names are an error.
 
+
+## Prebuilt shells
+
+`shun build` compiles the installer shell from source by default.
+The GENERIC preset breaks that coupling: shun's own release publishes
+a product-neutral shell per tag, and `shun build --shell <exe>` turns
+it into any product's installer without a compile:
+
+```bash
+SHUN_SHELL_PRESET=generic cargo build --release -p shun_installer   # once per shun tag
+shun build --manifest shun.toml --variant lite --shell shun-installer-windows-x64.exe
+```
+
+The stamped exe carries the product's manifest — config, wizard steps,
+per-locale license documents, logo, payload — inside an appended,
+sha256-verified container (the format is specified in the `shun::stamp`
+module docs), and the Windows version resource + icon are patched to
+the product identity with the OS's own resource editor. The shell
+runtime prefers the container over its compile-time embeds, so the
+from-source lane keeps working unchanged; `--shell` conflicts with
+`--shell-src` and `--target`.
+
+Consumer release jobs download the shell asset published for their
+pinned shun tag (verify the `.sha256` sidecar) and stamp it — the
+shell compile drops out of every release. The from-source lane stays
+the fallback for shell hotfixes. Take the shell binary and the `shun`
+CLI from the same release: the container format carries a revision,
+and a mismatch fails the build loudly.
+
+Authenticode signing rides after stamping: the certificate lands past the trailer, and the shell locates the trailer across it.
 ## Code signing
 
 `[package.metadata.shun.signing]` configures signing of built

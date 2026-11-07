@@ -77,6 +77,17 @@ enum CliCommand {
         /// [package.metadata.shun] plus the UI). Defaults to ./shell.
         #[arg(long)]
         shell_src: Option<PathBuf>,
+        /// Stamp a GENERIC shell binary instead of compiling the shell
+        /// crate: pass a prebuilt shell exe — the release asset (which
+        /// carries the empty stamp trailer) or a local
+        /// SHUN_SHELL_PRESET=generic cargo build (trailer-less; both are
+        /// accepted). The manifest resolves into a stamp container
+        /// appended to a copy of the shell, and the Windows version
+        /// resource + icon are patched to the product identity — no
+        /// cargo build of the shell tree at all. An exe that already
+        /// carries a container is refused (see shun::stamp).
+        #[arg(long, conflicts_with_all = ["shell_src", "target"])]
+        shell: Option<PathBuf>,
         /// Output directory for artifacts.
         #[arg(long, default_value = "dist")]
         out: PathBuf,
@@ -329,6 +340,7 @@ fn run(command: CliCommand) -> Result<(), String> {
         CliCommand::Build {
             manifest,
             shell_src,
+            shell,
             out,
             no_sign,
             variant,
@@ -350,113 +362,11 @@ fn run(command: CliCommand) -> Result<(), String> {
             }
             let product = config.product.clone();
 
-            // 1. Payload package (*.shun) — works for both embedded and
-            //    online shells (the online installer still needs the
-            //    package hosted somewhere).
-            let payload_dir = manifest.parent().unwrap_or(Path::new(".")).join(
-                config
-                    .payload
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from("payload")),
-            );
-            let archive = pack_directory(&payload_dir).map_err(|e| e.to_string())?;
-
-            // 2. Shell build: hand the manifest to the shell via env and
-            //    let its build.rs resolve config + payload embedding.
-            let shell_src = shell_src.unwrap_or_else(|| PathBuf::from("shell"));
-            let shell_manifest = shell_src.join("Cargo.toml");
-            let shell_package: toml::Value =
-                toml::from_str(&std::fs::read_to_string(&shell_manifest).map_err(|e| {
-                    format!(
-                        "cannot read shell manifest {}: {e}",
-                        shell_manifest.display()
-                    )
-                })?)
-                .map_err(|e| format!("shell manifest parse: {e}"))?;
-            // The artifact cargo writes is named after the [[bin]] target,
-            // not the package: shells routinely rename their binary
-            // (shun-installer.exe for the shun_installer package), so
-            // resolve the first [[bin]].name and fall back to the package
-            // name (the implicit bin target) only when no [[bin]] table
-            // declares one.
-            let shell_bin = shell_package
-                .get("bin")
-                .and_then(|bins| bins.as_array())
-                .and_then(|bins| bins.first())
-                .and_then(|bin| bin.get("name"))
-                .and_then(toml::Value::as_str)
-                .map(str::to_string)
-                .or_else(|| {
-                    shell_package
-                        .get("package")
-                        .and_then(|p| p.get("name"))
-                        .and_then(toml::Value::as_str)
-                        .map(str::to_string)
-                })
-                .unwrap_or_else(|| "shun-demo-shell".to_string());
-
-            let mut cargo = StdCommand::new("cargo");
-            cargo
-                .args([
-                    "build",
-                    "--release",
-                    "--manifest-path",
-                    &shell_manifest.display().to_string(),
-                ])
-                .env(
-                    "SHUN_MANIFEST",
-                    std::fs::canonicalize(&manifest).map_err(|e| e.to_string())?,
-                );
-            if let Some(variant) = &variant {
-                cargo.env("SHUN_VARIANT", variant);
-                for (key, value) in &variant_env {
-                    // RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS ride through
-                    // the static-CRT merge below instead (a plain env
-                    // write here would be clobbered by — or defeat —
-                    // the pin).
-                    if key != "RUSTFLAGS" && key != "CARGO_ENCODED_RUSTFLAGS" {
-                        cargo.env(key, value);
-                    }
-                }
-            }
-            if let Some(target) = &target {
-                cargo.arg("--target").arg(target);
-            }
-            // The static-CRT pin rides the child env: config discovery
-            // is CWD-based (a consumer-repo invocation never sees this
-            // repo's .cargo/config.toml) and a caller-set RUSTFLAGS
-            // would override config rustflags outright.
-            if is_msvc_target(target.as_deref()) {
-                ensure_static_crt(&mut cargo, &variant_env);
-            }
-            // The collection step below must read the exe from wherever
-            // cargo actually put it. An ambient CARGO_TARGET_DIR used to
-            // desync the two: the fresh shell build landed in the override
-            // while the copy step read the default location — silently
-            // shipping whatever stale exe sat there (in practice: another
-            // product's installer wearing this one's name). Pin the target
-            // dir explicitly and resolve the artifact from the same value.
-            let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| shell_src.join("..").join("target"));
-            cargo.arg("--target-dir").arg(&target_dir);
-            let status = cargo
-                .status()
-                .map_err(|e| format!("cargo build failed: {e}"))?;
-            if !status.success() {
-                return Err(format!("shell build failed (exit {status:?})"));
-            }
-
-            // 3. Collect artifacts: single-file installer + payload package.
-            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-            let target_dir = match &target {
-                Some(triple) => target_dir.join(triple),
-                None => target_dir,
-            };
-            let target_exe = target_dir.join("release").join(format!("{shell_bin}.exe"));
             // Artifact naming carries the matrix axes: product-version
             // [-variant] [-arch] -setup.exe — the variant from the flag,
-            // the arch folded from the target triple's cpu part.
+            // the arch folded from the target triple's cpu part. Computed
+            // up front: the stamp lane writes the installer in place, the
+            // cargo lane copies its built binary there.
             let stem_base = format!(
                 "{}-{}",
                 product.name.to_lowercase().replace(' ', "-"),
@@ -480,12 +390,162 @@ fn run(command: CliCommand) -> Result<(), String> {
                 })
                 .unwrap_or_default();
             let installer = out.join(format!("{stem_base}{stem_variant}{stem_arch}-setup.exe"));
-            std::fs::copy(&target_exe, &installer).map_err(|e| {
-                format!(
-                    "copy installer failed (expected {}): {e}",
-                    target_exe.display()
-                )
-            })?;
+
+            // Two lanes produce the installer binary and the payload
+            // package (*.shun — the online installer still needs the
+            // package hosted somewhere): --shell resolves the manifest
+            // into a stamp container written onto a copy of the GENERIC
+            // shell (the payload packs ONCE here — the same resolve_parts
+            // transform the compile-time build.rs runs — and the packed
+            // archive doubles as the package file), while the default
+            // lane packs the payload and builds the shell crate with the
+            // manifest handed over via env, its build.rs embedding the
+            // same shared transforms' output.
+            let (archive, built_exe) = if let Some(shell_bin) = &shell {
+                println!("[stamp] resolving the manifest into stamp parts …");
+                let manifest_canonical =
+                    std::fs::canonicalize(&manifest).map_err(|e| e.to_string())?;
+                let flavor = variant_env.get("SHUN_FLAVOR").cloned();
+                let parts =
+                    shun::stamp::resolve_parts(&manifest_canonical, variant.as_deref(), flavor)
+                        .map_err(|e| e.to_string())?;
+                let ico = if parts.logo_bytes.is_empty() {
+                    None
+                } else {
+                    println!("[stamp] encoding the product logo as the exe icon resource …");
+                    Some(
+                        shun::stamp::logo_ico_bytes(&parts.logo_bytes)
+                            .map_err(|e| e.to_string())?,
+                    )
+                };
+                let identity = shun::stamp::StampIdentity {
+                    company: product.publisher.clone().unwrap_or_default(),
+                    description: format!("{} Installer", product.name),
+                    internal_name: stem_base.clone(),
+                    version: product.version.clone(),
+                    ico,
+                };
+                std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+                shun::stamp::stamp_shell(shell_bin, &installer, &parts, &identity)
+                    .map_err(|e| e.to_string())?;
+                println!("[stamp] stamped shell written: {}", installer.display());
+                (parts.payload_archive, installer.clone())
+            } else {
+                // 1. Payload package (*.shun) — works for both embedded and
+                //    online shells (the online installer still needs the
+                //    package hosted somewhere).
+                let payload_dir = manifest.parent().unwrap_or(Path::new(".")).join(
+                    config
+                        .payload
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("payload")),
+                );
+                let archive = pack_directory(&payload_dir).map_err(|e| e.to_string())?;
+
+                // 2. Shell build: hand the manifest to the shell via env and
+                //    let its build.rs resolve config + payload embedding.
+                let shell_src = shell_src.unwrap_or_else(|| PathBuf::from("shell"));
+                let shell_manifest = shell_src.join("Cargo.toml");
+                let shell_package: toml::Value =
+                    toml::from_str(&std::fs::read_to_string(&shell_manifest).map_err(|e| {
+                        format!(
+                            "cannot read shell manifest {}: {e}",
+                            shell_manifest.display()
+                        )
+                    })?)
+                    .map_err(|e| format!("shell manifest parse: {e}"))?;
+                // The artifact cargo writes is named after the [[bin]] target,
+                // not the package: shells routinely rename their binary
+                // (shun-installer.exe for the shun_installer package), so
+                // resolve the first [[bin]].name and fall back to the package
+                // name (the implicit bin target) only when no [[bin]] table
+                // declares one.
+                let shell_bin = shell_package
+                    .get("bin")
+                    .and_then(|bins| bins.as_array())
+                    .and_then(|bins| bins.first())
+                    .and_then(|bin| bin.get("name"))
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| {
+                        shell_package
+                            .get("package")
+                            .and_then(|p| p.get("name"))
+                            .and_then(toml::Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_else(|| "shun-demo-shell".to_string());
+
+                let mut cargo = StdCommand::new("cargo");
+                cargo
+                    .args([
+                        "build",
+                        "--release",
+                        "--manifest-path",
+                        &shell_manifest.display().to_string(),
+                    ])
+                    .env(
+                        "SHUN_MANIFEST",
+                        std::fs::canonicalize(&manifest).map_err(|e| e.to_string())?,
+                    );
+                if let Some(variant) = &variant {
+                    cargo.env("SHUN_VARIANT", variant);
+                    for (key, value) in &variant_env {
+                        // RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS ride through
+                        // the static-CRT merge below instead (a plain env
+                        // write here would be clobbered by — or defeat —
+                        // the pin).
+                        if key != "RUSTFLAGS" && key != "CARGO_ENCODED_RUSTFLAGS" {
+                            cargo.env(key, value);
+                        }
+                    }
+                }
+                if let Some(target) = &target {
+                    cargo.arg("--target").arg(target);
+                }
+                // The static-CRT pin rides the child env: config discovery
+                // is CWD-based (a consumer-repo invocation never sees this
+                // repo's .cargo/config.toml) and a caller-set RUSTFLAGS
+                // would override config rustflags outright.
+                if is_msvc_target(target.as_deref()) {
+                    ensure_static_crt(&mut cargo, &variant_env);
+                }
+                // The collection step below must read the exe from wherever
+                // cargo actually put it. An ambient CARGO_TARGET_DIR used to
+                // desync the two: the fresh shell build landed in the override
+                // while the copy step read the default location — silently
+                // shipping whatever stale exe sat there (in practice: another
+                // product's installer wearing this one's name). Pin the target
+                // dir explicitly and resolve the artifact from the same value.
+                let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| shell_src.join("..").join("target"));
+                cargo.arg("--target-dir").arg(&target_dir);
+                let status = cargo
+                    .status()
+                    .map_err(|e| format!("cargo build failed: {e}"))?;
+                if !status.success() {
+                    return Err(format!("shell build failed (exit {status:?})"));
+                }
+
+                let target_dir = match &target {
+                    Some(triple) => target_dir.join(triple),
+                    None => target_dir,
+                };
+                let target_exe = target_dir.join("release").join(format!("{shell_bin}.exe"));
+                (archive, target_exe)
+            };
+
+            // 3. Collect artifacts: single-file installer + payload package.
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            if built_exe != installer {
+                std::fs::copy(&built_exe, &installer).map_err(|e| {
+                    format!(
+                        "copy installer failed (expected {}): {e}",
+                        built_exe.display()
+                    )
+                })?;
+            }
             let package = out.join(format!(
                 "{}.shun",
                 product.name.to_lowercase().replace(' ', "-")
