@@ -24,6 +24,7 @@ use shun::stamp::{ContainerIndex, StampMeta, TRAILER_LEN, entry, parse_tail, ver
 
 /// The stamped data this run should embed, when the exe carries a
 /// container.
+#[derive(Debug)]
 pub struct StampData {
     pub config_json: &'static str,
     pub steps_json: &'static str,
@@ -61,19 +62,25 @@ pub fn stamp() -> Option<&'static StampData> {
 
 fn load() -> Result<Option<StampData>, String> {
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-    let mut file = std::fs::File::open(&exe).map_err(|e| format!("open {}: {e}", exe.display()))?;
+    load_from(&exe)
+}
+
+/// Load the stamp container from an explicit exe path — the testable
+/// core of [`load\`] (`load` points it at `current_exe`).
+pub(crate) fn load_from(path: &std::path::Path) -> Result<Option<StampData>, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     let total_len = file
         .metadata()
-        .map_err(|e| format!("metadata {}: {e}", exe.display()))?
+        .map_err(|e| format!("metadata {}: {e}", path.display()))?
         .len();
     if total_len < TRAILER_LEN as u64 {
         return Ok(None);
     }
     file.seek(SeekFrom::Start(total_len - TRAILER_LEN as u64))
-        .map_err(|e| format!("seek {}: {e}", exe.display()))?;
+        .map_err(|e| format!("seek {}: {e}", path.display()))?;
     let mut tail = [0u8; TRAILER_LEN];
     file.read_exact(&mut tail)
-        .map_err(|e| format!("read trailer {}: {e}", exe.display()))?;
+        .map_err(|e| format!("read trailer {}: {e}", path.display()))?;
     let trailer = match parse_tail(&tail, total_len) {
         Ok(t) => t,
         // No trailer magic: the compile-time embeds stand (a demo or
@@ -93,7 +100,7 @@ fn load() -> Result<Option<StampData>, String> {
             .len(trailer.len as usize)
             .map(&file)
     }
-    .map_err(|e| format!("map stamp container in {}: {e}", exe.display()))?;
+    .map_err(|e| format!("map stamp container in {}: {e}", path.display()))?;
     let container: &'static [u8] = Box::leak(Box::new(mmap));
     verify_container(&trailer, container)?;
     let index = ContainerIndex::parse(container)?;
@@ -144,5 +151,87 @@ fn leak_option_string(s: String) -> Option<&'static str> {
         None
     } else {
         Some(Box::leak(s.into_boxed_str()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shun::stamp::{build_trailer, StampMeta, StampParts};
+
+    /// Hand-assemble a stamped exe (no OS resource editor involved): the
+    /// loader's input is just bytes, and this exercises the exact trailer
+    /// + container + mmap path `main` rides.
+    fn write_stamped(path: &std::path::Path) -> StampParts {
+        let parts = StampParts {
+            config_json: r#"{"product":{"name":"SmokeTest"}}"#.into(),
+            steps_json: "[]".into(),
+            license_docs_json: "{}".into(),
+            logo_bytes: vec![1, 2, 3],
+            logo_kind: "png".into(),
+            payload_archive: b"payload-bytes".to_vec(),
+            meta: StampMeta {
+                shun_version: "0.6.33".into(),
+                product_name: "SmokeTest".into(),
+                product_version: "1.2.3".into(),
+                variant: Some("lite".into()),
+                flavor: "lite".into(),
+                log_name: "SmokeTest".into(),
+            },
+        };
+        let container = parts.pack_container().expect("pack");
+        let mut data = b"MZfake shell".to_vec();
+        let trailer = build_trailer(data.len() as u64, &container);
+        data.extend_from_slice(&container);
+        data.extend_from_slice(&trailer);
+        std::fs::write(path, &data).expect("write stamped fixture");
+        parts
+    }
+
+    fn unique_path(name: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("shun-loader-test-{}-{}", std::process::id(), name));
+        p
+    }
+
+    #[test]
+    fn stamped_file_loads_back_through_the_container() {
+        let path = unique_path("ok.exe");
+        write_stamped(&path);
+        let loaded = load_from(&path)
+            .expect("load succeeds")
+            .expect("container present");
+        assert_eq!(loaded.config_json, r#"{"product":{"name":"SmokeTest"}}"#);
+        assert_eq!(loaded.steps_json, "[]");
+        assert_eq!(loaded.logo_bytes, &[1, 2, 3]);
+        assert_eq!(loaded.logo_kind, "png");
+        assert_eq!(loaded.payload, b"payload-bytes");
+        assert_eq!(loaded.flavor, Some("lite"));
+        assert_eq!(loaded.log_name, Some("SmokeTest"));
+        drop(loaded);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_corrupt_container_is_fatal_not_a_silent_fallback() {
+        let path = unique_path("corrupt.exe");
+        write_stamped(&path);
+        let mut data = std::fs::read(&path).unwrap();
+        // flip one container byte: the sha256 must stop the load
+        let idx = data.len() - 64 - 10;
+        data[idx] ^= 0xff;
+        std::fs::write(&path, &data).unwrap();
+        let err = load_from(&path).expect_err("corrupt container is fatal");
+        assert!(err.contains("sha256"), "unexpected error: {err}");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn no_trailer_falls_back_to_none() {
+        let path = unique_path("plain.exe");
+        std::fs::write(&path, b"MZ plain build").unwrap();
+        let loaded = load_from(&path).expect("load succeeds");
+        assert!(loaded.is_none(), "a plain exe carries no container");
+        let _ = std::fs::remove_file(&path);
     }
 }
