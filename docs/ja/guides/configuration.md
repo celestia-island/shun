@@ -541,6 +541,8 @@ shun build --manifest shun.toml --variant lite --shell shun-installer-windows-x6
 残ります。シェルバイナリと `shun` CLI は同じリリースから取得して
 ください:コンテナ形式はリビジョンを携えており、不一致はビルド時に
 大声で失敗します。
+
+Authenticode 署名はスタンプの後で行われます:証明書はトレーラーの後ろに置かれ、シェルはそれをまたいでトレーラーを特定します。
 ## コード署名
 
 `[package.metadata.shun.signing]` は成果物の署名を設定します——

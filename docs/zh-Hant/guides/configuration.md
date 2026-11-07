@@ -453,6 +453,8 @@ shun build --manifest shun.toml --variant lite --shell shun-installer-windows-x6
 `.sha256` 附屬檔案)並蓋章——shell 編譯從此退出每一次發版。原始碼編譯
 通道仍保留為 shell 熱修的兜底。shell 二進位與 `shun` CLI 請取自同一
 發布:容器格式帶有修訂號,不匹配會在建置時報錯。
+
+Authenticode 簽署在蓋章之後進行:憑證落在 trailer 之後,shell 會跨過它定位 trailer。
 ## 程式碼簽署
 
 `[package.metadata.shun.signing]` 設定建置產物的簽署——`shun build`

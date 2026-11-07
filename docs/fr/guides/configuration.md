@@ -568,6 +568,8 @@ chaque release. La voie sources reste le repli pour les correctifs
 urgents de la shell. Prenez le binaire de la shell et le CLI `shun`
 d'une même version : le format de conteneur porte une révision et une
 divergence fait échouer la build bruyamment.
+
+La signature Authenticode intervient après l'estampillage : le certificat se place derrière le trailer, et la shell localise le trailer par-dessus.
 ## Signature du code
 
 `[package.metadata.shun.signing]` configure la signature des artefacts

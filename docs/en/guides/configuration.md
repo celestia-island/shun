@@ -542,6 +542,8 @@ shell compile drops out of every release. The from-source lane stays
 the fallback for shell hotfixes. Take the shell binary and the `shun`
 CLI from the same release: the container format carries a revision,
 and a mismatch fails the build loudly.
+
+Authenticode signing rides after stamping: the certificate lands past the trailer, and the shell locates the trailer across it.
 ## Code signing
 
 `[package.metadata.shun.signing]` configures signing of built

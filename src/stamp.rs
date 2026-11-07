@@ -364,27 +364,28 @@ pub fn stamp_shell(
     // run before the linker, so nothing can have appended one yet) or a
     // PUBLISHED generic asset (the release job bakes
     // `Trailer::generic` on). Both stamp; an already-stamped exe does
-    // not.
-    let body_len = match parse_trailer(&exe) {
-        Err(_) => {
-            if !exe.starts_with(b"MZ") {
-                return Err(format!(
-                    "{} is neither a PE image nor a shun shell binary",
-                    shell_exe.display()
-                ));
-            }
-            exe.len()
+    // not. A magic-bearing exe whose trailer does not parse (unknown rev,
+    // bad flags, non-abutting range) fails LOUDLY — stamping over it
+    // would bury whatever went wrong.
+    let trailer_at_end = exe.len() >= TRAILER_LEN
+        && &exe[exe.len() - TRAILER_LEN..exe.len() - TRAILER_LEN + 8] == MAGIC;
+    let body_len = if trailer_at_end {
+        let trailer = parse_trailer(&exe)?;
+        if trailer.len != 0 {
+            return Err(format!(
+                "shell binary {} already carries a container ({} bytes) — stamp the GENERIC shell",
+                shell_exe.display(),
+                trailer.len
+            ));
         }
-        Ok(trailer) => {
-            if trailer.len != 0 {
-                return Err(format!(
-                    "shell binary {} already carries a container ({} bytes) — stamp the GENERIC shell",
-                    shell_exe.display(),
-                    trailer.len
-                ));
-            }
-            exe.len() - TRAILER_LEN
-        }
+        exe.len() - TRAILER_LEN
+    } else if exe.starts_with(b"MZ") {
+        exe.len()
+    } else {
+        return Err(format!(
+            "{} is neither a PE image nor a shun shell binary",
+            shell_exe.display()
+        ));
     };
 
     // 1. Identity resources FIRST, on a plain exe file: the OS resource
@@ -409,9 +410,26 @@ pub fn stamp_shell(
 
     // 2. Container + trailer append — the overlay lands last, after the
     //    resource editor has finished rewriting the PE.
+    //
+    //    The container starts at the PATCHED file's true end: updating
+    //    resources resizes sections (the .rsrc growth alone is tens of
+    //    KB), so the pre-patch length is useless here — truncating to it
+    //    would cut the last section's tail and park the container inside
+    //    a live section. If the resource editor preserved the baked
+    //    empty-container trailer, strip it; if it dropped it, the patched
+    //    bytes are the body in full.
+    let body_len = match parse_trailer(&exe) {
+        Ok(trailer) if trailer.len == 0 => exe.len() - TRAILER_LEN,
+        Ok(_) => {
+            return Err(
+                "the identity-patched exe unexpectedly carries a non-empty container".into(),
+            );
+        }
+        Err(_) => exe.len(),
+    };
     let mut out = exe;
     out.truncate(body_len);
-    let offset = out.len() as u64;
+    let offset = body_len as u64;
     let container = parts.pack_container()?;
     let trailer = build_trailer(offset, &container);
     out.extend_from_slice(&container);
@@ -724,20 +742,24 @@ pub fn payload_archive(config: &ShunConfig, manifest_dir: &Path) -> Result<Vec<u
 }
 
 /// The product logo bytes + format kind (empty bytes and "none" when the
-/// manifest declares no logo).
-pub fn logo_parts(config: &ShunConfig, manifest_dir: &Path) -> (Vec<u8>, String) {
+/// manifest declares no logo). A logo DECLARED but unreadable is an
+/// error — a silently missing title-bar logo is a broken theme, and the
+/// wallpaper lane already fails loudly for the same reason.
+pub fn logo_parts(config: &ShunConfig, manifest_dir: &Path) -> Result<(Vec<u8>, String), String> {
     let Some(logo) = config.product.logo.as_ref() else {
-        return (Vec::new(), "none".into());
+        return Ok((Vec::new(), "none".into()));
     };
-    let bytes = std::fs::read(manifest_dir.join(logo)).unwrap_or_default();
+    let bytes = std::fs::read(manifest_dir.join(logo))
+        .map_err(|e| format!("logo {}: {e}", manifest_dir.join(logo).display()))?;
     if bytes.is_empty() {
-        return (Vec::new(), "none".into());
+        return Ok((Vec::new(), "none".into()));
     }
     let kind = Path::new(logo)
         .extension()
         .map(|e| e.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "none".into());
-    (bytes, kind)
+        .unwrap_or_else(|| "none".into())
+        .to_lowercase();
+    Ok((bytes, kind))
 }
 
 /// Resolve every part a stamped shell embeds.
@@ -750,7 +772,7 @@ pub fn resolve_parts(
     let steps_json = steps_json(&config, &manifest_dir)?;
     let license_docs_json = license_docs_json(&config, &manifest_dir)?;
     let payload_archive = payload_archive(&config, &manifest_dir)?;
-    let (logo_bytes, logo_kind) = logo_parts(&config, &manifest_dir);
+    let (logo_bytes, logo_kind) = logo_parts(&config, &manifest_dir)?;
     let log_name: String = config
         .product
         .name

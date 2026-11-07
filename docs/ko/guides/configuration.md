@@ -509,6 +509,8 @@ shun build --manifest shun.toml --variant lite --shell shun-installer-windows-x6
 릴리스에서 사라집니다. 소스 빌드 레인은 셸 핫픽스용 폴백으로 남습니다.
 셸 바이너리와 `shun` CLI는 같은 릴리스에서 가져오세요: 컨테이너 형식은
 리비전을 실어 다니며, 불일치는 빌드가 큰소리로 실패하게 만듭니다.
+
+Authenticode 서명은 스탬핑 이후에 이루어집니다: 인증서가 트레일러 뒤에 놓이며, 셸은 그것을 건너뛰어 트레일러를 찾습니다.
 ## 코드 서명
 
 `[package.metadata.shun.signing]`은 빌드 산출물의 서명을 설정합니다 —

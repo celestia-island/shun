@@ -569,6 +569,8 @@ vía desde fuentes queda como respaldo para hotfixes de la shell. Toma el
 binario de la shell y el CLI `shun` del mismo release: el formato de
 contenedor lleva una revisión y un desajuste hace fallar la build de
 forma sonora.
+
+La firma Authenticode llega después del sellado: el certificado se coloca tras el tráiler y la shell localiza el tráiler a través de él.
 ## Firma de código
 
 `[package.metadata.shun.signing]` configura la firma de los artefactos

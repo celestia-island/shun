@@ -78,13 +78,14 @@ enum CliCommand {
         #[arg(long)]
         shell_src: Option<PathBuf>,
         /// Stamp a GENERIC shell binary instead of compiling the shell
-        /// crate: pass a prebuilt shell exe (a shun release asset, or a
-        /// local SHUN_SHELL_PRESET=generic cargo build). The manifest
-        /// resolves into a stamp container appended to a copy of the
-        /// shell, and the Windows version resource + icon are patched to
-        /// the product identity — no cargo build of the shell tree at
-        /// all. The binary must carry the empty stamp trailer (see
-        /// shun::stamp).
+        /// crate: pass a prebuilt shell exe — the release asset (which
+        /// carries the empty stamp trailer) or a local
+        /// SHUN_SHELL_PRESET=generic cargo build (trailer-less; both are
+        /// accepted). The manifest resolves into a stamp container
+        /// appended to a copy of the shell, and the Windows version
+        /// resource + icon are patched to the product identity — no
+        /// cargo build of the shell tree at all. An exe that already
+        /// carries a container is refused (see shun::stamp).
         #[arg(long, conflicts_with_all = ["shell_src", "target"])]
         shell: Option<PathBuf>,
         /// Output directory for artifacts.
