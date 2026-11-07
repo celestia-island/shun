@@ -436,6 +436,29 @@ SHUN_FLAVOR = "lite"                 # （及其 build.rs）——风味标记
 应用变体会替换 payload 目录与壳的界面清单；`env` 随壳构建传递，
 风味可借此嵌入标记。未知名字是错误。
 
+
+## 预构建 shell
+
+`shun build` 默认从源码编译安装器 shell。GENERIC 预设打破了这一耦合:
+shun 自己的 release 按每个 tag 发布一份产品中立的 shell,
+`shun build --shell <exe>` 无需编译即可把它变成任意产品的安装器:
+
+```bash
+SHUN_SHELL_PRESET=generic cargo build --release -p shun_installer   # 每个 shun tag 一次
+shun build --manifest shun.toml --variant lite --shell shun-installer-windows-x64.exe
+```
+
+盖章后的 exe 在文件尾部携带产品的 manifest——配置、向导步骤、各语言
+许可文档、logo、payload——存放在一段经 sha256 校验的追加容器中(格式
+规范见 `shun::stamp` 模块文档);Windows 版本资源与图标则由操作系统
+自带的资源编辑器补写为产品身份。shell 运行时优先读取容器而非编译期
+内嵌,因此从源码编译的通道保持不变;`--shell` 与 `--shell-src`、
+`--target` 互斥。
+
+消费方的 release 任务下载与其锁定的 shun tag 对应的 shell 资产(校验
+`.sha256` 旁路文件)并盖章——shell 编译从此退出每一次发版。源码编译
+通道仍保留为 shell 热修的兜底。shell 二进制与 `shun` CLI 请取自同一
+发布:容器格式带有修订号,不匹配会在构建时报错。
 ## 代码签名
 
 `[package.metadata.shun.signing]` 配置构建产物的签名——`shun build`

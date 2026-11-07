@@ -9,40 +9,51 @@ permissions:
 
 jobs:
   build-windows:
-    name: Windows installer shell
+    # The GENERIC installer shell: a product-neutral build whose
+    # placeholder embeds are replaced at stamp time (`shun build --shell`
+    # appends the product's manifest container and patches the Windows
+    # identity). Published raw + sha256 sidecar so consumer release jobs
+    # download ONE warm artifact instead of compiling the whole
+    # tauri+egui shell tree on every release of their own.
+    name: Windows installer shell (generic, stamp-ready)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-node@v4
+      - name: Cache cargo
+        uses: actions/cache@v4
         with:
-          node-version: 22
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-shell-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-shell-
 
-      - name: Install pnpm
-        run: npm install -g pnpm@11
-
-      - name: Build shell frontend
-        working-directory: shell/web
-        run: |
-          pnpm install
-          pnpm build
-
-      - name: Build demo shell
+      # The committed shell/web/dist satisfies tauri-build's frontendDist
+      # — no node toolchain on this lane (the tracked dist is the same
+      # artifact local builds embed).
+      - name: Build the generic shell
+        env:
+          SHUN_SHELL_PRESET: generic
         run: cargo build --release -p shun_installer
 
-      - name: Package artifact
+      - name: Package artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target\release\shun-installer.exe dist\shun-installer-windows-x64.exe
-          Compress-Archive -Path dist\shun-installer-windows-x64.exe -DestinationPath shun-installer-windows-x64.zip
+          $sha = (Get-FileHash dist\shun-installer-windows-x64.exe -Algorithm SHA256).Hash.ToLower()
+          "$sha  shun-installer-windows-x64.exe" | Out-File -Encoding ascii dist\shun-installer-windows-x64.exe.sha256
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: shun-installer-windows-x64.zip
+          files: |
+            dist/shun-installer-windows-x64.exe
+            dist/shun-installer-windows-x64.exe.sha256
 
   build-linux:
     name: Linux demo binaries

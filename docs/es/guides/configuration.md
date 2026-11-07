@@ -538,6 +538,37 @@ Aplicar una variante intercambia el directorio payload y la lista de
 caras del shell; `env` viaja con la build del shell para que los
 sabores puedan incrustar marcadores. Un nombre desconocido es error.
 
+
+## Shells preconstruidos
+
+`shun build` compila la shell de instalación desde el código fuente por
+defecto. El preajuste GENERIC rompe ese acoplamiento: el propio release
+de shun publica una shell neutra por producto en cada tag, y
+`shun build --shell <exe>` la convierte en el instalador de cualquier
+producto sin compilar:
+
+```bash
+SHUN_SHELL_PRESET=generic cargo build --release -p shun_installer   # una vez por tag de shun
+shun build --manifest shun.toml --variant lite --shell shun-installer-windows-x64.exe
+```
+
+El exe sellado lleva el manifiesto del producto —configuración, pasos
+del asistente, documentos de licencia por locale, logo, payload— dentro
+de un contenedor anexado y verificado con sha256 (el formato está
+especificado en la documentación del módulo `shun::stamp`); el recurso
+de versión de Windows y el icono se reescriben a la identidad del
+producto con el editor de recursos del propio sistema. El runtime de la
+shell prefiere el contenedor a los embebidos de compilación, así que la
+vía desde fuentes sigue funcionando igual; `--shell` entra en conflicto
+con `--shell-src` y `--target`.
+
+Los jobs de release de los consumidores descargan el asset de shell
+publicado para su tag de shun fijado (verificando el `.sha256` adjunto)
+y lo sellan — la compilación de la shell desaparece de cada release. La
+vía desde fuentes queda como respaldo para hotfixes de la shell. Toma el
+binario de la shell y el CLI `shun` del mismo release: el formato de
+contenedor lleva una revisión y un desajuste hace fallar la build de
+forma sonora.
 ## Firma de código
 
 `[package.metadata.shun.signing]` configura la firma de los artefactos

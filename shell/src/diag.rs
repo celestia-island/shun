@@ -30,7 +30,8 @@ static LOG_FILE: std::sync::OnceLock<Option<std::fs::File>> = std::sync::OnceLoc
 fn log_file() -> Option<&'static std::fs::File> {
     LOG_FILE
         .get_or_init(|| {
-            let name = option_env!("SHUN_PRODUCT_LOG_NAME").unwrap_or("installer");
+            let name = crate::stamped_log_name()
+                .unwrap_or_else(|| option_env!("SHUN_PRODUCT_LOG_NAME").unwrap_or("installer"));
             let dir = std::env::var_os("LOCALAPPDATA")?;
             let dir = std::path::Path::new(&dir)
                 .join("shun")

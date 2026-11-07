@@ -483,6 +483,32 @@ SHUN_FLAVOR = "lite"                 # (build.rs 포함) — 맛 표식
 셸 빌드에 전달되어 맛이 표식을 심을 수 있습니다. 알 수 없는 이름은
 오류입니다.
 
+
+## 사전 빌드 셸
+
+`shun build`는 기본적으로 설치 관리자 셸을 소스에서 컴파일합니다.
+GENERIC 프리셋은 이 결합을 끊습니다: shun 자체 릴리스는 태그마다
+제품 중립적인 셸을 게시하고, `shun build --shell <exe>`가 컴파일 없이
+그것을 어떤 제품의 설치 관리자로도 바꿉니다:
+
+```bash
+SHUN_SHELL_PRESET=generic cargo build --release -p shun_installer   # shun 태그마다 한 번
+shun build --manifest shun.toml --variant lite --shell shun-installer-windows-x64.exe
+```
+
+스탬프된 exe는 제품의 매니페스트(설정, 마법사 단계, 로케일별 라이선스
+문서, 로고, 페이로드)를 sha256으로 검증되는 덧붙임 컨테이너에 담아
+파일 끝에 싣습니다(형식은 `shun::stamp` 모듈 문서에 규정). Windows
+버전 리소스와 아이콘은 OS 자체 리소스 편집기로 제품 신원에 맞게
+수정됩니다. 셸 런타임은 컴파일 시점 임베드보다 컨테이너를 우선하므로
+소스 빌드 레인은 그대로 동작합니다. `--shell`은 `--shell-src` 및
+`--target`과 함께 쓸 수 없습니다.
+
+소비자 릴리스 작업은 고정된 shun 태그의 릴리스에 게시된 셸 자산을
+다운로드하고(`.sha256` 사이드카 검증) 스탬프합니다 — 셸 컴파일이 모든
+릴리스에서 사라집니다. 소스 빌드 레인은 셸 핫픽스용 폴백으로 남습니다.
+셸 바이너리와 `shun` CLI는 같은 릴리스에서 가져오세요: 컨테이너 형식은
+리비전을 실어 다니며, 불일치는 빌드가 큰소리로 실패하게 만듭니다.
 ## 코드 서명
 
 `[package.metadata.shun.signing]`은 빌드 산출물의 서명을 설정합니다 —

@@ -55,6 +55,7 @@ tauri-plugin-dialog = { version = "^2" }
 # online payload lane rides). Platform-neutral: the fallback UI runs on
 # every host the shell builds for, and so does its wallpaper.
 ureq = "^2"
+memmap2 = "0.9.12"
 
 [features]
 default = ["custom-protocol"]
