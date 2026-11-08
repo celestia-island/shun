@@ -72,6 +72,8 @@ jobs:
       # default Python (3.14) is newer than pyo3 0.23 supports — pin the
       # interpreter to the supported line.
       - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
 
       # The workspace test pass compiles the Tauri shell, whose
       # generate_context! needs the built frontend beside it (the dist
