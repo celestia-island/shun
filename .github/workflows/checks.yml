@@ -46,6 +46,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
+      # --all-features compiles the python-probe (pyo3): the runner's
+      # default Python (3.14) is newer than pyo3 0.23 supports — pin the
+      # interpreter to the supported line.
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: "3.13"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
