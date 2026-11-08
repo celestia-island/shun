@@ -349,27 +349,28 @@ pub struct StampIdentity {
 
 /// Stamp `shell_exe` into `out_path` with the product's container and
 /// identity. Windows-only (the OS resource editor patches the identity);
-/// callers on other hosts are told so instead of silently shipping a
-/// generic-identity installer.
+/// callers on other hosts get a loud refusal instead of silently shipping
+/// a generic-identity installer.
+#[cfg(windows)]
 pub fn stamp_shell(
     shell_exe: &Path,
     out_path: &Path,
     parts: &StampParts,
     identity: &StampIdentity,
 ) -> Result<(), String> {
-    let mut exe = std::fs::read(shell_exe)
+    let exe = std::fs::read(shell_exe)
         .map_err(|e| format!("read shell binary {}: {e}", shell_exe.display()))?;
     // The shell binary is either a PLAIN generic build (local
     // `SHUN_SHELL_PRESET=generic cargo build` — no trailer: build scripts
     // run before the linker, so nothing can have appended one yet) or a
-    // PUBLISHED generic asset (the release job bakes
-    // `Trailer::generic` on). Both stamp; an already-stamped exe does
-    // not. A magic-bearing exe whose trailer does not parse (unknown rev,
-    // bad flags, non-abutting range) fails LOUDLY — stamping over it
-    // would bury whatever went wrong.
+    // PUBLISHED generic asset (the release job bakes `Trailer::generic`
+    // on). Both stamp; an already-stamped exe does not. A magic-bearing
+    // exe whose trailer does not parse (unknown rev, bad flags,
+    // non-abutting range) fails LOUDLY — stamping over it would bury
+    // whatever went wrong.
     let trailer_at_end = exe.len() >= TRAILER_LEN
         && &exe[exe.len() - TRAILER_LEN..exe.len() - TRAILER_LEN + 8] == MAGIC;
-    let body_len = if trailer_at_end {
+    let input_body_len = if trailer_at_end {
         let trailer = parse_trailer(&exe)?;
         if trailer.len != 0 {
             return Err(format!(
@@ -390,23 +391,12 @@ pub fn stamp_shell(
 
     // 1. Identity resources FIRST, on a plain exe file: the OS resource
     //    editor rewrites the PE and must not meet our appended overlay.
-    #[cfg(windows)]
-    {
-        let tmp = out_path.with_extension("stamping.exe");
-        std::fs::write(&tmp, &exe[..body_len])
-            .map_err(|e| format!("write staging copy {}: {e}", tmp.display()))?;
-        stamp_win::patch_identity(&tmp, identity)?;
-        exe = std::fs::read(&tmp).map_err(|e| format!("read patched exe: {e}"))?;
-        let _ = std::fs::remove_file(&tmp);
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = identity;
-        return Err(
-            "stamping requires Windows: the version resource and icon are patched with the OS              resource editor (BeginUpdateResourceW). Run the stamp on a Windows host — the shun              release and product release CI both do."
-                .into(),
-        );
-    }
+    let tmp = out_path.with_extension("stamping.exe");
+    std::fs::write(&tmp, &exe[..input_body_len])
+        .map_err(|e| format!("write staging copy {}: {e}", tmp.display()))?;
+    stamp_win::patch_identity(&tmp, identity)?;
+    let exe = std::fs::read(&tmp).map_err(|e| format!("read patched exe: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
 
     // 2. Container + trailer append — the overlay lands last, after the
     //    resource editor has finished rewriting the PE.
@@ -440,6 +430,25 @@ pub fn stamp_shell(
     }
     std::fs::write(out_path, &out)
         .map_err(|e| format!("write artifact {}: {e}", out_path.display()))
+}
+
+/// The non-Windows stub: the identity patch needs the OS resource
+/// editor, so stamping is refused loudly instead of shipping a
+/// generic-identity installer. The container format itself (trailer,
+/// tar packing, verinfo) is host-independent and fully tested above.
+#[cfg(not(windows))]
+pub fn stamp_shell(
+    _shell_exe: &Path,
+    _out_path: &Path,
+    _parts: &StampParts,
+    _identity: &StampIdentity,
+) -> Result<(), String> {
+    Err(
+        "stamping requires Windows: the version resource and icon are patched with the OS \
+         resource editor (BeginUpdateResourceW). Run the stamp on a Windows host — the shun \
+         release and product release CI both do."
+            .into(),
+    )
 }
 
 #[cfg(windows)]
