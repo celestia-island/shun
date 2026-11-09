@@ -18,8 +18,8 @@ exclude = ["docs/", "scripts/", ".github/", "assets/", "justfile", "rust-toolcha
 # so embedded consumers (default-features = false) do not drag the
 # scripting runtime — and its transitive zip/ftp tree — into their
 # dependency graph at all.
-duckscript = { version = "0.10.0", optional = true }
-duckscriptsdk = { version = "0.11.1", optional = true }
+duckscript = { version = "0.10", optional = true }
+duckscriptsdk = { version = "0.11", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -62,7 +62,7 @@ libc = "^0.2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "^0.56"
-mslnk = "^0.1.8"
+mslnk = "0.1"
 windows-sys = { version = "0.59", features = [
   "Win32_Storage_FileSystem",
   "Win32_System_LibraryLoader",
