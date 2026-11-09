@@ -9,29 +9,29 @@ importers:
   .:
     dependencies:
       '@celestia-island/hikari':
-        specifier: ^0.55.241
+        specifier: ^0.55
         version: 0.55.241(@types/three@0.186.0)(three@0.185.1)(vue@3.5.42(typescript@7.0.2))
       lucide-vue-next:
-        specifier: ^*
+        specifier: ^1
         version: 1.0.0(vue@3.5.42(typescript@7.0.2))
       vue:
-        specifier: ^3.5.42
+        specifier: ^3
         version: 3.5.42(typescript@7.0.2)
     devDependencies:
       '@vitejs/plugin-vue':
-        specifier: ^6.0.8
+        specifier: ^6
         version: 6.0.8(vite@8.3.1(sass@1.104.0))(vue@3.5.42(typescript@7.0.2))
       '@vitejs/plugin-vue-jsx':
-        specifier: ^5.1.6
+        specifier: ^5
         version: 5.1.6(vite@8.3.1(sass@1.104.0))(vue@3.5.42(typescript@7.0.2))
       sass:
-        specifier: ^1.103.1
+        specifier: ^1
         version: 1.104.0
       typescript:
-        specifier: ^7.0.2
+        specifier: ^7
         version: 7.0.2
       vite:
-        specifier: ^8.3.0
+        specifier: ^8
         version: 8.3.1(sass@1.104.0)
 
 packages:
