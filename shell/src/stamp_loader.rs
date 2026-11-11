@@ -308,7 +308,6 @@ mod tests {
         assert_eq!(loaded.payload, b"payload-bytes");
         assert_eq!(loaded.flavor, Some("lite"));
         assert_eq!(loaded.log_name, Some("SmokeTest"));
-        drop(loaded);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -337,7 +336,7 @@ mod tests {
         data.extend_from_slice(&trailer);
 
         // Certificates start 8-byte aligned.
-        let padded = (data.len() + 7) / 8 * 8;
+        let padded = data.len().div_ceil(8) * 8;
         let mut cert = vec![0u8; 40];
         let cert_len = cert.len() as u32;
         cert[0..4].copy_from_slice(&cert_len.to_le_bytes()); // dwLength
@@ -356,7 +355,6 @@ mod tests {
             .expect("load succeeds")
             .expect("container found across the certificate");
         assert_eq!(loaded.payload, b"payload-bytes");
-        drop(loaded);
         let _ = std::fs::remove_file(&path);
     }
 
