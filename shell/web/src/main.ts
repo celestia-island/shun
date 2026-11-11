@@ -1,6 +1,6 @@
 import { createApp } from "vue";
 
-import { installHkTooltipBridge } from "@celestia-island/hikari";
+import { HToast, installHkTooltipBridge } from "@celestia-island/hikari";
 
 import App from "./App";
 import PassiveView from "./PassiveView";
@@ -25,3 +25,13 @@ if (!passive) {
 }
 
 createApp(passive ? PassiveView : App).mount("#app");
+
+// The shared toast viewport rides its own tiny app instance beside the
+// window's root: the error face's copy action speaks through hikari's
+// module-singleton toast state, and without a mounted viewport the push
+// would be invisible (2026-11-11 copy-feedback wave — hikari's constant-
+// label copy controls rely on the toast being mounted somewhere).
+const toastHost = document.createElement("div");
+toastHost.dataset.shunToastHost = "";
+document.body.appendChild(toastHost);
+createApp(HToast).mount(toastHost);

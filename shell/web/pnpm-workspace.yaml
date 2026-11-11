@@ -9,3 +9,9 @@ minimumReleaseAgeExclude:
   # everything since 0.55.194 (family contract sweeps) — shun's PathField
   # composes HkInput, so the whole input surface rides this bump.
   - '@celestia-island/hikari@0.40.18 || 0.55.194 || 0.55.241'
+  # 0.55.348 pickup (2026-11-12): hikari copy-feedback waves 1+2 — the
+  # error face's copy speaks through the toast (constant face), so the
+  # main.ts viewport actually receives pushes. 0.55.350 = same tree via a
+  # parallel dispatch (known-live-issues #take-number-bypass-350).
+  - '@celestia-island/hikari@0.55.348'
+  - '@celestia-island/hikari@0.55.350'
