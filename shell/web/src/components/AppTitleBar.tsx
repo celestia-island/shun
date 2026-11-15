@@ -7,12 +7,12 @@ import "./AppTitleBar.scss";
 /**
  * WoWSP shell around hikari's HkTitleBar. The upstream component is
  * deliberately shell-agnostic — it renders the bar and emits caption
- * events; this wrapper wires them to the Tauri window via the
- * `withGlobalTauri` global API (the shell frontend carries no
- * @tauri-apps packages), tracks the maximized state for the restore
- * glyph, and drives window dragging / double-click maximize from pointer
- * events since WebView2 does not honor CSS `app-region` in plain
- * frameless windows.
+ * events; this wrapper wires them to the Tauri window through the
+ * `@tauri-apps/api` window handle (`./tauri` wraps the explicit imports —
+ * the shell runs with `withGlobalTauri: false`, so no global object
+ * exists), tracks the maximized state for the restore glyph, and drives
+ * window dragging / double-click maximize from pointer events since
+ * WebView2 does not honor CSS `app-region` in plain frameless windows.
  */
 export default defineComponent({
   name: "AppTitleBar",
