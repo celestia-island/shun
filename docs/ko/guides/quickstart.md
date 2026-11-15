@@ -24,6 +24,8 @@ pnpm --dir shell/web install
 cargo run -p shun_installer
 ```
 
+데모 앱 자체의 webview 화면은 `demo-app/web`에서 커밋된 `demo-app/ui`로 번들됩니다. `demo-app/web/src`를 수정한 뒤에는 한 번 `pnpm --dir demo-app/web install`을 실행하고 이어서 `pnpm --dir demo-app/web build`로 다시 빌드하세요.
+
 셸은 빌드 시점에 데모 payload를 내장(단일 파일 설치 패턴)하며,
 `demo-app/Cargo.toml` → `[package.metadata.shun]`에 선언된 배포 모드를
 렌더링합니다 — 인접한 데모 crate의 매니페스트를 build.rs가 내장합니다

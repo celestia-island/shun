@@ -25,6 +25,8 @@ pnpm --dir shell/web install
 cargo run -p shun_installer
 ```
 
+The demo app's own webview face is bundled from `demo-app/web` into the committed `demo-app/ui`; after editing `demo-app/web/src`, run `pnpm --dir demo-app/web install` once and then `pnpm --dir demo-app/web build`.
+
 The shell embeds the demo payload at build time (single-file installer
 pattern) and renders the delivery modes declared in
 `demo-app/Cargo.toml` → `[package.metadata.shun]` — the sibling demo
