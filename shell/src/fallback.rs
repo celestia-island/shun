@@ -151,6 +151,11 @@ pub(crate) struct Theme {
     pub(crate) success: Color32,
     pub(crate) error: Color32,
     pub(crate) warning: Color32,
+    /// The neutral informative ink (`--color-info` in the web face's
+    /// theme.scss). It has no config override — like success/error/warning,
+    /// it is the product's identity hue, and the solid info toast band
+    /// needs it to match the web card.
+    pub(crate) info: Color32,
     /// The manifest's terminal-pane background (a solid or a gradient's
     /// midpoint), when the theme declares one.
     pub(crate) terminal_bg_override: Option<Color32>,
@@ -184,6 +189,8 @@ impl Theme {
             success: Color32::from_rgb(60, 180, 120),
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(230, 170, 50),
+            // theme.scss `--color-info: 90 160 220` (both modes).
+            info: Color32::from_rgb(90, 160, 220),
             terminal_bg_override: None,
             rail_bg_override: None,
             pane_bg_override: None,
@@ -207,6 +214,7 @@ impl Theme {
             success: Color32::from_rgb(60, 180, 120),
             error: Color32::from_rgb(220, 80, 80),
             warning: Color32::from_rgb(190, 140, 30),
+            info: Color32::from_rgb(90, 160, 220),
             terminal_bg_override: None,
             rail_bg_override: None,
             pane_bg_override: None,
@@ -874,6 +882,29 @@ struct Texts {
     installing_percent: String,
     warn_desktop_blocked: String,
     warn_aumid_blocked: String,
+    // The done page's finish-failure notices — the same copy the web face
+    // toasts for the same `FinishFailure` (its `notices` block, flattened
+    // by i18n-dump.ts). `notice_details` labels the toast action that opens
+    // the guide / details window, `notice_close` its footer button, and
+    // `notice_error_title` titles the generic details window.
+    notice_launch_blocked: String,
+    notice_launch_failed: String,
+    notice_shortcuts_failed: String,
+    notice_details: String,
+    notice_close: String,
+    notice_error_title: String,
+}
+
+/// Joins a localized notice lead with the raw failure detail — the hikari
+/// toast is one paragraph, so the backend message simply continues the
+/// sentence (`notices.launchFailed`'s "the raw message is appended").
+fn notice_with_detail(lead: &str, detail: &str) -> String {
+    match (lead.trim(), detail.trim()) {
+        ("", "") => String::new(),
+        (lead, "") => lead.to_string(),
+        ("", detail) => detail.to_string(),
+        (lead, detail) => format!("{lead} {detail}"),
+    }
 }
 
 /// The single authored string source, shared with the web face:
@@ -1058,12 +1089,63 @@ pub(crate) fn install_system_fonts(ctx: &Context) -> bool {
     // Malgun Gothic completes the locale list's script set (Hangul —
     // 한국어 is in neither Segoe UI nor YaHei, and without it the
     // picker rendered tofu).
+    #[cfg(windows)]
     const FACES: [(&str, u32, &str); 4] = [
         (r"C:\Windows\Fonts\segoeui.ttf", 0, "segoe-ui"),
         (r"C:\Windows\Fonts\msyh.ttc", 0, "ms-yahei"),
         (r"C:\Windows\Fonts\malgun.ttf", 0, "malgun-gothic"),
         (r"C:\Windows\Fonts\consola.ttf", 0, "consolas"),
     ];
+    // The Linux/macOS chain, the SAME shape (a Latin primary first, the
+    // CJK face behind it in the fallback chain). None of the Windows
+    // paths exist off Windows, so without this leg the egui face renders
+    // every non-ASCII glyph as tofu — the X11 screenshot hosts hit it on
+    // the first frame.
+    //
+    // Face indices, verified on this host with
+    // `fc-query --format '{index}: {family}' <file>`: Noto Sans CJK ships
+    // as a ten-face OTC — 0 JP, 1 KR, **2 SC**, 3 TC, 4 HK, 5–9 the Mono
+    // variants — and 2 is the Simplified face this product's default
+    // locale needs. PingFang's collection index 0 is the macOS system face.
+    // Noto Sans CJK SC also carries Kana and Hangul, so it covers the
+    // ja/ko locales without the Windows chain's separate Malgun leg (that
+    // probe stays Windows-only: the glyph is the same, the font is not).
+    #[cfg(not(windows))]
+    const FACES: [(&str, u32, &str); 4] = [
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            0,
+            "dejavu-sans",
+        ),
+        (
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            2,
+            "noto-cjk-sc",
+        ),
+        ("/System/Library/Fonts/PingFang.ttc", 0, "pingfang"),
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            0,
+            "dejavu-mono",
+        ),
+    ];
+    // The chain's ends, per platform: the Latin primary and the faces that
+    // supply the CJK scripts (the fallback probe glyph is 中 for both — a
+    // Hangul marker against a font that has no Hangul would fall through
+    // and read as "no CJK landed").
+    #[cfg(windows)]
+    const PROPORTIONAL_PRIMARY: &str = "segoe-ui";
+    #[cfg(not(windows))]
+    const PROPORTIONAL_PRIMARY: &str = "dejavu-sans";
+    #[cfg(windows)]
+    const MONOSPACE_PRIMARY: &str = "consolas";
+    #[cfg(not(windows))]
+    const MONOSPACE_PRIMARY: &str = "dejavu-mono";
+    #[cfg(windows)]
+    const CJK_FALLBACKS: &[(&str, char)] =
+        &[("ms-yahei", '\u{4e2d}'), ("malgun-gothic", '\u{d55c}')];
+    #[cfg(not(windows))]
+    const CJK_FALLBACKS: &[(&str, char)] = &[("noto-cjk-sc", '\u{4e2d}'), ("pingfang", '\u{4e2d}')];
     // The face bytes load once and are LEAKED: every family-scoped
     // clone below borrows the same buffer (FontData's Cow would
     // otherwise copy ~19 MB per clone for the YaHei collection).
@@ -1093,15 +1175,15 @@ pub(crate) fn install_system_fonts(ctx: &Context) -> bool {
     let families: [FamilyPlan; 2] = [
         (
             FontFamily::Proportional,
-            "segoe-ui",
+            PROPORTIONAL_PRIMARY,
             "prop",
-            &[("ms-yahei", '\u{4e2d}'), ("malgun-gothic", '\u{d55c}')],
+            CJK_FALLBACKS,
         ),
         (
             FontFamily::Monospace,
-            "consolas",
+            MONOSPACE_PRIMARY,
             "mono",
-            &[("ms-yahei", '\u{4e2d}'), ("malgun-gothic", '\u{d55c}')],
+            CJK_FALLBACKS,
         ),
     ];
     let insert_face =
@@ -1143,12 +1225,22 @@ pub(crate) fn install_system_fonts(ctx: &Context) -> bool {
         }
     }
     calibrate_fallback_baselines(&mut fonts, &calibrated, &faces);
-    let system_cjk = faces.contains_key("ms-yahei");
+    // Any CJK-supplying face of the platform's chain counts: Windows
+    // answers with YaHei, Linux with Noto Sans CJK SC, macOS with PingFang.
+    let system_cjk = CJK_FALLBACKS
+        .iter()
+        .any(|(name, _)| faces.contains_key(name));
 
     if system_cjk {
         ctx.set_fonts(fonts);
         return true;
     }
+
+    // Debug-only breadcrumb: a host without any CJK face renders every
+    // non-ASCII glyph as tofu, and the screenshot/verification passes are
+    // exactly where that must never silently recur.
+    #[cfg(debug_assertions)]
+    crate::diag!("shun: no CJK font face found; non-ASCII may render as tofu");
 
     // Legacy probe: no Segoe/YaHei (stripped-down Windows or another
     // OS) — the old SimHei-family CJK fallback still applies, so zh
@@ -1753,6 +1845,14 @@ struct FallbackApp {
     outcome: Option<Outcome>,
     entry: Option<PathBuf>,
     receiver: Receiver<WorkerMsg>,
+    /// The hikari-style notice stack (HkToast mirror). Drawn after every
+    /// panel — and after the guide modal — so a notice is the topmost
+    /// surface of the frame and can never sit under the footer's primary
+    /// action.
+    toast: crate::toast::ToastHost,
+    /// The help / error-details window (HkModal mirror): the embedded
+    /// app-control guide, or the raw finish-failure message.
+    guide: crate::guide::GuideWindow,
 }
 
 /// Shared control metrics for the egui face — one set of heights and
@@ -2056,6 +2156,69 @@ impl FallbackApp {
             outcome: None,
             entry: None,
             receiver,
+            toast: crate::toast::ToastHost::new(),
+            guide: crate::guide::GuideWindow::new(),
+        }
+    }
+
+    /// The done page's finish-failure notices — the egui face's half of
+    /// the shared [`shun::failure::FinishFailure`] contract.
+    ///
+    /// The window STAYS OPEN. This page used to `let _ = apply_finish(..)`
+    /// and then exit unconditionally, so a launch refused by Windows
+    /// application-control policy (os error 4551 / 0x11C7) closed the
+    /// installer as if it had worked and the one fact the user needed —
+    /// the install succeeded, the OS blocked the launch, here is the
+    /// remedy — was nowhere on screen. Each failure becomes a hikari
+    /// toast now: the app-control block carries the embedded guide behind
+    /// its action, every other failure the generic details window, so the
+    /// raw message never dies behind the toast's three-row clamp.
+    fn report_finish_failure(&mut self, failure: shun::failure::FinishFailure) {
+        use shun::failure::{FailureKind, FinishStage};
+        let product = self.config.product.name.clone();
+        let with_product = |raw: &str| raw.replace("%PRODUCT%", &product);
+        let details = self.texts.notice_details.clone();
+        let error_title = self.texts.notice_error_title.clone();
+        let body = with_product(&failure.message);
+        let show_details = |toast: &mut crate::toast::ToastHost, lead: String, body: String| {
+            let text = notice_with_detail(&lead, &body);
+            toast.push_with_action(
+                crate::toast::ToastTone::Error,
+                text,
+                details.clone(),
+                crate::toast::ToastIntent::ShowDetails {
+                    title: error_title.clone(),
+                    body,
+                },
+                true,
+            );
+        };
+        match failure.stage {
+            FinishStage::Shortcuts => {
+                let lead = with_product(&self.texts.notice_shortcuts_failed);
+                show_details(&mut self.toast, lead, body);
+            }
+            FinishStage::Launch => {
+                // The classifier names the topic; matching on the kind
+                // keeps a future topic that maps to app-control working.
+                let app_control = failure.kind == FailureKind::AppControlBlocked
+                    || failure.help_topic.as_deref() == Some(shun::failure::HELP_TOPIC_APP_CONTROL);
+                if app_control {
+                    let text = with_product(&self.texts.notice_launch_blocked);
+                    self.toast.push_with_action(
+                        crate::toast::ToastTone::Error,
+                        text,
+                        details,
+                        crate::toast::ToastIntent::OpenGuide {
+                            topic: shun::failure::HELP_TOPIC_APP_CONTROL.to_string(),
+                        },
+                        true,
+                    );
+                } else {
+                    let lead = with_product(&self.texts.notice_launch_failed);
+                    show_details(&mut self.toast, lead, body);
+                }
+            }
         }
     }
 
@@ -2135,6 +2298,46 @@ impl FallbackApp {
                 ));
             }
             _ => {}
+        }
+    }
+
+    /// Debug-only VERIFICATION HOOK (release builds ignore it entirely):
+    ///
+    /// - `SHUN_SHELL_PREVIEW=done-notice` — boot straight into the done
+    ///   page with the app-control notice already on the toast stack;
+    /// - `SHUN_SHELL_PREVIEW=done-notice+guide` — the same, with the
+    ///   app-control guide window open over it.
+    ///
+    /// This is the deterministic way the X11 screenshot pass captures the
+    /// two new surfaces without walking the wizard. The directory is a
+    /// temp path (nothing is installed) and the notice is produced by the
+    /// REAL failure path ([`Self::report_finish_failure`] from the same
+    /// classified `FinishFailure` a blocked launch yields), so a
+    /// screenshot can never show copy the shipped path would not.
+    #[cfg(debug_assertions)]
+    fn debug_preview(&mut self) {
+        let Ok(preview) = std::env::var("SHUN_SHELL_PREVIEW") else {
+            return;
+        };
+        let open_guide = match preview.as_str() {
+            "done-notice" => false,
+            "done-notice+guide" => true,
+            _ => return,
+        };
+        self.stage = Stage::Finished;
+        self.outcome = Some(Outcome::InstallOk);
+        self.dir = std::env::temp_dir()
+            .join(format!("{}-preview", self.config.product.name))
+            .display()
+            .to_string();
+        self.report_finish_failure(shun::failure::FinishFailure::from_os_error(
+            shun::failure::FinishStage::Launch,
+            shun::failure::ERROR_APPLICATION_CONTROL_POLICY_BLOCKED,
+            "io error: the process creation was blocked by application-control \
+             policy (os error 4551)",
+        ));
+        if open_guide {
+            self.guide.open_topic(shun::failure::HELP_TOPIC_APP_CONTROL);
         }
     }
 
@@ -2801,6 +3004,19 @@ pub(crate) fn icon_viewport_builder(logo_kind: &str, logo_bytes: &[u8]) -> egui:
         return egui::ViewportBuilder::default();
     }
     let icon = image::load_from_memory(logo_bytes).ok().map(|img| {
+        // Downscale BEFORE the pixels reach winit: see ICON_MAX_EDGE. The
+        // aspect ratio is preserved (a 2048×1024 logo becomes 256×128) and
+        // an already-small logo passes through untouched.
+        let (width, height) = (img.width(), img.height());
+        let edge = width.max(height);
+        let img = if edge > ICON_MAX_EDGE {
+            let scale = ICON_MAX_EDGE as f32 / edge as f32;
+            let target_w = ((width as f32 * scale).round() as u32).max(1);
+            let target_h = ((height as f32 * scale).round() as u32).max(1);
+            img.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
         egui::IconData {
@@ -2814,6 +3030,22 @@ pub(crate) fn icon_viewport_builder(logo_kind: &str, logo_bytes: &[u8]) -> egui:
         None => egui::ViewportBuilder::default(),
     }
 }
+
+/// The largest icon edge handed to the window manager.
+///
+/// winit delivers `IconData` to X11 as ONE `_NET_WM_ICON` property
+/// assignment whose payload is `2 + w·h` 32-bit words; a manifest logo of
+/// 2048×2048 (the demo's `docs/logo.webp` is exactly that) asks for
+/// 16 MiB + 8 bytes, which is past Xorg's `Maximum request length`. The
+/// window then fails to open with
+/// `X11 connection error: Maximum request length exceeded` — the face
+/// never paints a frame, on any X11 host (reproduced under Xvfb/dummy
+/// Xorg).
+///
+/// 256 is the window manager's top usable frame anyway (EWMH hints take
+/// 16–256 px), and 256²·4 B ≈ 262 KB is three orders of magnitude inside
+/// the request budget, so clamping costs nothing visual.
+const ICON_MAX_EDGE: u32 = 256;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -2866,7 +3098,12 @@ pub fn run(
             // The debug-only stage override rebinds mutably; a release
             // build never touches it (an unconditional `mut` warns there).
             #[cfg(debug_assertions)]
-            app.debug_force_stage();
+            {
+                app.debug_force_stage();
+                // SHUN_SHELL_PREVIEW — the screenshot pass's door into the
+                // done-page notice + guide (see the method's doc).
+                app.debug_preview();
+            }
             Ok(Box::new(app))
         }),
     );
@@ -2937,6 +3174,9 @@ pub(crate) fn run_gui(
             #[cfg(debug_assertions)]
             {
                 app.debug_force_stage();
+                // SHUN_SHELL_PREVIEW — the screenshot pass's door into the
+                // done-page notice + guide (see the method's doc).
+                app.debug_preview();
                 if !matches!(app.stage, Stage::Splash(_)) {
                     let ctx = cc.egui_ctx.clone();
                     let (size, min_size, resizable) = window_geometry(app.uninstall_mode);
@@ -5518,15 +5758,29 @@ impl FallbackApp {
                                         let portable = self.mode == "portable";
                                         let core =
                                             WizardCore::new(self.config.clone(), BTreeMap::new());
-                                        let _ = shun::wizard::apply_finish(
+                                        // The CLASSIFIED finish path: a
+                                        // launch refused by OS policy is
+                                        // not an installer failure, and
+                                        // the user needs the guide, not a
+                                        // silent exit. The window stays
+                                        // open on a failure (the toast
+                                        // explains why), so the primary
+                                        // button doubles as the retry.
+                                        match shun::wizard::apply_finish_checked(
                                             &core,
                                             self.dir.trim(),
                                             (!portable).then_some(self.desktop_shortcut),
                                             (!portable).then_some(self.start_menu),
                                             self.launch_after,
-                                        );
+                                        ) {
+                                            Ok(()) => std::process::exit(0),
+                                            Err(failure) => {
+                                                self.report_finish_failure(failure);
+                                            }
+                                        }
+                                    } else {
+                                        std::process::exit(0);
                                     }
-                                    std::process::exit(0);
                                 }
                             },
                             Stage::Configure if !on_last_step => {
@@ -5846,6 +6100,44 @@ impl eframe::App for FallbackApp {
                     },
                 );
             });
+
+        // ── The floating surfaces: guide window, then the notice stack ──
+        //
+        // Both are drawn AFTER every panel, in egui's top layer order, so
+        // neither can collide with the layout it must stay clear of:
+        //
+        // - the guide is a full-window modal (dim overlay + centered card,
+        //   640pt wide, 82% of the window tall) — the dim curtain owns the
+        //   whole client area, which also SWALLOWS every click meant for a
+        //   footer button underneath, so a modal can never be clicked
+        //   "through" to the primary action;
+        // - the toast stack anchors to the window's RIGHT_TOP 56pt down,
+        //   i.e. fully below the 32pt caption bar and to the right of the
+        //   pane's 48pt content column — the footer sits in a bottom panel
+        //   the stack never enters, so the done page's finish button keeps
+        //   its full width and the progress/done copy its full height.
+        //
+        // The stack paints LAST (toasts outrank modals in hikari's popup
+        // manager too), so an active notice stays readable while the guide
+        // is open — its action opens the guide without ever hiding the
+        // notice that explains why.
+        let close_label = self.texts.notice_close.clone();
+        let copy_label = self.texts.error_copy.clone();
+        self.guide
+            .draw(ctx, &theme, &self.language, &close_label, &copy_label);
+        let intents = self.toast.draw(ctx, &theme, &self.caption_icons);
+        for intent in intents {
+            match intent {
+                crate::toast::ToastIntent::OpenGuide { topic } => self.guide.open_topic(&topic),
+                crate::toast::ToastIntent::ShowDetails { title, body } => {
+                    self.guide.open_details(title, body);
+                }
+            }
+            // The window opened during this frame's draw pass, after the
+            // guide had already been painted: ask for the frame that
+            // shows it instead of waiting for input that may never come.
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -5975,6 +6267,43 @@ mod strings_tests {
         }
     }
 
+    /// Every authored locale carries the finish-failure notices — the
+    /// same serde(default) gap: an empty string would paint a blank toast
+    /// (and a blank details window footer) for that language. This is the
+    /// loud half of the contract with the web face's `notices` block
+    /// (flattened by i18n-dump.ts into these six flat keys).
+    #[test]
+    fn every_locale_authors_the_finish_notices() {
+        let strings = wizard_strings();
+        for locale in &strings.locales {
+            let texts = strings.texts(locale);
+            for (name, value) in [
+                ("notice_launch_blocked", &texts.notice_launch_blocked),
+                ("notice_launch_failed", &texts.notice_launch_failed),
+                ("notice_shortcuts_failed", &texts.notice_shortcuts_failed),
+                ("notice_details", &texts.notice_details),
+                ("notice_close", &texts.notice_close),
+                ("notice_error_title", &texts.notice_error_title),
+            ] {
+                assert!(!value.is_empty(), "{locale}: {name}");
+            }
+        }
+    }
+
+    /// The toast body is ONE paragraph: the localized lead and the raw
+    /// backend detail join with a space, and an empty side never leaves a
+    /// stray separator (a partial translation must not read "… . io error").
+    #[test]
+    fn the_notice_join_keeps_the_raw_detail() {
+        assert_eq!(
+            notice_with_detail("Failed.", "io error: 4551"),
+            "Failed. io error: 4551"
+        );
+        assert_eq!(notice_with_detail("", "io error: 4551"), "io error: 4551");
+        assert_eq!(notice_with_detail("Failed.", ""), "Failed.");
+        assert_eq!(notice_with_detail("", ""), "");
+    }
+
     /// Every authored locale carries the relocation pass's notice and
     /// the non-empty refusal — the same serde(default) gap: a locale
     /// missing one would render an empty callout (or a silent location
@@ -5991,6 +6320,67 @@ mod strings_tests {
                 "{locale}: error_non_empty"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    /// A PNG of the requested size, encoded the way the manifest's logo
+    /// arrives (bytes + kind, decoded by `image::load_from_memory`).
+    fn logo_png(width: u32, height: u32) -> Vec<u8> {
+        let pixels = image::RgbaImage::from_pixel(width, height, image::Rgba([10, 20, 30, 255]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(pixels)
+            .write_to(&mut out, image::ImageFormat::Png)
+            .expect("the fixture encodes");
+        out.into_inner()
+    }
+
+    /// The X11 window-creation bug this clamp exists for: a manifest logo
+    /// of 2048×2048 became ONE `_NET_WM_ICON` property assignment of
+    /// 16 MiB, past Xorg's maximum request length, so the window never
+    /// opened ("X11 connection error: Maximum request length exceeded").
+    /// The icon handed to winit is now bounded, aspect preserved.
+    #[test]
+    fn oversized_logos_are_clamped_before_the_window_manager() {
+        let square = logo_viewport_builder(&logo_png(2048, 2048));
+        let icon = square.icon.as_ref().expect("a 2048² logo still ships");
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba.len(), 256 * 256 * 4, "one RGBA payload");
+
+        let wide = logo_viewport_builder(&logo_png(2048, 1024));
+        let icon = wide.icon.as_ref().expect("a wide logo");
+        assert_eq!(
+            (icon.width, icon.height),
+            (256, 128),
+            "the long edge lands on the cap, the aspect holds"
+        );
+
+        // The byte budget that matters: the whole icon stays orders of
+        // magnitude inside Xorg's 16 MiB request limit.
+        assert!(icon.rgba.len() < 512 * 1024);
+    }
+
+    /// Small logos pass through untouched (no gratuitous resampling), and
+    /// `logo = "none"` still ships no icon at all.
+    #[test]
+    fn small_logos_pass_through_and_none_ships_no_icon() {
+        let small = logo_viewport_builder(&logo_png(64, 48));
+        let icon = small.icon.as_ref().expect("a small logo");
+        assert_eq!((icon.width, icon.height), (64, 48));
+
+        assert!(logo_viewport_builder(&[]).icon.is_none());
+        let bytes = logo_png(64, 64);
+        let none = icon_viewport_builder("none", &bytes);
+        assert!(none.icon.is_none(), "logo = none opts out");
+    }
+
+    /// Reads the builder the same way the window creation does, from the
+    /// PNG bytes.
+    fn logo_viewport_builder(bytes: &[u8]) -> egui::ViewportBuilder {
+        icon_viewport_builder("png", bytes)
     }
 }
 

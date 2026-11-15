@@ -113,6 +113,26 @@ export interface LogPaneStrings {
   collapse: string;
 }
 
+/** The done-page confirmation's notices: the top-right toast copy and the
+ *  details window's chrome. Everything transient speaks through the toast
+ *  stack — the face renders no in-flow notice banner. `%PRODUCT%` splices
+ *  the manifest's product name, like every other string in this table. */
+export interface NoticeStrings {
+  /** Launch refused by Windows application-control policy (0x11C7): the
+   *  install succeeded, the OS blocked the process creation. */
+  launchBlocked: string;
+  /** Any other launch failure (the raw backend message is appended). */
+  launchFailed: string;
+  /** Creating the chosen shortcuts failed (the raw message is appended). */
+  shortcutsFailed: string;
+  /** Toast inline action: open the details / guide window. */
+  details: string;
+  /** The details window's footer action. */
+  close: string;
+  /** The generic (non-guide) details window's headline. */
+  errorTitle: string;
+}
+
 /** Install-flow progress lines: the backend composes English labels, the
  *  known ones render localized, everything else passes through verbatim. */
 export interface ProgressStrings {
@@ -210,6 +230,8 @@ export interface InstallerStrings {
   nav: { next: string; back: string };
   themeToggle: string;
   logPane: LogPaneStrings;
+  /** The finish flow's transient notices + the details window's chrome. */
+  notices: NoticeStrings;
   uninstall: {
     heading: string;
     sub: string;
@@ -324,6 +346,14 @@ const zhHans: InstallerStrings = {
     finish: "完成安装",
     retry: "重试安装",
     close: "关闭",
+  },
+  notices: {
+    launchBlocked: "%PRODUCT% 已安装完成，但 Windows 应用控制策略阻止了启动（0x11C7）。",
+    launchFailed: "%PRODUCT% 未能启动。",
+    shortcutsFailed: "快捷方式创建失败。",
+    details: "查看详情",
+    close: "关闭",
+    errorTitle: "启动失败",
   },
   nav: { next: "下一步", back: "上一步" },
   logPane: { title: "安装日志", expand: "展开安装日志", collapse: "收起安装日志" },
@@ -453,6 +483,14 @@ const zhHant: InstallerStrings = {
     finish: "完成安裝",
     retry: "重試安裝",
     close: "關閉",
+  },
+  notices: {
+    launchBlocked: "%PRODUCT% 已安裝完成，但 Windows 應用程式控制阻止了啟動（0x11C7）。",
+    launchFailed: "%PRODUCT% 未能啟動。",
+    shortcutsFailed: "捷徑建立失敗。",
+    details: "查看詳情",
+    close: "關閉",
+    errorTitle: "啟動失敗",
   },
   nav: { next: "下一步", back: "上一步" },
   logPane: { title: "安裝日誌", expand: "展開安裝日誌", collapse: "收起安裝日誌" },
@@ -585,6 +623,14 @@ const en: InstallerStrings = {
     retry: "Retry install",
     close: "Close",
   },
+  notices: {
+    launchBlocked: "%PRODUCT% installed. Windows blocked the launch (0x11C7).",
+    launchFailed: "%PRODUCT% could not be started.",
+    shortcutsFailed: "The shortcuts could not be created.",
+    details: "Details",
+    close: "Close",
+    errorTitle: "Launch failed",
+  },
   nav: { next: "Next", back: "Back" },
   logPane: { title: "Install log", expand: "Expand install log", collapse: "Collapse install log" },
   uninstall: {
@@ -712,6 +758,15 @@ const ru: InstallerStrings = {
     finish: "Готово",
     retry: "Повторить установку",
     close: "Закрыть",
+  },
+  notices: {
+    launchBlocked:
+      "%PRODUCT% установлен. Запуск блокирует Windows (0x11C7).",
+    launchFailed: "Не удалось запустить %PRODUCT%.",
+    shortcutsFailed: "Не удалось создать ярлыки.",
+    details: "Детали",
+    close: "Закрыть",
+    errorTitle: "Ошибка запуска",
   },
   nav: { next: "Далее", back: "Назад" },
   logPane: { title: "Журнал установки", expand: "Развернуть журнал установки", collapse: "Свернуть журнал установки" },
@@ -854,6 +909,15 @@ const ja: InstallerStrings = {
     finish: "インストール完了",
     retry: "インストールを再試行",
     close: "閉じる",
+  },
+  notices: {
+    launchBlocked:
+      "%PRODUCT% はインストール済み。起動は Windows アプリ制御でブロック（0x11C7）。",
+    launchFailed: "%PRODUCT% を起動できませんでした。",
+    shortcutsFailed: "ショートカットを作成できませんでした。",
+    details: "詳細",
+    close: "閉じる",
+    errorTitle: "起動に失敗しました",
   },
   nav: { next: "次へ", back: "戻る" },
   logPane: {
@@ -1000,6 +1064,15 @@ const ko: InstallerStrings = {
     retry: "설치 다시 시도",
     close: "닫기",
   },
+  notices: {
+    launchBlocked:
+      "%PRODUCT% 설치 완료. Windows 앱 제어가 실행 차단(0x11C7).",
+    launchFailed: "%PRODUCT%을(를) 시작하지 못했습니다.",
+    shortcutsFailed: "바로 가기를 만들지 못했습니다.",
+    details: "자세히",
+    close: "닫기",
+    errorTitle: "실행 실패",
+  },
   nav: { next: "다음", back: "뒤로" },
   logPane: { title: "설치 로그", expand: "설치 로그 펼치기", collapse: "설치 로그 접기" },
   uninstall: {
@@ -1137,6 +1210,15 @@ const fr: InstallerStrings = {
     finish: "Terminer",
     retry: "Réessayer l'installation",
     close: "Fermer",
+  },
+  notices: {
+    launchBlocked:
+      "%PRODUCT% installé. Windows bloque le lancement (0x11C7).",
+    launchFailed: "%PRODUCT% n'a pas pu être démarré.",
+    shortcutsFailed: "Les raccourcis n'ont pas pu être créés.",
+    details: "Détails",
+    close: "Fermer",
+    errorTitle: "Échec du lancement",
   },
   nav: { next: "Suivant", back: "Retour" },
   logPane: {
@@ -1280,6 +1362,15 @@ const es: InstallerStrings = {
     retry: "Reintentar la instalación",
     close: "Cerrar",
   },
+  notices: {
+    launchBlocked:
+      "%PRODUCT% instalado. Windows bloquea el inicio (0x11C7).",
+    launchFailed: "No se pudo iniciar %PRODUCT%.",
+    shortcutsFailed: "No se pudieron crear los accesos directos.",
+    details: "Detalles",
+    close: "Cerrar",
+    errorTitle: "Error al iniciar",
+  },
   nav: { next: "Siguiente", back: "Atrás" },
   logPane: {
     title: "Registro de instalación",
@@ -1420,6 +1511,15 @@ const de: InstallerStrings = {
     finish: "Fertigstellen",
     retry: "Installation wiederholen",
     close: "Schließen",
+  },
+  notices: {
+    launchBlocked:
+      "%PRODUCT% installiert. Windows blockiert den Start (0x11C7).",
+    launchFailed: "%PRODUCT% konnte nicht gestartet werden.",
+    shortcutsFailed: "Die Verknüpfungen konnten nicht erstellt werden.",
+    details: "Details",
+    close: "Schließen",
+    errorTitle: "Start fehlgeschlagen",
   },
   nav: { next: "Weiter", back: "Zurück" },
   logPane: {
@@ -1562,6 +1662,15 @@ const pt: InstallerStrings = {
     finish: "Concluir",
     retry: "Repetir a instalação",
     close: "Fechar",
+  },
+  notices: {
+    launchBlocked:
+      "%PRODUCT% instalado. Windows bloqueia o início (0x11C7).",
+    launchFailed: "Não foi possível iniciar o %PRODUCT%.",
+    shortcutsFailed: "Não foi possível criar os atalhos.",
+    details: "Detalhes",
+    close: "Fechar",
+    errorTitle: "Falha ao iniciar",
   },
   nav: { next: "Seguinte", back: "Voltar" },
   logPane: {

@@ -12,9 +12,18 @@
 //!   them — the same `ShellExecuteW` path the download-page link uses);
 //!   `**bold**` renders on the primary text colour.
 //!
+//! Figure lines (`![alt](guide/app-control-1.png)` on their own line) are
+//! the one construct the GUIDE documents add; see [`ImageBank`] and
+//! [`render_with_images`]. The license dialect never carried them, so
+//! [`render`] keeps its exact old behaviour for every document without a
+//! figure line.
+//!
 //! Deliberately NOT implemented (matching the web dialect): ordered
 //! lists, code blocks, nested lists, italics — numbered legal clauses
 //! like "1. 定义" must survive as literal prose.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 use eframe::egui::{self, Align, Color32, CornerRadius, FontId, Sense, Stroke, TextFormat, Vec2};
 
@@ -248,9 +257,144 @@ fn paint_segments(
     });
 }
 
+// ── Figures: the compiled-in guide images ──────────────────────────────
+//
+// The guide documents reference their figures by their PUBLIC path
+// (`guide/app-control-1.png` — served from `shell/web/public/guide/` so
+// the webview face fetches them over the app protocol). The egui face has
+// no asset server, so the identical bytes are compiled in here and drawn
+// from a texture cache: one decode + one GPU upload per figure per run,
+// then a cheap `TextureHandle` clone per frame. Both faces therefore show
+// the same picture, offline, from the same source file.
+
+/// The figures the documents may reference, keyed by the path spelled in
+/// the markdown (i.e. the web face's `public/` path).
+const FIGURES: &[(&str, &[u8])] = &[
+    (
+        "guide/app-control-1.png",
+        include_bytes!("../web/public/guide/app-control-1.png"),
+    ),
+    (
+        "guide/app-control-2.png",
+        include_bytes!("../web/public/guide/app-control-2.png"),
+    ),
+    (
+        "guide/app-control-3.png",
+        include_bytes!("../web/public/guide/app-control-3.png"),
+    ),
+];
+
+/// The figure column's ceiling: a 640pt modal with 24pt gutters leaves
+/// 592pt; 560 keeps a readable margin and matches the web renderer's
+/// `max-width` for inline content.
+const IMAGE_MAX_W: f32 = 560.0;
+
+/// Decoded-and-uploaded figure textures, owned by whichever window shows
+/// the document (the guide modal or, through [`render`], the license
+/// pane).
+#[derive(Default)]
+pub(crate) struct ImageBank {
+    textures: RefCell<HashMap<&'static str, Option<egui::TextureHandle>>>,
+}
+
+impl ImageBank {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Resolves one document image reference to its texture. `None` means
+    /// "this document references something the bank does not carry" — the
+    /// renderer then keeps the pre-image prose behaviour for that line,
+    /// so a stale reference can never blank a document.
+    fn texture(&self, ctx: &egui::Context, reference: &str) -> Option<egui::TextureHandle> {
+        let reference = reference.trim();
+        let reference = reference.strip_prefix("./").unwrap_or(reference);
+        let (name, bytes) = *FIGURES.iter().find(|(name, _)| *name == reference)?;
+        if let Some(cached) = self.textures.borrow().get(name) {
+            return cached.clone();
+        }
+        let texture = Self::decode(ctx, name, bytes);
+        self.textures.borrow_mut().insert(name, texture.clone());
+        texture
+    }
+
+    fn decode(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<egui::TextureHandle> {
+        let image = image::load_from_memory(bytes).ok()?.to_rgba8();
+        let size = [image.width() as usize, image.height() as usize];
+        let color = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+        Some(ctx.load_texture(
+            format!("figure-{name}"),
+            color,
+            egui::TextureOptions::LINEAR,
+        ))
+    }
+}
+
+/// An image line: `![alt](guide/app-control-1.png)`. Returns the alt text
+/// and the reference. Remote URLs are NOT figures (the dialect has no
+/// network image lane) — they fall through as prose.
+fn image_line(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("![")?;
+    let close = rest.find(']')?;
+    let alt = &rest[..close];
+    let after = rest[close + 1..].strip_prefix('(')?;
+    let end = after.find(')')?;
+    let reference = after[..end].trim();
+    if reference.is_empty() || reference.starts_with("http://") || reference.starts_with("https://")
+    {
+        return None;
+    }
+    Some((alt, reference))
+}
+
+/// Paints one figure scaled into the column (never upscaled past its
+/// natural size) with the alt text as a muted caption — the web face's
+/// `<img>` + `<figcaption>` pair.
+fn paint_figure(ui: &mut egui::Ui, theme: &Theme, texture: &egui::TextureHandle, alt: &str) {
+    let natural = texture.size_vec2();
+    if natural.x <= 0.0 || natural.y <= 0.0 {
+        return;
+    }
+    let available = ui.available_width().max(64.0);
+    let width = natural.x.min(available).min(IMAGE_MAX_W);
+    let height = (natural.y * (width / natural.x)).round().max(1.0);
+    ui.add_space(10.0);
+    ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+        texture.id(),
+        Vec2::new(width, height),
+    )));
+    let caption = alt.trim();
+    if !caption.is_empty() {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(caption)
+                .size(11.5)
+                .color(theme.text_tertiary),
+        );
+    }
+    ui.add_space(6.0);
+}
+
 /// Renders one markdown document into `ui` — the shared path behind the
 /// license pane's bodies and the content steps.
 pub(crate) fn render(ui: &mut egui::Ui, theme: &Theme, source: &str, base_size: f32) {
+    // The old entry point keeps working (and keeps its one shared cache):
+    // documents without a figure line render exactly as before.
+    thread_local! {
+        static BANK: ImageBank = ImageBank::new();
+    }
+    BANK.with(|bank| render_with_images(ui, theme, source, base_size, bank));
+}
+
+/// [`render`] against a caller-owned [`ImageBank`] — the entry point the
+/// guide modal uses so its figures are decoded once per window session.
+pub(crate) fn render_with_images(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    source: &str,
+    base_size: f32,
+    images: &ImageBank,
+) {
     let body_color = theme.text_secondary;
     for raw in source.split('\n') {
         let line = raw.trim_end();
@@ -258,6 +402,12 @@ pub(crate) fn render(ui: &mut egui::Ui, theme: &Theme, source: &str, base_size: 
         if trimmed.is_empty() {
             ui.add_space(6.0);
             continue;
+        }
+        if let Some((alt, reference)) = image_line(trimmed) {
+            if let Some(texture) = images.texture(ui.ctx(), reference) {
+                paint_figure(ui, theme, &texture, alt);
+                continue;
+            }
         }
         if trimmed.chars().count() >= 3 && trimmed.chars().all(|c| c == '-' || c == '=') {
             ui.add_space(4.0);
@@ -353,5 +503,109 @@ mod tests {
     fn plain_prose_is_one_run() {
         let segs = parse_inline("1. 定义：本协议中的术语…");
         assert_eq!(segs, vec![Seg::Text("1. 定义：本协议中的术语…".into())]);
+    }
+
+    /// One headless pass loop over the parse + paint path; returns the
+    /// painted document's height so a figure row is distinguishable from
+    /// a one-row prose fallback.
+    fn render_in_headless(source: &str, width: f32, bank: &ImageBank) -> f32 {
+        let ctx = egui::Context::default();
+        let theme = Theme::dark(None);
+        // Two passes: a fresh context has no font metrics on its first
+        // frame, so a measure taken there is worthless (a text-only row
+        // reports an empty cursor).
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |_ui| {});
+        });
+        let mut height = None;
+        let mut pending = Some(());
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.set_max_width(width);
+                if pending.take().is_some() {
+                    // The next-widget cursor advances as content is laid
+                    // out; `cursor()`/`min_rect()` are unbounded on a
+                    // panel-wide ui.
+                    let top = ui.next_widget_position().y;
+                    render_with_images(ui, &theme, source, 13.0, bank);
+                    height = Some(ui.next_widget_position().y - top);
+                }
+            });
+        });
+        height.expect("the pass loop ran")
+    }
+
+    /// The image line's grammar: `![alt](guide/…)` with a relative
+    /// reference. Remote URLs and malformed lines stay prose, and a bare
+    /// `[label](url)` link is never mistaken for a figure.
+    #[test]
+    fn image_lines_parse_relative_references_only() {
+        assert_eq!(
+            image_line("![设置路径](guide/app-control-1.png)"),
+            Some(("设置路径", "guide/app-control-1.png"))
+        );
+        assert_eq!(
+            image_line("![](./guide/app-control-2.png)"),
+            Some(("", "./guide/app-control-2.png"))
+        );
+        assert_eq!(image_line("![x](https://example.com/a.png)"), None);
+        assert_eq!(image_line("[label](https://zhipu.ai)"), None);
+        assert_eq!(image_line("![broken](guide/app-control-1.png"), None);
+        assert_eq!(image_line("![broken]()"), None);
+    }
+
+    /// The compiled-in figure bank resolves the authored references, and a
+    /// reference the bank does not carry falls back to the pre-image prose
+    /// path instead of blanking the document or panicking.
+    #[test]
+    fn figures_resolve_and_unknown_references_stay_prose() {
+        let bank = ImageBank::new();
+        let ctx = egui::Context::default();
+        for (name, _) in FIGURES {
+            assert!(
+                bank.texture(&ctx, name).is_some(),
+                "{name} is compiled in and decodes"
+            );
+        }
+        assert!(
+            bank.texture(&ctx, "guide/not-a-figure.png").is_none(),
+            "an unknown reference stays prose"
+        );
+
+        let with_figure = render_in_headless(
+            "见下图：\n\n![路径](guide/app-control-1.png)\n",
+            560.0,
+            &bank,
+        );
+        assert!(
+            with_figure > 150.0,
+            "the figure paints its own row (h={with_figure})"
+        );
+        let unknown = render_in_headless("![路径](guide/not-a-figure.png)\n", 560.0, &bank);
+        assert!(
+            unknown < 60.0,
+            "an unknown reference stays a one-row prose line (h={unknown})"
+        );
+    }
+
+    /// The old entry point still renders a figure-less document (the
+    /// license pane's path) through its shared per-thread bank.
+    #[test]
+    fn the_old_entry_point_renders_figureless_documents() {
+        let ctx = egui::Context::default();
+        let theme = Theme::dark(None);
+        let mut height = None;
+        let mut pending = Some(());
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.set_max_width(560.0);
+                if pending.take().is_some() {
+                    let top = ui.next_widget_position().y;
+                    render(ui, &theme, "# 标题\n\n第二段。\n\n- 条款一\n\n---\n", 13.0);
+                    height = Some(ui.next_widget_position().y - top);
+                }
+            });
+        });
+        assert!(height.expect("the pass loop ran") > 40.0);
     }
 }

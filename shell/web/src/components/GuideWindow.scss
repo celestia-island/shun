@@ -1,0 +1,41 @@
+/* Detail window body chrome — only what hikari's markdown block and inline
+   error landing do not already carry. The window frame, header, scrolling
+   and footer actions are all HkModal's own; nothing here re-implements
+   overlay, backdrop or stacking (that would fork the popup-manager band). */
+
+.shun-guide-window {
+  /* The authored guides are OS-surface walkthroughs: numbered steps, each
+     followed by a screenshot of the dialog to look for. */
+  .hk-markdown-body {
+    img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 12px 0 16px;
+      /* Screenshots arrive in their own OS chrome: a faint outline seats a
+         light capture on the dark surface (and vice versa) instead of
+         letting it float edge-to-edge. */
+      border: 1px solid rgb(var(--color-border) / 0.7);
+      border-radius: var(--radius-sm, 4px);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 18px 0 8px;
+    }
+
+    p,
+    ul,
+    ol {
+      margin: 0 0 10px;
+    }
+  }
+
+  /* The generic detail face: the same inline landing the failed done page
+     uses, seated in the window body (left-aligned prose, not a centered
+     hero — it sits under a title bar that already names the failure). */
+  .hk-error-landing {
+    text-align: left;
+  }
+}

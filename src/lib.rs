@@ -36,6 +36,9 @@
 pub mod config;
 pub mod env_probe;
 pub mod error;
+// The done-page confirmation's classified failures (application-control
+// blocks, missing entry points) — the one shape every face renders.
+pub mod failure;
 pub mod flow;
 // Install-target filesystem probes: drive enumeration (fixed drives
 // included, unlike the flash backend's removable-only list), writability

@@ -25,6 +25,7 @@ mod callout;
 mod diag;
 mod dpi_fix;
 mod fallback;
+mod guide;
 mod markdown;
 mod passive;
 #[cfg(windows)]
@@ -33,6 +34,7 @@ mod solar;
 mod splash;
 mod stamp_loader;
 mod terminal;
+mod toast;
 mod tui;
 mod webview_hardening;
 #[cfg(windows)]
@@ -846,36 +848,33 @@ async fn perform_uninstall(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 /// Applies the done-page confirmation in one shot: creates or removes
-/// the install's shortcuts per the checkboxes, on a blocking thread.
+/// the install's shortcuts per the checkboxes and optionally launches the
+/// installed app, on a blocking thread.
+///
+/// The failure is CLASSIFIED (`shun::failure::FinishFailure`): a launch
+/// refused by Windows application-control policy is not an installer
+/// failure, and the web face opens the OS-remedy guide from it instead of
+/// rendering a raw `io error`.
 #[tauri::command]
-async fn set_shortcuts(
+async fn finish_install(
     state: State<'_, AppState>,
     desktop: Option<bool>,
     menu: Option<bool>,
     dir: String,
-) -> Result<(), String> {
+    launch: bool,
+) -> Result<(), shun::failure::FinishFailure> {
     let config = state.config();
-    let main_exe = state.core.lock().expect("wizard core").main_exe();
-    let padded = shun::wizard::pad_root_dir(&config, &dir);
     tauri::async_runtime::spawn_blocking(move || {
-        shun::targets::shortcuts::apply_shortcut_choices(
-            &shun::wizard::shortcut_aumid_for(&config),
-            &config.product.name,
-            &main_exe,
-            desktop,
-            menu,
-            &padded,
-        )
+        let core = WizardCore::new(config, BTreeMap::new());
+        shun::wizard::apply_finish_checked(&core, &dir, desktop, menu, launch)
     })
     .await
-    .map_err(|e| format!("the shortcut task exited abnormally: {e}"))?
-}
-
-/// Launches the freshly installed application (done-page option).
-#[tauri::command]
-fn launch_app(state: State<'_, AppState>, dir: String) -> Result<(), String> {
-    let core = WizardCore::new(state.config(), BTreeMap::new());
-    shun::wizard::launch_installed(&core, &dir)
+    .map_err(|e| {
+        shun::failure::FinishFailure::other(
+            shun::failure::FinishStage::Launch,
+            format!("the finish task exited abnormally: {e}"),
+        )
+    })?
 }
 
 /// Runs the install flow for the wizard UI: the shared driver on a
@@ -2240,8 +2239,7 @@ fn run_shell(
             is_uninstall_mode,
             current_install_dir,
             perform_uninstall,
-            set_shortcuts,
-            launch_app,
+            finish_install,
             start_install,
             download_attachment,
         ])

@@ -391,14 +391,11 @@ body {
   }
 }
 
-// The document steps (license / content) run their content to the
-// pane's bottom edge, where the floating footer (bottom 20px + 40px
-// lg plates) overlays it: reserve that band plus real air, so the
-// card's lower border and the agree checkbox can never hug the
-// 同意并安装 button (the sandbox report).
-.wizard-pane--doc {
-  padding-bottom: 96px;
-}
+// The document steps (license / content) used to reserve the floating
+// footer's band on their own; that clearance now lives on the pane HOST
+// (see `.wizard-layout__pane` below) so EVERY in-flow bottom surface —
+// a long pane, the install log strip, any future notice — is covered by
+// the same rule instead of each pane re-deriving the footer's geometry.
 
 // The agree row's breathing room above the pane's own 16px gap.
 .license-agree {
@@ -591,6 +588,14 @@ body {
   // Clearance for the fixed hikari title bar (its own root declares
   // --hk-tb-height; hosts re-declare it — hikari's documented pattern).
   padding-top: calc(var(--hk-tb-height, 32px) + 8px);
+  // The footer floats out of flow (bottom 20px + 40px-large buttons ⇒ a
+  // 96px band with air). The pane HOST reserves that band once, for every
+  // pane: no in-flow bottom content can slide under the primary action and
+  // get painted over — the overlap class the retired in-flow alert banner
+  // exposed. The standalone uninstall page overrides this padding away
+  // (`.installer > .wizard-layout__pane`, higher specificity) because it
+  // has no footer.
+  padding-bottom: 96px;
 }
 
 /* The user theme toggle (manifest-gated): pinned top-right, just under

@@ -8,7 +8,6 @@ import {
   XCircle,
 } from "lucide-vue-next";
 import {
-  HkAlert,
   HkButton,
   HkCheckbox,
   HkErrorLanding,
@@ -18,6 +17,7 @@ import {
   HkSelect,
   HkTimeline,
   setLocale as setHikariLocale,
+  useToast,
 } from "@celestia-island/hikari";
 import HkWallpaperBackdrop from "@celestia-island/hikari/components/HkWallpaperBackdrop";
 import {
@@ -30,6 +30,7 @@ import { solarWantsDark, startSolarClock } from "./solar";
 import AppTitleBar from "./components/AppTitleBar";
 import PathField, { type DriveInfo } from "./components/PathField";
 import LogPane, { type LogLine } from "./components/LogPane";
+import GuideWindow, { type GuideTopic } from "./components/GuideWindow";
 import {
   isInstallerLocale,
   LOCALE_OPTIONS,
@@ -114,6 +115,116 @@ interface FlowEventPayload {
   };
 }
 
+/**
+ * The classified rejection `finish_install` carries (the Rust
+ * `shun::failure::FinishFailure` serialized over Tauri's invoke channel):
+ * camelCase field names, kebab-case enum values. Both halves of the
+ * done-page confirmation land here — the shortcut choices (`stage:
+ * "shortcuts"`) and the immediate launch (`stage: "launch"`) — and a launch
+ * refused by Windows application-control policy is called out as its own
+ * `kind` so the face can offer the OS-remedy guide instead of a raw i/o
+ * error string.
+ */
+interface FinishFailurePayload {
+  stage?: string;
+  kind?: string;
+  message?: string;
+  /** Raw OS error (`4551` / 0x11C7 for an application-control block). */
+  osError?: number | null;
+  /** Guide topic the backend names for this failure (`app-control`). */
+  helpTopic?: string | null;
+}
+
+/** The normalized failure every web surface branches on. */
+interface ClassifiedFinish {
+  stage: "shortcuts" | "launch";
+  kind: "app-control-blocked" | "missing-executable" | "io" | "other";
+  message: string;
+  osError: number | null;
+  helpTopic: string | null;
+}
+
+/**
+ * OS codes that mean "the OS refused to create this process" and therefore
+ * share the application-control remedy (`shun::failure` constants):
+ * `ERROR_APPLICATION_CONTROL_POLICY_BLOCKED` (0x11C7 / 4551, Smart App
+ * Control) and the legacy `ERROR_ACCESS_DISABLED_BY_POLICY` (0x4EC / 1260,
+ * AppLocker / WDAC group-policy launchers).
+ */
+const APP_CONTROL_OS_ERRORS = [4551, 1260];
+
+/** The guide topic the backend names for an application-control block. */
+const APP_CONTROL_HELP_TOPIC = "app-control";
+
+/** Recover an OS error code from a legacy string rejection — the old
+ *  `launch_app` surfaced `io error: … (os error 4551)`, and some paths
+ *  carry the hex form (0x11C7) instead. */
+function osErrorFromMessage(message: string): number | null {
+  const decimal = /\bos error (\d+)\b/i.exec(message);
+  if (decimal) return Number(decimal[1]);
+  const hex = /\b0x([0-9a-f]{1,8})\b/i.exec(message);
+  if (hex) return Number.parseInt(hex[1], 16);
+  return null;
+}
+
+/** Normalize an untyped rejection kind: the classified object wins, a
+ *  legacy string is recovered from its OS code / help topic. */
+function normalizeFinishKind(
+  kind: unknown,
+  osError: number | null,
+  helpTopic: unknown,
+): ClassifiedFinish["kind"] {
+  if (
+    kind === "app-control-blocked" ||
+    kind === "missing-executable" ||
+    kind === "io" ||
+    kind === "other"
+  ) {
+    return kind;
+  }
+  if (osError !== null && APP_CONTROL_OS_ERRORS.includes(osError)) return "app-control-blocked";
+  if (helpTopic === APP_CONTROL_HELP_TOPIC) return "app-control-blocked";
+  return "other";
+}
+
+/**
+ * Defensive normalization of a `finish_install` rejection. The command
+ * rejects with the classified object; a bare string (an older backend
+ * whose `set_shortcuts` / `launch_app` returned plain messages) and a
+ * plain `Error` (no Tauri bridge — a browser preview, a dead IPC) are
+ * still classified instead of surfacing `[object Object]`.
+ */
+function classifyFinishError(raw: unknown): ClassifiedFinish {
+  const payload =
+    raw !== null && typeof raw === "object" && !(raw instanceof Error)
+      ? (raw as FinishFailurePayload)
+      : null;
+  const message =
+    payload && typeof payload.message === "string"
+      ? payload.message
+      : raw instanceof Error
+        ? raw.message
+        : String(raw);
+  const osError =
+    payload && typeof payload.osError === "number"
+      ? payload.osError
+      : osErrorFromMessage(message);
+  const kind = normalizeFinishKind(payload?.kind, osError, payload?.helpTopic);
+  const stage: ClassifiedFinish["stage"] =
+    payload?.stage === "shortcuts" || payload?.stage === "launch"
+      ? payload.stage
+      : /shortcut/i.test(message)
+        ? "shortcuts"
+        : "launch";
+  const helpTopic =
+    typeof payload?.helpTopic === "string" && payload.helpTopic !== ""
+      ? payload.helpTopic
+      : kind === "app-control-blocked"
+        ? APP_CONTROL_HELP_TOPIC
+        : null;
+  return { stage, kind, message, osError, helpTopic };
+}
+
 // Quick-candidate row: label + glyph per candidate kind; drive candidates
 // show the path itself (a row of drive roots reads better than a bare
 // "磁盘"). The two product nouns are locale-independent.
@@ -185,6 +296,30 @@ export default defineComponent({
           ? (initialStep as StepKey)
           : "language",
     );
+    /**
+     * Preview hooks (browser / static previews only — production passes no
+     * query): a screenshot pass must reach every transient state without a
+     * real install. Alongside `?step=`:
+     * - `&notice=app-control` pushes the blocked-launch error toast;
+     *   `&notice=launch-failed` / `&notice=shortcuts-failed` push the other
+     *   two failure branches (the generic detail window behind them).
+     * - `&guide=1` opens the details window on mount (the app-control guide
+     *   when no notice is asked for).
+     * - `&language=zh-Hans` pins the wizard language (a browser has no saved
+     *   preference to restore).
+     * - `&product=WoWSP&version=0.6.34` seeds the product/version refs that
+     *   normally arrive over Tauri IPC, so the done page and every
+     *   `%PRODUCT%` token render real copy in a plain browser. Real IPC
+     *   answers overwrite the seeds.
+     *
+     * Full example: `index.html?step=done&notice=app-control&guide=1&`
+     * `language=zh-Hans&product=WoWSP&version=0.6.34`.
+     */
+    const previewNotice = query.get("notice");
+    const previewGuide = query.get("guide") === "1";
+    const previewLanguage = query.get("language");
+    const previewProduct = query.get("product");
+    const previewVersion = query.get("version");
     const mode = ref<Mode>("local");
     // Wizard locale — resolved synchronously from the system so first paint
     // (and the ?step= previews) always has strings, then overridden by the
@@ -193,6 +328,13 @@ export default defineComponent({
     const locale = ref<InstallerLocale>(
       resolveSystemLocale(navigator.language),
     );
+    // Preview seed for the wizard language (`&language=zh-Hans`): a browser
+    // has no saved preference for the backend to answer with, and a
+    // screenshot pass needs to pick the face on demand. Seeded BEFORE the
+    // hikari locale watch so the chrome starts on the same language.
+    if (previewLanguage && isInstallerLocale(previewLanguage)) {
+      locale.value = previewLanguage;
+    }
     // The hikari chrome follows the wizard's language: the title bar's
     // caption tooltips (and any other preset-keyed hikari copy) resolve
     // from the preset i18n context, so every locale this wizard shows —
@@ -274,7 +416,23 @@ export default defineComponent({
     const flowStep = ref("");
     const installFailed = ref(false);
     const failMessage = ref("");
-    const note = ref<{ text: string; kind: "ok" | "err" } | null>(null);
+    // Transient notices ride hikari's shared top-right toast stack (one
+    // slot per severity, host viewport mounted in main.ts). The in-flow
+    // `HkAlert` banner this wizard used to render at the bottom of
+    // `main.installer` is RETIRED: it sat under the absolutely-positioned
+    // footer and painted over the primary button.
+    const toast = useToast();
+    // The details window (HkModal) behind the toast's inline action:
+    // `app-control` carries the authored OS-remedy guide, `error` the
+    // classified failure's dry facts. Both stay hikari windows so the
+    // popup manager owns the band and nested windows stack correctly.
+    const guideOpen = ref(false);
+    const guideTopic = ref<GuideTopic>("app-control");
+    const guideError = ref<{
+      headline: string;
+      message: string;
+      copy: string;
+    } | null>(null);
 
     // Uninstall mode (`/uninstall` without --silent): replaces the whole
     // wizard layout with a standalone confirm → progress → done page.
@@ -372,6 +530,11 @@ export default defineComponent({
     // Product identity from the delivery manifest — the display name
     // every %PRODUCT% token in the string table resolves to.
     const product = ref("");
+    // Preview seeds (see the `?product=` / `?version=` hook above): a
+    // browser preview has no IPC to ask, and the shipped face always
+    // overwrites these from get_config / get_identity.
+    if (previewProduct) product.value = previewProduct;
+    if (previewVersion) identity.value = { version: previewVersion, flavor: "full" };
     // Deep-map the string table, substituting %PRODUCT% — functions
     // (the agreeInstall countdown label) and non-strings pass through
     // untouched; a JSON round-trip would silently drop them and crash
@@ -605,6 +768,23 @@ export default defineComponent({
         licenseIndex.value = 0;
         startNoticeCountdown();
       }
+      // The `?notice=` / `&guide=1` preview hooks: push exactly the state a
+      // real failure would produce (same toast builder, same window), so
+      // the screenshot pass captures the shipped surfaces and not a
+      // parallel mock-up.
+      if (previewNotice) {
+        const blocked = previewNotice === "app-control";
+        showFinishFailure({
+          stage: previewNotice === "shortcuts-failed" ? "shortcuts" : "launch",
+          kind: blocked ? "app-control-blocked" : "other",
+          // A real block carries the OS message; the preview's empty
+          // message keeps the toast on the headline, like the block path.
+          message: blocked ? "" : "preview: simulated finish failure",
+          osError: blocked ? 4551 : null,
+          helpTopic: blocked ? APP_CONTROL_HELP_TOPIC : null,
+        });
+      }
+      if (previewGuide) openAppControlGuide();
     });
 
     onBeforeUnmount(() => {
@@ -658,7 +838,9 @@ export default defineComponent({
         框始终显示真实目标。 */
     async function applyNestRootDir(raw: string) {
       const nested = await invoke<string>("nest_root_dir", { dir: raw });
-      if (nested !== raw.trim()) showNote(strings(locale.value).target.nestedNote);
+      if (nested !== raw.trim()) {
+        notify(withProduct(strings(locale.value)).target.nestedNote);
+      }
       dir.value = nested;
     }
 
@@ -713,28 +895,99 @@ export default defineComponent({
       }
     }
 
-    // The done-page confirmation: applies the shortcut choices in one
-    // shot for local installs (portable copies have none), optionally
-    // starts the freshly installed app per the 立即启动 checkbox (for
-    // portable it launches the portable copy), then closes the window.
+    // The done-page confirmation: applies the shortcut choices and the
+    // 立即启动 answer in ONE backend call (`finish_install`), then closes
+    // the window. A failure stays in the wizard — the top-right toast
+    // names what went wrong and its inline action opens the details
+    // window (the OS-remedy guide for an application-control block, the
+    // dry facts for everything else) — the user can then fix it and press
+    // 完成安装 again.
     async function finish() {
       if (finishing.value) return;
       finishing.value = true;
       try {
-        await invoke("set_shortcuts", {
+        // The backend reports which half failed (`stage`), the narrow
+        // reason (`kind` — an application-control block is not an
+        // installer failure) and the raw OS code; a rejection is the
+        // classified object, normalized defensively below.
+        await invoke("finish_install", {
           desktop: desktopShortcut.value,
           menu: startMenuShortcut.value,
           dir: dir.value.trim(),
+          launch: launchAfterInstall.value,
         });
-        if (launchAfterInstall.value) {
-          await invoke("launch_app", { dir: dir.value.trim() });
-        }
         tauriWindow()?.close();
       } catch (err) {
-        showNote(String(err), "err");
+        showFinishFailure(classifyFinishError(err));
       } finally {
         finishing.value = false;
       }
+    }
+
+    /** Routes a classified finish failure to the top-right toast stack.
+     *  An application-control block leads with the OS-policy wording AND
+     *  NOTHING ELSE — the install itself succeeded, the raw OS message
+     *  adds only noise, and the guide window carries the whole remedy
+     *  (the copy action still yields the text). Every other failure names
+     *  the failed step and appends the raw message. Both offer the same
+     *  inline action, which is the only path into the details window. */
+    function showFinishFailure(failure: ClassifiedFinish) {
+      const texts = withProduct(strings(locale.value)).notices;
+      const blocked = failure.kind === "app-control-blocked";
+      const headline = blocked
+        ? texts.launchBlocked
+        : failure.stage === "shortcuts"
+          ? texts.shortcutsFailed
+          : texts.launchFailed;
+      // A blocked launch is expected to be read, not dismissed: the error
+      // slot's default 30s hold is restated here so the intent sits in the
+      // call site. The stack holds ONE card per severity and dedupes
+      // consecutive identical text, so a retried finish replaces this
+      // entry instead of piling duplicate "finish-failure" cards.
+      const text = blocked || failure.message.trim() === ""
+        ? headline
+        : `${headline} ${failure.message}`;
+      toast.show(text, {
+        type: "error",
+        copyable: true,
+        duration: 30000,
+        action: {
+          label: texts.details,
+          onClick: () => {
+            if (blocked) {
+              openAppControlGuide();
+            } else {
+              openFinishErrorWindow(failure, headline);
+            }
+          },
+        },
+      });
+    }
+
+    /** The toast action's guide window: the authored per-locale
+     *  application-control walkthrough. */
+    function openAppControlGuide() {
+      guideTopic.value = "app-control";
+      guideError.value = null;
+      guideOpen.value = true;
+    }
+
+    /** The toast action's fallback window: every non-guide failure renders
+     *  the raw reason through the standard inline error landing, with the
+     *  full classified payload as its copy text. */
+    function openFinishErrorWindow(failure: ClassifiedFinish, headline: string) {
+      guideTopic.value = "error";
+      guideError.value = {
+        headline,
+        message: failure.message,
+        copy: [
+          headline,
+          failure.message,
+          `stage=${failure.stage} kind=${failure.kind} osError=${failure.osError ?? "-"}`,
+          `product=${product.value || "-"} version=${identity.value?.version ?? "-"}`,
+        ].join("\n"),
+      };
+      guideOpen.value = true;
     }
 
     function toggleDesktop(v: boolean) {
@@ -783,8 +1036,10 @@ export default defineComponent({
       tauriWindow()?.close();
     }
 
-    function showNote(text: string, kind: "ok" | "err" = "ok") {
-      note.value = { text, kind };
+    /** Pushes a transient notice into the shared top-right toast stack —
+     *  the ONLY notice sink this face has (no in-flow banners). */
+    function notify(text: string, type: "info" | "success" | "warning" = "info") {
+      toast.show(text, { type });
     }
 
     // Light/dark resolution (hikari rules, user direction): `system`
@@ -1283,14 +1538,6 @@ export default defineComponent({
               <div class="wizard-layout__pane" style={paneStyle.value}>{pane}</div>
             </div>
 
-            {note.value && (
-              <HkAlert
-                variant={note.value.kind === "err" ? "error" : "success"}
-                message={note.value.text}
-                banner
-              />
-            )}
-
             <footer class="installer__footer">
               <div class="installer__nav">
                 {running.value ? null : (step.value === "language") && (
@@ -1361,6 +1608,22 @@ export default defineComponent({
               </div>
             </footer>
           </main>
+          {/* The details window behind the toast's inline action: a hikari
+              window (popup-manager band, nested-window semantics), never a
+              hand-rolled overlay. */}
+          <GuideWindow
+            modelValue={guideOpen.value}
+            onUpdate:modelValue={(value: boolean) => (guideOpen.value = value)}
+            locale={locale.value}
+            topic={guideTopic.value}
+            fallbackTitle={s.notices.errorTitle}
+            fallbackBody={s.notices.launchBlocked}
+            errorTitle={s.notices.errorTitle}
+            errorHeadline={guideError.value?.headline ?? ""}
+            errorMessage={guideError.value?.message ?? ""}
+            errorCopyText={guideError.value?.copy ?? ""}
+            closeLabel={s.notices.close}
+          />
         </>
       );
     };
