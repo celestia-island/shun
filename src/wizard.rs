@@ -1028,6 +1028,23 @@ pub fn apply_finish(
     menu: Option<bool>,
     launch: bool,
 ) -> Result<(), String> {
+    apply_finish_checked(core, dir, desktop, menu, launch).map_err(|failure| failure.message)
+}
+
+/// [`apply_finish`] with the failure classified for the UI faces.
+///
+/// The faces need more than the message: a launch refused by Windows
+/// application-control policy is not an installer failure, and both the
+/// webview and egui surfaces steer the user to the same remedy. The
+/// classification lives in [`crate::failure`] so the two faces cannot
+/// drift; this entry point is the one command-backed path they share.
+pub fn apply_finish_checked(
+    core: &WizardCore,
+    dir: &str,
+    desktop: Option<bool>,
+    menu: Option<bool>,
+    launch: bool,
+) -> Result<(), crate::failure::FinishFailure> {
     crate::targets::shortcuts::apply_shortcut_choices(
         &shortcut_aumid_for(&core.config),
         &core.config.product.name,
@@ -1035,9 +1052,12 @@ pub fn apply_finish(
         desktop,
         menu,
         &core.nested_path(dir),
-    )?;
+    )
+    .map_err(|message| {
+        crate::failure::FinishFailure::other(crate::failure::FinishStage::Shortcuts, message)
+    })?;
     if launch {
-        launch_installed(core, dir)?;
+        launch_installed_checked(core, dir)?;
     }
     Ok(())
 }
@@ -1089,7 +1109,27 @@ pub fn elevation_context(
 /// Launches the freshly installed main executable through the delivery
 /// helper (best-effort detached spawn).
 pub fn launch_installed(core: &WizardCore, dir: &str) -> Result<(), String> {
-    let install = core.install_target()?;
+    launch_installed_error(core, dir).map_err(|error| error.to_string())
+}
+
+/// [`launch_installed`] with the failure classified for the UI faces —
+/// the done page's launch answer, including the application-control case
+/// (`os error 4551`) whose remedy is an OS setting, not an install retry.
+pub fn launch_installed_checked(
+    core: &WizardCore,
+    dir: &str,
+) -> Result<(), crate::failure::FinishFailure> {
+    launch_installed_error(core, dir).map_err(|error| {
+        crate::failure::FinishFailure::from_error(crate::failure::FinishStage::Launch, &error)
+    })
+}
+
+/// The raw launch path both wrappers share: resolve the install target,
+/// nest a bare-drive root, and spawn `main_exe` detached.
+fn launch_installed_error(core: &WizardCore, dir: &str) -> Result<(), crate::error::ShunError> {
+    let install = core
+        .install_target()
+        .map_err(crate::error::ShunError::Config)?;
     let dir = nest_root_dir(
         Path::new(dir.trim().trim_end_matches('\\')),
         &core.config.product.name,
@@ -1103,7 +1143,7 @@ pub fn launch_installed(core: &WizardCore, dir: &str) -> Result<(), String> {
     );
     ctx.main_exe = install.main_exe.clone();
     ctx.launch_after_install = true;
-    crate::targets::install::launch(&ctx).map_err(|e| e.to_string())
+    crate::targets::install::launch(&ctx)
 }
 
 /// The shortcut grouping identity: the manifest's `aumid` when declared,

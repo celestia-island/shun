@@ -50,6 +50,16 @@ const MAP: Record<string, string> = {
   hint_portable: "done.hintUsb",
   finish: "done.finish",
   retry: "done.retry",
+  // The finish flow's notices (top-right toast + details window): a launch
+  // refused by Windows application-control policy has its own headline,
+  // because it is not an installer failure — the guide behind the toast's
+  // details action carries the remedy.
+  notice_launch_blocked: "notices.launchBlocked",
+  notice_launch_failed: "notices.launchFailed",
+  notice_shortcuts_failed: "notices.shortcutsFailed",
+  notice_details: "notices.details",
+  notice_close: "notices.close",
+  notice_error_title: "notices.errorTitle",
   license_agree: "license.agree",
   license_title: "license.title",
   license_sub: "license.sub",
