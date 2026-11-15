@@ -1201,6 +1201,12 @@ fn run_headless_with_tap(
                     "The Evergreen installer is retrying through UAC…".into(),
                 ));
             }
+            crate::RuntimeEvent::DownloadRejected(reason) => {
+                println!(
+                    "shun: REFUSED the downloaded WebView2 installer — {reason} \
+                     (unverified downloads never run)"
+                );
+            }
             crate::RuntimeEvent::Done(ready, code) => {
                 if ready {
                     println!("shun: the WebView2 runtime is ready");
@@ -1952,7 +1958,7 @@ fn refine_caps_with_loader(mut caps: UiCapabilities) -> UiCapabilities {
 /// What the install-step runtime acquire is doing — the localized-step
 /// source for the faces' progress surfaces (the egui log pane's step
 /// rows, the headless console's lines).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 // Non-Windows never constructs (the acquire stub swallows the stream)
 // — the enum exists on both sides so the faces' callbacks compile
 // unconditionally.
@@ -1967,6 +1973,11 @@ pub(crate) enum RuntimeEvent {
     /// The silent installer needs elevation — retrying through the UAC
     /// consent (the bootstrapper runs asInvoker and fails unelevated).
     InstallRetryElevated,
+    /// The download FAILED its integrity gate and was deleted instead of
+    /// run: the reason names the pin and the bytes that arrived. Nothing
+    /// executed, and the `Done` row that follows reports the runtime as
+    /// missing — a refusal is a loud degrade, never a silent fallback.
+    DownloadRejected(String),
     /// The acquire settled: the loader now reports a usable runtime
     /// (`true`), or it doesn't (`false` — the done page's warning and
     /// the log row tell the story). The exit code of the last silent
@@ -2026,12 +2037,24 @@ pub(crate) fn acquire_webview2_at_install(
                 return;
             };
             on_event(RuntimeEvent::DownloadStart);
-            let downloaded = download_evergreen(&url, &cache, &mut |so_far, total| {
+            let downloaded = download_evergreen(config, &url, &cache, &mut |so_far, total| {
                 on_event(RuntimeEvent::Download(so_far, total));
             });
             match downloaded {
                 Ok(path) => (path, false),
-                Err(err) => {
+                // The integrity gate refused the bytes. Nothing ran; the
+                // reasons (no pin / mismatch / unreadable) all mean "do
+                // not execute", and the done page + log row say the
+                // runtime is still missing.
+                Err(EvergreenFetchError::Refused(reason)) => {
+                    crate::diag!(
+                        "shun: runtime acquire: REFUSED the downloaded installer — {reason}"
+                    );
+                    on_event(RuntimeEvent::DownloadRejected(reason));
+                    on_event(RuntimeEvent::Done(false, None));
+                    return;
+                }
+                Err(EvergreenFetchError::Transport(err)) => {
                     crate::diag!("shun: runtime acquire: download failed ({err}); skipping");
                     on_event(RuntimeEvent::Done(false, None));
                     return;
@@ -2099,48 +2122,88 @@ fn evergreen_download_name(url: &str) -> String {
         .unwrap_or_else(|| "MicrosoftEdgeWebview2Setup.exe".to_string())
 }
 
+/// Why the install-step fetch produced no runnable installer.
+#[cfg(windows)]
+#[derive(Debug)]
+enum EvergreenFetchError {
+    /// The integrity gate refused the download (no pin for the URL, a
+    /// pin that cannot be a sha256, a digest mismatch, or a staged file
+    /// that could not be read back). The staged file is already deleted
+    /// — nothing unverified is left behind to run later.
+    Refused(String),
+    /// Network, cache-dir or write failures — the fetch never finished.
+    Transport(String),
+}
+
 /// Downloads the Evergreen installer from `url` into `dest_dir` and
 /// returns the written executable's path. `on_progress` receives
 /// `(bytes_so_far, total_when_known)` — the bootstrapper is a few MB,
 /// the standalone ~127 MB, so the caller can show a bar either way.
+///
+/// The fetch is DIGEST-GATED end to end: the pin is resolved before a
+/// single byte moves ([`shun::webview2::check_evergreen_pin`] — an
+/// unpinned URL is refused up front rather than after a wasted
+/// transfer), and the finished file is hashed back against it
+/// ([`shun::webview2::verify_evergreen_download`]). A refusal deletes
+/// the file and returns [`EvergreenFetchError::Refused`], so the path
+/// this function hands out is always one that passed the gate — the one
+/// invariant the install step's run ([`shun::webview2::run_evergreen`],
+/// which also retries elevated) depends on.
 ///
 /// Shell-side (not a [`shun::webview2`] item) because this crate
 /// depends on `ureq` unconditionally, while the library keeps it behind
 /// the optional `online` feature and must build without it.
 #[cfg(windows)]
 fn download_evergreen(
+    config: &ShunConfig,
     url: &str,
     dest_dir: &Path,
     on_progress: &mut dyn FnMut(u64, Option<u64>),
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, EvergreenFetchError> {
     use std::io::Read;
+
+    // The gate's verdict on the URL, before the transfer: an unpinned or
+    // malformed pin cannot pass afterwards, so nothing may move.
+    shun::webview2::check_evergreen_pin(config, url)
+        .map_err(|err| EvergreenFetchError::Refused(err.to_string()))?;
 
     let dest = dest_dir.join(evergreen_download_name(url));
 
     let response = ureq::get(url)
         .timeout(std::time::Duration::from_secs(30))
         .call()
-        .map_err(|e| format!("download failed: {e}"))?;
+        .map_err(|e| EvergreenFetchError::Transport(format!("download failed: {e}")))?;
     let total = response
         .header("Content-Length")
         .and_then(|len| len.parse::<u64>().ok());
 
-    std::fs::create_dir_all(dest_dir).map_err(|e| format!("cache dir: {e}"))?;
-    let mut file = std::fs::File::create(&dest).map_err(|e| format!("cache file: {e}"))?;
+    std::fs::create_dir_all(dest_dir)
+        .map_err(|e| EvergreenFetchError::Transport(format!("cache dir: {e}")))?;
+    let mut file = std::fs::File::create(&dest)
+        .map_err(|e| EvergreenFetchError::Transport(format!("cache file: {e}")))?;
     let mut reader = response.into_reader();
     let mut buffer = [0u8; 64 * 1024];
     let mut so_far = 0u64;
     loop {
         let read = reader
             .read(&mut buffer)
-            .map_err(|e| format!("download stream: {e}"))?;
+            .map_err(|e| EvergreenFetchError::Transport(format!("download stream: {e}")))?;
         if read == 0 {
             break;
         }
         std::io::Write::write_all(&mut file, &buffer[..read])
-            .map_err(|e| format!("cache write: {e}"))?;
+            .map_err(|e| EvergreenFetchError::Transport(format!("cache write: {e}")))?;
         so_far += read as u64;
         on_progress(so_far, total);
+    }
+    // Close the write handle before hashing the file back.
+    drop(file);
+
+    if let Err(err) = shun::webview2::verify_evergreen_download(config, url, &dest) {
+        // Nothing unverified may survive: a half-trusted installer in
+        // the cache invites a later run to reuse it by name.
+        let _ = std::fs::remove_file(&dest);
+        return Err(EvergreenFetchError::Refused(err.to_string()));
     }
     Ok(dest)
 }

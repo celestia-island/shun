@@ -54,6 +54,10 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # download-url = "https://…"               # evergreen-installer : sans installateur embarqué, récupère
                                            #   l'installateur Evergreen à l'installation (même
                                            #   consentement que l'installateur embarqué)
+# download-sha256 = "…"                    # evergreen-installer + download-url : le sha256 que
+                                           #   les octets récupérés doivent respecter avant toute
+                                           #   exécution (défaut : l'ancrage intégré de shun pour
+                                           #   les permaliens Microsoft ; sans ancrage = refus)
 # warn-missing = true                      # skip / evergreen-installer : le repli egui avertit
                                            #   au début et à la fin, avec le lien officiel
                                            #   Microsoft (défaut)
@@ -362,6 +366,13 @@ anglaise « Could not find the WebView2 Runtime » de tauri :
   payload. Un réseau lent ou absent ne bloque jamais la première UI :
   la récupération se passe dans le flux d'installation, et la bannière
   de dégradation annonce que le runtime arrive.
+- Chaque téléchargement est digéré avant toute exécution : le
+  `download-sha256` du manifeste quand il en fixe un, sinon l'ancrage
+  intégré de shun pour les permaliens Evergreen documentés. Une URL qui
+  n'a ni l'un ni l'autre est refusée — rien ne s'exécute, le journal
+  d'installation nomme le digest attendu et celui reçu, et le runtime
+  est signalé absent. Une rotation du permalien en amont est un échec
+  bruyant, jamais un repli silencieux vers « exécuter ce qui arrive ».
 - Quoi qu'il arrive, une machine encore sans runtime prend la face egui.
   Avec `warn-missing` (défaut `true`) et aucun installateur embarqué,
   cette face avertit au début et à la fin de l'assistant et embarque un

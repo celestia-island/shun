@@ -53,6 +53,9 @@ type = "skip"                              # skip | evergreen-installer | fixed-
                                            #   동의를 묻고, 헤드리스는 조용히 실행)
 # download-url = "https://…"               # evergreen-installer: 미포함 시 설치 중 Evergreen 설치
                                            #   관리자를 내려받아 실행(동봉분과 같은 동의 절차)
+# download-sha256 = "…"                    # evergreen-installer + download-url: 내려받은 바이트가
+                                           #   실행 전에 일치해야 하는 sha256(기본: shun에 내장된
+                                           #   Microsoft 퍼머링크 고정값, 고정값 없는 URL은 거부)
 # warn-missing = true                      # skip / evergreen-installer: egui 대체 화면이 시작과
                                            #   끝에 경고하고 Microsoft 공식 다운로드 페이지 링크
                                            #   제공(기본 켜짐)
@@ -320,6 +323,13 @@ tauri가 webview 생성 전에 거는 것과 같은 게이트)으로 런타임�
   느리거나 끊긴 네트워크가 첫 UI를 막는 일은 결코 없습니다: 획득은
   설치 흐름 안에서 일어나고, 강등 배너가 런타임이 오고 있다고
   말합니다.
+- 다운로드는 실행 전에 반드시 다이제스트 검증을 거칩니다. 매니페스트의
+  `download-sha256`이 있으면 그것을, 없으면 shun에 내장된 문서화된
+  Evergreen 퍼머링크 고정값을 씁니다. 둘 다 없는 URL은 거부되어
+  아무것도 실행되지 않고, 설치 로그에 기대값과 실제 값이 남으며
+  런타임은 '없음'으로 보고됩니다. 상류의 퍼머링크 갱신은 큰 실패로
+  드러나며, '도착한 것을 실행'하는 조용한 폴백은 결코 일어나지
+  않습니다.
 - 결과와 무관하게 런타임이 없는 머신은 egui 면에 떨어집니다.
   `warn-missing`(기본 `true`)이고 설치 관리자를 동봉하지 않은 경우
   그 면은 위자드 시작과 끝에 한 번씩 경고하고 Microsoft 공식

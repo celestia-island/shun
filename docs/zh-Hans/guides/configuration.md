@@ -62,6 +62,9 @@ type = "skip"                              # skip | evergreen-installer | fixed-
                                            #   headless 静默执行）
 # download-url = "https://…"               # evergreen-installer：不携带安装器时，安装期联网获取
                                            #   Evergreen 安装器（与自带安装器同一同意流程）
+# download-sha256 = "…"                    # evergreen-installer + download-url：执行前下载字节
+                                           #   必须匹配的 sha256（默认用 shun 内置的微软永久
+                                           #   链接固定值；两者皆无则拒绝执行）
 # warn-missing = true                      # skip / evergreen-installer：egui 降级界面在
                                            #   开始与结束时警告并附微软官方下载页链接
                                            #   （默认开启）
@@ -288,6 +291,11 @@ Program Files、每个固定盘各一文件夹）。于是升级会落在上一�
   运行仍由 `silent-install` 把关）——lite 版通过网络而非自带 payload
   升级机器。慢网或断网永远不会阻塞首个界面：获取发生在安装流程内，
   降级横幅也会说明运行时正在到来。
+- 每次下载都会在执行前做摘要校验：清单给了 `download-sha256` 就用它，
+  否则用 shun 内置的、针对官方 Evergreen 永久链接的固定值。两者皆无
+  的地址一律拒绝——不执行任何东西，安装日志写明期望摘要与实际摘要，
+  运行时按「缺失」上报。上游轮换永久链接是一次响亮的失败，绝不会
+  静默回退成「来什么跑什么」。
 - 无论结果如何，机器仍无运行时则落到 egui 面。`warn-missing`（默认
   `true`）且未携带安装器时，该面在向导开始与结束处各警告一次，并内嵌
   跳转到微软官方 WebView2 下载页的链接。两个开关均可按产品关闭：
