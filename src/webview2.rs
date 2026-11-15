@@ -42,8 +42,31 @@
 //! disabling it opts out of both. The intended value is a permanent
 //! permalink (the Evergreen bootstrapper's fwlink) — a few MB that
 //! fetches the actual runtime itself.
+//!
+//! # The integrity gate
+//!
+//! A carried installer is already digested: it rides the payload
+//! archive, whose per-entry SHA-256 the decoder checks before anything
+//! stages it ([`crate::payload`]). A DOWNLOAD has no such cover — the
+//! bytes arrive from the network and the install step runs them inside
+//! the flow, elevated through UAC — so the networked source carries its
+//! own pin and every fetch ends in [`verify_evergreen_download`]:
+//!
+//! * the manifest's `download-sha256` wins when it pins one (the
+//!   per-product override, and the only option for mirrors);
+//! * otherwise [`EVERGREEN_PERMALINK_SHA256`] pins the permalinks this
+//!   crate documents;
+//! * a URL with neither is REFUSED ([`EvergreenDigestError::Unpinned`]).
+//!
+//! Nothing runs on a mismatch or an unpinned URL: the acquire reports a
+//! loud refusal, deletes the staged file, and the install step degrades
+//! to its usual "runtime still missing" row. The gate is fail-closed on
+//! purpose — a silent fallback back to "run whatever arrived" would
+//! reinstate exactly the hole it closes.
 
 use std::path::Path;
+
+use sha2::{Digest, Sha256};
 
 use crate::config::ShunConfig;
 use crate::payload::ArchivePayload;
@@ -173,6 +196,258 @@ pub fn evergreen_source(config: &ShunConfig, payload: &ArchivePayload) -> Evergr
     EvergreenSource::None
 }
 
+/// Digest pins for the Evergreen permalinks this crate documents, keyed
+/// by the permalink as published (lookups normalize: see
+/// [`normalize_permalink`]). The manifest's `download-sha256` always
+/// wins over this table; a URL with no row here and no manifest pin is
+/// refused rather than trusted.
+///
+/// # Provenance
+///
+/// Both rows were fetched over HTTPS on 2026-11-16 and hashed locally
+/// (`curl -L <permalink> -o file && sha256sum file`):
+///
+/// | permalink | resolves to | bytes | sha256 |
+/// | --- | --- | --- | --- |
+/// | `?linkid=2124703` | `MicrosoftEdgeWebview2Setup.exe` — the small bootstrapper | 1 897 688 | `cf2f2445…082e` |
+/// | `?linkid=2124701` | `MicrosoftEdgeWebView2RuntimeInstallerX64.exe` — the standalone installer | 215 116 512 | `d3cbe8fe…f9c3` |
+///
+/// # Bumping (read before chasing a `sha256 mismatch` in a setup log)
+///
+/// These fwlinks are PERMALINKS: Microsoft republishes them — same URL,
+/// different bytes — every time the Evergreen runtime ships a version.
+/// A pin is therefore a dated fact, not a constant property of the URL.
+/// When the gate starts refusing one of these rows, bump it:
+///
+/// 1. re-fetch the permalink, `sha256sum` the file it lands on;
+/// 2. replace that row's digest and update the date above;
+/// 3. bump the crate version like any other behavior change — shipped
+///    installers embed the pin at compile time.
+///
+/// Nothing is silently trusted in the meantime: a stale row refuses the
+/// download (fail-closed, loud log row, runtime reported missing) until
+/// a build carries the new digest. A product that would rather not ride
+/// Microsoft's schedule points `download-url` at its own mirror and
+/// pins the bytes with `download-sha256` in the manifest.
+const EVERGREEN_PERMALINK_SHA256: &[(&str, &str)] = &[
+    (
+        "https://go.microsoft.com/fwlink/?linkid=2124703",
+        "cf2f2445fef0c5c14e372045f84998771eeb8bb01d59be4afd00692fa160082e",
+    ),
+    (
+        "https://go.microsoft.com/fwlink/?linkid=2124701",
+        "d3cbe8fedb104282d745fff106993efead51ae94f5595a4e75804446a974f9c3",
+    ),
+];
+
+/// Why a downloaded Evergreen installer was REFUSED. Every variant means
+/// the same thing at the call site: do not run this file. Nothing in
+/// this crate executes a download that did not pass
+/// [`verify_evergreen_download`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EvergreenDigestError {
+    /// No pin covers the URL — neither the manifest's `download-sha256`
+    /// nor a compile-time permalink row.
+    Unpinned {
+        /// The `download-url` that nothing pins.
+        url: String,
+    },
+    /// A pin exists but is blank (`download-sha256 = ""`).
+    EmptyPin,
+    /// A pin exists but can never be a sha256 (not 64 hex characters).
+    MalformedPin {
+        /// The pin as the manifest spelled it.
+        pinned: String,
+    },
+    /// The downloaded bytes hash to something other than the pin.
+    Mismatch {
+        /// The normalized pinned digest.
+        expected: String,
+        /// The digest the downloaded bytes actually hash to.
+        actual: String,
+    },
+    /// The staged file could not be read back for hashing.
+    Unreadable {
+        /// The staged path, for the log row.
+        path: String,
+        /// The I/O error's own message.
+        detail: String,
+    },
+}
+
+impl std::fmt::Display for EvergreenDigestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unpinned { url } => write!(
+                f,
+                "no sha256 pin covers the Evergreen download URL {url} — declare \
+                 `download-sha256` in the manifest (an unverified download never runs)"
+            ),
+            Self::EmptyPin => write!(
+                f,
+                "the Evergreen download pin is blank — nothing is trusted, nothing runs"
+            ),
+            Self::MalformedPin { pinned } => write!(
+                f,
+                "the Evergreen download pin {pinned:?} is not a 64-character hex sha256"
+            ),
+            Self::Mismatch { expected, actual } => write!(
+                f,
+                "the downloaded Evergreen installer does not match its pin — \
+                 expected sha256 {expected}, got {actual}"
+            ),
+            Self::Unreadable { path, detail } => write!(
+                f,
+                "could not read the staged Evergreen installer {path} for hashing: {detail}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EvergreenDigestError {}
+
+/// Normalizes a permalink for the pin table: trim, lowercase, drop a
+/// trailing `/` on either side of the query and the optional `p/` segment
+/// the fwlink publisher also accepts (`…/fwlink/p/?LinkId=…`), and keep
+/// the query otherwise verbatim (lowercasing is what collapses
+/// `LinkId`/`linkid`).
+fn normalize_permalink(url: &str) -> String {
+    let lowered = url.trim().to_lowercase();
+    let (base, query) = match lowered.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (lowered.as_str(), None),
+    };
+    let base = base.trim_end_matches('/');
+    let base = base.strip_suffix("/p").unwrap_or(base);
+    match query {
+        Some(query) => format!("{base}?{}", query.trim_end_matches('/')),
+        None => base.to_string(),
+    }
+}
+
+/// The compile-time pin for `url`, when it is one of the documented
+/// permalinks (see [`EVERGREEN_PERMALINK_SHA256`]).
+fn permalink_sha256(url: &str) -> Option<&'static str> {
+    let wanted = normalize_permalink(url);
+    EVERGREEN_PERMALINK_SHA256
+        .iter()
+        .find(|(permalink, _)| normalize_permalink(permalink) == wanted)
+        .map(|(_, digest)| *digest)
+}
+
+/// The digest a downloaded installer must hash to: the manifest's
+/// `download-sha256` when it pins one (always wins — that is the mirror
+/// and override story), else the compile-time row for a documented
+/// permalink. Returned as SPELLED (padding, casing and an optional
+/// `sha256:` label included) — [`check_evergreen_pin`] and
+/// [`verify_download`] normalize it. `None` means NOTHING pins the URL,
+/// and the caller must refuse to run the download
+/// ([`verify_evergreen_download`] does).
+pub fn pinned_download_sha256<'a>(config: &'a ShunConfig, url: &str) -> Option<&'a str> {
+    config
+        .webview2_download_sha256()
+        .or_else(|| permalink_sha256(url))
+}
+
+/// Normalizes a pin to lowercase hex, accepting the same `sha256:`
+/// label other packaging tools write. `Err` when the value can never
+/// name a sha256 — an unreadable pin must refuse, not pass.
+fn normalize_pin(pinned: &str) -> Result<String, EvergreenDigestError> {
+    let trimmed = pinned.trim();
+    if trimmed.is_empty() {
+        return Err(EvergreenDigestError::EmptyPin);
+    }
+    let lowered = trimmed.to_lowercase();
+    let hex = lowered.strip_prefix("sha256:").unwrap_or(&lowered).trim();
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(EvergreenDigestError::MalformedPin {
+            pinned: trimmed.to_string(),
+        });
+    }
+    Ok(hex.to_string())
+}
+
+/// Hex-encodes a digest (the same spelling [`crate::payload`] uses for
+/// its per-entry SHA-256, so a pin copied out of a payload manifest is
+/// byte-comparable with this one).
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    let bytes = digest.as_ref();
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
+}
+
+/// The pure integrity gate: `bytes` must hash to `expected_hex`.
+///
+/// `expected_hex` may carry a `sha256:` label and any casing (see
+/// [`normalize_pin`]); an empty or malformed pin is an error, never a
+/// pass. The streaming twin over an on-disk download is
+/// [`verify_download_file`].
+pub fn verify_download(bytes: &[u8], expected_hex: &str) -> Result<(), EvergreenDigestError> {
+    let expected = normalize_pin(expected_hex)?;
+    let actual = hex_digest(Sha256::digest(bytes));
+    if actual != expected {
+        return Err(EvergreenDigestError::Mismatch { expected, actual });
+    }
+    Ok(())
+}
+
+/// The streaming twin of [`verify_download`] for the shell's on-disk
+/// download: hashes `path` in 64 KiB chunks. The standalone installer is
+/// over 200 MB, so the gate must never need it in memory.
+pub fn verify_download_file(path: &Path, expected_hex: &str) -> Result<(), EvergreenDigestError> {
+    // Reject a pin that can never match before touching the disk.
+    let expected = normalize_pin(expected_hex)?;
+    let unreadable = |detail: String| EvergreenDigestError::Unreadable {
+        path: path.display().to_string(),
+        detail,
+    };
+    let mut file = std::fs::File::open(path).map_err(|err| unreadable(err.to_string()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut buffer)
+            .map_err(|err| unreadable(err.to_string()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let actual = hex_digest(hasher.finalize());
+    if actual != expected {
+        return Err(EvergreenDigestError::Mismatch { expected, actual });
+    }
+    Ok(())
+}
+
+/// The pre-fetch half of [`verify_evergreen_download`]: proves a pin
+/// actually covers `url`, and returns the normalized digest it must hash
+/// to. The shell calls it BEFORE the transfer — an unpinned or malformed
+/// pin can never pass the gate afterwards, so the hundreds of megabytes
+/// (or the few, for the bootstrapper) must never move at all.
+pub fn check_evergreen_pin(config: &ShunConfig, url: &str) -> Result<String, EvergreenDigestError> {
+    let pinned =
+        pinned_download_sha256(config, url).ok_or_else(|| EvergreenDigestError::Unpinned {
+            url: url.to_string(),
+        })?;
+    normalize_pin(pinned)
+}
+
+/// Verifies a downloaded installer ALREADY ON DISK against whatever
+/// pins its URL — the one call the shell makes between the fetch and
+/// the run, and the reason no downloaded installer can reach
+/// [`run_evergreen`] unverified.
+pub fn verify_evergreen_download(
+    config: &ShunConfig,
+    url: &str,
+    path: &Path,
+) -> Result<(), EvergreenDigestError> {
+    let pinned = check_evergreen_pin(config, url)?;
+    verify_download_file(path, &pinned)
+}
+
 /// Runs the Evergreen offline installer silently. The installer's
 /// manifest requires elevation for the machine-wide install, so an os
 /// error 740 relaunches through the UAC consent (PowerShell
@@ -184,6 +459,12 @@ pub fn evergreen_source(config: &ShunConfig, payload: &ArchivePayload) -> Evergr
 /// failure to retry elevated (the downloaded BOOTSTRAPPER runs
 /// asInvoker: unelevated it exits non-zero on access denied without
 /// ever surfacing the 740 spawn gate; see [`run_evergreen_elevated`]).
+///
+/// Provenance is the CALLER'S: a carried installer is covered by the
+/// payload archive's per-entry digests, and a downloaded one only
+/// reaches this call after [`verify_evergreen_download`] accepted it —
+/// this function executes the path it is handed, by design (it has no
+/// digest to compare against).
 ///
 /// Non-Windows platforms have no WebView2 story; the call is a no-op
 /// error so callers can stay unconditional.
@@ -385,6 +666,15 @@ mod tests {
 
     /// A minimal evergreen config, the way the manifest spells it.
     fn evergreen_config(download_url: Option<&str>, silent_install: bool) -> ShunConfig {
+        evergreen_config_pinned(download_url, silent_install, None)
+    }
+
+    /// The same config with the manifest's `download-sha256` pin set.
+    fn evergreen_config_pinned(
+        download_url: Option<&str>,
+        silent_install: bool,
+        download_sha256: Option<&str>,
+    ) -> ShunConfig {
         ShunConfig {
             script: None,
             variants: None,
@@ -399,6 +689,7 @@ mod tests {
                 silent_install: Some(silent_install),
                 warn_missing: None,
                 download_url: download_url.map(str::to_string),
+                download_sha256: download_sha256.map(str::to_string),
             }),
             targets: Vec::new(),
             shell: None,
@@ -462,5 +753,201 @@ mod tests {
         // No URL → nothing to install from, whatever the knob says.
         let offline = evergreen_config(None, true);
         assert_eq!(evergreen_source(&offline, &payload), EvergreenSource::None);
+    }
+
+    /// sha256 of `b"evergreen-installer-bytes"`, computed with
+    /// `sha256sum` on the same literal.
+    const TEST_BYTES_SHA256: &str =
+        "303cf195bd4bdded50e46dba9b36aa780e4e05c2e77a5c4e026a7421f1a9c2bd";
+
+    #[test]
+    fn a_download_must_match_its_pinned_sha256() {
+        let bytes = b"evergreen-installer-bytes";
+        // The pin matches (and an uppercase spelling / a `sha256:` label
+        // normalize onto the same digest).
+        assert_eq!(verify_download(bytes, TEST_BYTES_SHA256), Ok(()));
+        assert_eq!(
+            verify_download(bytes, &TEST_BYTES_SHA256.to_uppercase()),
+            Ok(())
+        );
+        assert_eq!(
+            verify_download(bytes, &format!("sha256:{TEST_BYTES_SHA256}")),
+            Ok(())
+        );
+        assert_eq!(
+            verify_download(
+                bytes,
+                &format!("  sha256:{}  ", TEST_BYTES_SHA256.to_uppercase())
+            ),
+            Ok(())
+        );
+        // A mismatch names both digests so the log row is actionable.
+        let other = "5cea7ca2004304231309e1e0b9d7722e42904d2e7feaf6488cf43c171ee77722";
+        assert_eq!(
+            verify_download(bytes, other),
+            Err(EvergreenDigestError::Mismatch {
+                expected: other.to_string(),
+                actual: TEST_BYTES_SHA256.to_string(),
+            })
+        );
+        // A one-byte change flips the verdict — the gate hashes the
+        // whole file, not a prefix.
+        let mut tampered = bytes.to_vec();
+        tampered.push(b'!');
+        assert!(matches!(
+            verify_download(&tampered, TEST_BYTES_SHA256),
+            Err(EvergreenDigestError::Mismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn an_empty_or_malformed_pin_refuses_instead_of_passing() {
+        let bytes = b"evergreen-installer-bytes";
+        assert_eq!(
+            verify_download(bytes, ""),
+            Err(EvergreenDigestError::EmptyPin)
+        );
+        assert_eq!(
+            verify_download(bytes, "   "),
+            Err(EvergreenDigestError::EmptyPin)
+        );
+        // Short, non-hex and over-long pins can never name a sha256.
+        for pin in [
+            "abc",
+            "zz".repeat(32).as_str(),
+            "0".repeat(63).as_str(),
+            &"0".repeat(65),
+        ] {
+            let err = verify_download(bytes, pin).expect_err("must refuse");
+            assert!(
+                matches!(err, EvergreenDigestError::MalformedPin { .. }),
+                "unexpected error for {pin:?}: {err:?}"
+            );
+        }
+        // A blank manifest pin means "nothing pinned", not "everything
+        // passes": the accessor drops it and the source stays refused.
+        let blank =
+            evergreen_config_pinned(Some("https://example.invalid/wv2.exe"), true, Some("  "));
+        assert_eq!(blank.webview2_download_sha256(), None);
+        assert_eq!(
+            pinned_download_sha256(&blank, "https://example.invalid/wv2.exe"),
+            None
+        );
+    }
+
+    #[test]
+    fn permalink_pins_cover_the_documented_fwlinks() {
+        // The published spellings, the `p/` form and a stray trailing
+        // slash all resolve to the same pinned row.
+        let bootstrapper = "cf2f2445fef0c5c14e372045f84998771eeb8bb01d59be4afd00692fa160082e";
+        let standalone = "d3cbe8fedb104282d745fff106993efead51ae94f5595a4e75804446a974f9c3";
+        let config = evergreen_config(
+            Some("https://go.microsoft.com/fwlink/?linkid=2124703"),
+            true,
+        );
+        for url in [
+            "https://go.microsoft.com/fwlink/?linkid=2124703",
+            "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
+            "HTTPS://go.microsoft.com/fwlink/?linkid=2124703/",
+            " https://go.microsoft.com/fwlink/?LinkId=2124703 ",
+        ] {
+            assert_eq!(
+                pinned_download_sha256(&config, url),
+                Some(bootstrapper),
+                "{url}"
+            );
+        }
+        assert_eq!(
+            pinned_download_sha256(&config, "https://go.microsoft.com/fwlink/?linkid=2124701"),
+            Some(standalone)
+        );
+        // Any other URL — a mirror, the resolved CDN GUID link — is
+        // unpinned until the manifest says otherwise.
+        for url in [
+            "https://example.invalid/MicrosoftEdgeWebview2Setup.exe",
+            "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/068be74d-a831-494f-8f57-c173756d5a33/MicrosoftEdgeWebview2Setup.exe",
+        ] {
+            assert_eq!(pinned_download_sha256(&config, url), None, "{url}");
+        }
+        // The manifest pin always wins over the table (a mirror of the
+        // same bytes, or a deliberate re-pin).
+        let override_config = evergreen_config_pinned(
+            Some("https://go.microsoft.com/fwlink/?linkid=2124703"),
+            true,
+            Some(TEST_BYTES_SHA256),
+        );
+        assert_eq!(
+            pinned_download_sha256(
+                &override_config,
+                "https://go.microsoft.com/fwlink/?linkid=2124703"
+            ),
+            Some(TEST_BYTES_SHA256)
+        );
+    }
+
+    #[test]
+    fn the_staged_file_gate_matches_the_in_memory_one() {
+        let dir = std::env::temp_dir().join(format!("shun-wv2-digest-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let staged = dir.join("MicrosoftEdgeWebview2Setup.exe");
+        std::fs::write(&staged, b"evergreen-installer-bytes").unwrap();
+
+        assert_eq!(verify_download_file(&staged, TEST_BYTES_SHA256), Ok(()));
+        let other = "5cea7ca2004304231309e1e0b9d7722e42904d2e7feaf6488cf43c171ee77722";
+        assert_eq!(
+            verify_download_file(&staged, other),
+            Err(EvergreenDigestError::Mismatch {
+                expected: other.to_string(),
+                actual: TEST_BYTES_SHA256.to_string(),
+            })
+        );
+        assert_eq!(
+            verify_download_file(&staged, ""),
+            Err(EvergreenDigestError::EmptyPin)
+        );
+        // A missing file is a refusal, never a pass.
+        assert!(matches!(
+            verify_download_file(&dir.join("absent.exe"), TEST_BYTES_SHA256),
+            Err(EvergreenDigestError::Unreadable { .. })
+        ));
+
+        // The end-to-end call the shell makes: the manifest pin verifies
+        // the staged file, and an unpinned URL refuses it outright.
+        let pinned = evergreen_config_pinned(
+            Some("https://example.invalid/wv2.exe"),
+            true,
+            Some(TEST_BYTES_SHA256),
+        );
+        assert_eq!(
+            verify_evergreen_download(&pinned, "https://example.invalid/wv2.exe", &staged),
+            Ok(())
+        );
+        // A pin that can never be a sha256 refuses before the file is
+        // even read — the pre-fetch check the shell runs first.
+        let malformed = evergreen_config_pinned(
+            Some("https://example.invalid/wv2.exe"),
+            true,
+            Some("not-a-digest"),
+        );
+        assert_eq!(
+            check_evergreen_pin(&malformed, "https://example.invalid/wv2.exe"),
+            Err(EvergreenDigestError::MalformedPin {
+                pinned: "not-a-digest".to_string(),
+            })
+        );
+        let unpinned = evergreen_config(Some("https://example.invalid/wv2.exe"), true);
+        assert_eq!(
+            check_evergreen_pin(&unpinned, "https://example.invalid/wv2.exe"),
+            Err(EvergreenDigestError::Unpinned {
+                url: "https://example.invalid/wv2.exe".to_string(),
+            })
+        );
+        assert_eq!(
+            verify_evergreen_download(&unpinned, "https://example.invalid/wv2.exe", &staged),
+            Err(EvergreenDigestError::Unpinned {
+                url: "https://example.invalid/wv2.exe".to_string(),
+            })
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

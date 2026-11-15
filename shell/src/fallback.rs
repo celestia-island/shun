@@ -2916,6 +2916,11 @@ impl FallbackApp {
                     let mut last_bytes = 0u64;
                     let mut last_tick = std::time::Instant::now();
                     let mut ema: Option<f32> = None;
+                    // A REFUSED download (integrity gate) has no row of
+                    // its own: the reason rides the `Done` error row
+                    // below, which force-opens the drawer — the operator
+                    // needs the pin and what arrived, not a second line.
+                    let mut rejected: Option<String> = None;
                     // The wizard's install step runs the installer
                     // VISIBLY behind the user's consent answer (the
                     // ask gated this worker's spawn; the default keeps
@@ -2980,6 +2985,9 @@ impl FallbackApp {
                                         texts.runtime_elevate.clone(),
                                     ));
                                 }
+                                crate::RuntimeEvent::DownloadRejected(reason) => {
+                                    rejected = Some(reason);
+                                }
                                 crate::RuntimeEvent::Done(ready, code) => {
                                     // The loader's verdict, straight into the
                                     // pane: an error row force-opens the
@@ -2989,10 +2997,18 @@ impl FallbackApp {
                                     let text = if ready {
                                         texts.runtime_ready.clone()
                                     } else {
-                                        let code = code
-                                            .map(|c| format!(" (exit {c})"))
-                                            .unwrap_or_default();
-                                        format!("{}{code}", texts.runtime_failed)
+                                        // Either the installer's exit
+                                        // code, or the integrity gate's
+                                        // refusal — the reason names the
+                                        // pin, so the operator can tell a
+                                        // rotated upstream from a
+                                        // tampered mirror.
+                                        let detail = match (code, rejected.take()) {
+                                            (_, Some(reason)) => format!(" — {reason}"),
+                                            (Some(code), None) => format!(" (exit {code})"),
+                                            (None, None) => String::new(),
+                                        };
+                                        format!("{}{detail}", texts.runtime_failed)
                                     };
                                     send(WorkerMsg::LogLine(
                                         if ready {

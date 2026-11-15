@@ -64,6 +64,10 @@ type = "skip"                              # skip | evergreen-installer | fixed-
 # download-url = "https://…"               # evergreen-installer: when nothing is carried,
                                            #   fetch the Evergreen installer at install
                                            #   time (same consent as the carried one)
+# download-sha256 = "…"                    # evergreen-installer + download-url: the sha256 the
+                                           #   fetched bytes must match before anything runs
+                                           #   them (default: shun's built-in pin for
+                                           #   Microsoft's permalinks; no pin = refused)
 # warn-missing = true                      # skip / evergreen-installer: the egui fallback
                                            #   warns + links to Microsoft's download page
                                            #   when the machine has no runtime (default)
@@ -344,6 +348,13 @@ face into tauri's English "Could not find the WebView2 Runtime" box:
   network instead of its own payload. A slow or absent network never
   blocks the first UI: the fetch happens inside the install flow, and
   the degrade banner says the runtime is coming.
+- Every download is digested before anything runs it: the manifest's
+  `download-sha256` when it pins one, otherwise shun's built-in pin for
+  the documented Evergreen permalinks. A URL with neither is refused —
+  nothing executes, the setup log names the expected and the arrived
+  digest, and the runtime reports missing. A permalink rotation
+  upstream is a loud failure, never a silent fallback to "run whatever
+  arrived".
 - Whatever the outcome, a machine still without a runtime takes the
   egui face. With `warn-missing` (default `true`) and no carried
   installer, that face warns at the start and the end of the wizard and

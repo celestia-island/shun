@@ -52,6 +52,9 @@ type = "skip"                              # skip | evergreen-installer | fixed-
                                            #   headless 靜默執行）
 # download-url = "https://…"               # evergreen-installer：不攜帶安裝器時，安裝期透過網路取得
                                            #   Evergreen 安裝器（與自帶安裝器同一同意流程）
+# download-sha256 = "…"                    # evergreen-installer + download-url：執行前下載位元組
+                                           #   必須吻合的 sha256（預設用 shun 內建的微軟永久
+                                           #   連結固定值；兩者皆無則拒絕執行）
 # warn-missing = true                      # skip / evergreen-installer：egui 降級介面在開始
                                            #   與結束時警告並附微軟官方下載頁連結（預設開啟）
 
@@ -279,6 +282,11 @@ Runtime" 彈框：
   （無頭執行仍由 `silent-install` 把關）——lite 版透過網路而非
   自帶 payload 升級機器。慢網或斷網永遠不會阻塞首個介面：取得
   發生在安裝流程內，降級橫幅也會說明執行階段即將到來。
+- 每次下載都會在執行前做摘要校驗：清單給了 `download-sha256` 就用它，
+  否則用 shun 內建的、針對官方 Evergreen 永久連結的固定值。兩者皆無
+  的位址一律拒絕——不執行任何東西，安裝日誌寫明期望摘要與實際摘要，
+  執行階段按「缺失」回報。上游輪換永久連結是一次響亮的失敗，絕不會
+  靜默回退成「來什麼跑什麼」。
 - 無論結果如何，機器仍無執行階段則落到 egui 面。`warn-missing`
   （預設 `true`）且未攜帶安裝器時，該面在精靈開始與結束處各警告
   一次，並內嵌跳轉到微軟官方 WebView2 下載頁的連結。兩個開關

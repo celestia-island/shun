@@ -531,8 +531,26 @@ pub enum Webview2Strategy {
         /// permalink such as the Evergreen bootstrapper's fwlink is the
         /// intended value; the file is a few MB and fetches the runtime
         /// itself.
+        ///
+        /// Every downloaded installer is digested before anything runs
+        /// it (see [`crate::webview2::verify_evergreen_download`]): the
+        /// payload manifest's per-entry digests cover the CARRIED
+        /// installer only, so the networked source carries its own pin.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         download_url: Option<String>,
+        /// The sha256 the downloaded installer must hash to before it
+        /// runs, for builds whose `download-url` is not one of the
+        /// permalinks shun already pins at compile time (see
+        /// [`crate::webview2`]). Lowercase hex; an uppercase spelling
+        /// and an optional `sha256:`/`SHA256:` prefix are accepted and
+        /// normalized.
+        ///
+        /// This field is the per-product override of that built-in
+        /// pin: it always wins, and a `download-url` with neither is
+        /// REFUSED (unverified downloads never run — the install step
+        /// degrades to its usual "runtime still missing" row instead).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        download_sha256: Option<String>,
     },
 
     /// Carry a fixed-version runtime privately.
@@ -567,6 +585,24 @@ impl ShunConfig {
                 .as_deref()
                 .map(str::trim)
                 .filter(|u| !u.is_empty()),
+            _ => None,
+        }
+    }
+
+    /// The manifest's pin for the DOWNLOADED Evergreen installer (see
+    /// the `download-sha256` field): the digest the fetch must match
+    /// before anything runs it. `None` for every non-evergreen strategy
+    /// and for blank values (a blank string parses, but pins nothing) —
+    /// [`crate::webview2::pinned_download_sha256`] then falls back to
+    /// the compile-time permalink table.
+    pub fn webview2_download_sha256(&self) -> Option<&str> {
+        match self.webview2.as_ref() {
+            Some(Webview2Strategy::EvergreenInstaller {
+                download_sha256, ..
+            }) => download_sha256
+                .as_deref()
+                .map(str::trim)
+                .filter(|digest| !digest.is_empty()),
             _ => None,
         }
     }
@@ -1939,6 +1975,52 @@ mod tests {
         // Non-evergreen strategies carry no networked source.
         let skip = sample_with_webview2(serde_json::json!({"type": "skip"}));
         assert_eq!(skip.webview2_download_url(), None);
+    }
+
+    #[test]
+    fn download_sha256_parses_kebab_case_and_ignores_strangers() {
+        // The manifest spelling: kebab-case, padding trimmed.
+        let pinned = sample_with_webview2(serde_json::json!({
+            "type": "evergreen-installer",
+            "download-url": "https://example.invalid/wv2.exe",
+            "download-sha256":
+                " cf2f2445fef0c5c14e372045f84998771eeb8bb01d59be4afd00692fa160082e "
+        }));
+        assert_eq!(
+            pinned.webview2_download_sha256(),
+            Some("cf2f2445fef0c5c14e372045f84998771eeb8bb01d59be4afd00692fa160082e")
+        );
+        // A blank string parses but pins nothing — the accessor drops it
+        // so the permalink table (or a refusal) decides instead.
+        let blank = sample_with_webview2(serde_json::json!({
+            "type": "evergreen-installer",
+            "download-url": "https://example.invalid/wv2.exe",
+            "download-sha256": "   "
+        }));
+        assert_eq!(blank.webview2_download_sha256(), None);
+        // Absent on every legacy manifest that predates the field.
+        let legacy = sample_with_webview2(serde_json::json!({
+            "type": "evergreen-installer",
+            "download-url": "https://example.invalid/wv2.exe"
+        }));
+        assert_eq!(legacy.webview2_download_sha256(), None);
+        // Non-evergreen strategies carry no download to pin.
+        let skip = sample_with_webview2(serde_json::json!({
+            "type": "skip",
+            "download-sha256": "cf2f2445fef0c5c14e372045f84998771eeb8bb01d59be4afd00692fa160082e"
+        }));
+        assert_eq!(skip.webview2_download_sha256(), None);
+        // Round-trips: the field serializes under the same key and
+        // verbatim (the accessor trims on read, the embedded config JSON
+        // keeps what the manifest wrote)…
+        let json = serde_json::to_value(&pinned).unwrap();
+        assert_eq!(
+            json["webview2"]["download-sha256"],
+            " cf2f2445fef0c5c14e372045f84998771eeb8bb01d59be4afd00692fa160082e "
+        );
+        // …and an absent one stays absent.
+        let legacy_json = serde_json::to_value(&legacy).unwrap();
+        assert!(legacy_json["webview2"].get("download-sha256").is_none());
     }
 
     #[test]
