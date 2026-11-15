@@ -2479,6 +2479,39 @@ fn passive_state() -> Option<passive::PassiveEvent> {
 mod tests {
     use super::*;
 
+    /// The web face's only bridge into the classifier: the command must
+    /// return the CLASSIFIED shape (the same kind/topic pairing the other
+    /// faces consume), never an unclassified stub — round-6's surviving
+    /// mutation was exactly this command going stub.
+    #[test]
+    fn classify_error_names_the_family_and_topic() {
+        // The host's own access-denied code (5 = ERROR_ACCESS_DENIED on
+        // Windows, 13 = EACCES on Unix).
+        let denied: i32 = if cfg!(windows) { 5 } else { 13 };
+        let failure = classify_error(format!("io error: Access is denied. (os error {denied})"));
+        assert_eq!(failure.stage, shun::failure::FinishStage::Install);
+        assert_eq!(failure.kind, shun::failure::FailureKind::Permissions);
+        assert_eq!(failure.os_error, Some(denied));
+        assert_eq!(
+            failure.help_topic.as_deref(),
+            Some(shun::help::TOPIC_PERMISSIONS)
+        );
+        assert!(failure.has_help());
+
+        // A message with no family stays unclassified on purpose.
+        let failure = classify_error("this configuration declares no install target".into());
+        assert_eq!(failure.kind, shun::failure::FailureKind::Io);
+        assert!(failure.help_topic.is_none());
+
+        // The application-control hex form classifies with the topic.
+        let failure = classify_error("CreateProcess failed: 0x11C7 before any output".into());
+        assert_eq!(failure.kind, shun::failure::FailureKind::AppControlBlocked);
+        assert_eq!(
+            failure.help_topic.as_deref(),
+            Some(shun::help::TOPIC_APP_CONTROL)
+        );
+    }
+
     fn cli(args: &[&str]) -> Cli {
         // parse_from takes argv0 first; feed a placeholder.
         let mut argv = vec!["shun-installer".to_string()];
