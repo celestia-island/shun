@@ -1073,7 +1073,16 @@ export default defineComponent({
     async function applyNestRootDir(raw: string) {
       const nested = await invoke<string>("nest_root_dir", { dir: raw });
       if (nested !== raw.trim()) {
-        notify(withProduct(strings(locale.value)).target.nestedNote);
+        // The only explanation of a silently rewritten folder — hold it
+        // longer than the 3 s info default so the note is actually read
+        // before the install starts. (Caveat, hikari's contract: the
+        // duration is read at SLOT-CREATION time, so this holds only
+        // while this call creates the face's first `info` slot — true
+        // today, as the other pushes are errors.)
+        toast.show(withProduct(strings(locale.value)).target.nestedNote, {
+          type: "info",
+          duration: 8000,
+        });
       }
       dir.value = nested;
     }
@@ -1337,12 +1346,6 @@ export default defineComponent({
 
     function closeWindow() {
       tauriWindow()?.close();
-    }
-
-    /** Pushes a transient notice into the shared top-right toast stack —
-     *  the ONLY notice sink this face has (no in-flow banners). */
-    function notify(text: string, type: "info" | "success" | "warning" = "info") {
-      toast.show(text, { type });
     }
 
     // Light/dark resolution (hikari rules, user direction): `system`

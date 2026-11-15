@@ -29,7 +29,11 @@
 //!   `…` — the CSS `-webkit-line-clamp: 3`, so a long error can never grow
 //!   the card without bound;
 //! - newest card appends at the BOTTOM (HkToast's `TransitionGroup` order),
-//!   12pt between cards;
+//!   12pt between cards; an identical repeat of the stack's newest card
+//!   refreshes it in place (hikari's consecutive dedupe — hikari compares
+//!   within a per-type slot, this face runs one slot per push since every
+//!   producer is an Error today), keeping the order = recency invariant
+//!   that `trim()` relies on;
 //! - lifetime table mirrors `TOAST_DURATION`: error/warning 30 s,
 //!   info/success 3 s;
 //! - controls, left to right: the inline action pill (dismisses the card
@@ -204,16 +208,18 @@ impl ToastHost {
     /// go); kept as the action-less half of the HkToast surface.
     #[allow(dead_code)]
     pub(crate) fn push(&mut self, tone: ToastTone, text: impl Into<String>) {
-        self.items.push(Toast {
-            id: self.next_id,
+        self.push_with_action(
             tone,
-            text: text.into(),
-            action: None,
-            copyable: false,
-            born: Instant::now(),
-        });
-        self.next_id += 1;
-        self.trim();
+            text,
+            "",
+            ToastIntent::ShowDetails {
+                title: String::new(),
+                body: String::new(),
+            },
+            false,
+        );
+        // The action-less push hides the pill by construction: see
+        // `push_with_action`'s empty-label arm.
     }
 
     /// Pushes a notice that carries an inline action (and, for failures, a
@@ -226,11 +232,44 @@ impl ToastHost {
         intent: ToastIntent,
         copyable: bool,
     ) {
+        let text = text.into();
+        let action_label = action_label.into();
+        // Hikari's CONSECUTIVE dedupe (useToast compares only the slot's
+        // LAST message): an identical repeat of the stack's newest card
+        // (the tail — every producer is an Error today, so tail == the
+        // tone's newest) refreshes it in place — clock restart,
+        // action/copy update,
+        // "latest push owns the action" — instead of stacking a dup.
+        // An older card is NEVER resurrected (A,B,A appends a third
+        // card): stack order must keep mirroring recency, or trim() would
+        // evict the just-refreshed card first.
+        let refresh = self
+            .items
+            .last_mut()
+            .filter(|t| t.tone == tone && t.text == text);
+        if let Some(live) = refresh {
+            live.born = Instant::now();
+            // The latest push owns the action: a label refreshes it, an
+            // empty one (the action-less `push`) clears it — the same
+            // "latest message decides" contract useToast documents.
+            live.action = if action_label.is_empty() {
+                None
+            } else {
+                Some((action_label, intent))
+            };
+            live.copyable = live.copyable || copyable;
+            return;
+        }
+        let action = if action_label.is_empty() {
+            None
+        } else {
+            Some((action_label, intent))
+        };
         self.items.push(Toast {
             id: self.next_id,
             tone,
-            text: text.into(),
-            action: Some((action_label.into(), intent)),
+            text,
+            action,
             copyable,
             born: Instant::now(),
         });
@@ -795,6 +834,109 @@ mod tests {
     /// The card's seat, measured from the painted geometry: right gutter
     /// 16pt, top 56pt (clear of the caption bar), the full 360pt width.
     /// This is the layout the X11 capture verifies by eye.
+    #[test]
+    fn an_identical_repeat_refreshes_instead_of_stacking() {
+        // hikari's CONSECUTIVE dedupe: six failed finishes with the same
+        // text read as ONE card whose clock restarted — not a column of
+        // duplicates walking into the footer band.
+        let mut host = ToastHost::new();
+        for _ in 0..6 {
+            host.push_with_action(
+                ToastTone::Error,
+                "same failure",
+                "details",
+                ToastIntent::ShowDetails {
+                    title: String::new(),
+                    body: String::new(),
+                },
+                true,
+            );
+        }
+        assert_eq!(host.items.len(), 1, "identical repeats dedupe");
+        // The clock restart is pinned by AGING the card first: a stale
+        // born plus a fresh push must move `born` forward (the naive
+        // assertion — elapsed < 500ms — passes even when nothing
+        // refreshed).
+        let stale_born = Instant::now() - Duration::from_secs(10);
+        host.items[0].born = stale_born;
+        host.push_with_action(
+            ToastTone::Error,
+            "same failure",
+            "details",
+            ToastIntent::ShowDetails {
+                title: String::new(),
+                body: String::new(),
+            },
+            true,
+        );
+        assert_eq!(host.items.len(), 1, "the repeat dedupes");
+        assert!(
+            host.items[0].born > stale_born,
+            "the surviving card's clock restarted"
+        );
+
+        // A DIFFERENT text still stacks (that is a new notice, not a
+        // retry of the old one), and it becomes the newest row.
+        host.push_with_action(
+            ToastTone::Error,
+            "a different failure",
+            "details",
+            ToastIntent::ShowDetails {
+                title: String::new(),
+                body: String::new(),
+            },
+            true,
+        );
+        assert_eq!(host.items.len(), 2);
+        assert_eq!(host.items[1].text, "a different failure");
+
+        // hikari compares ONLY the newest message: a repeat of the OLDER
+        // card's text does not resurrect it — it appends a third card
+        // (A,B,A appends; stack order keeps mirroring recency, so trim
+        // never evicts a just-refreshed card first).
+        host.push_with_action(
+            ToastTone::Error,
+            "same failure",
+            "details",
+            ToastIntent::ShowDetails {
+                title: String::new(),
+                body: String::new(),
+            },
+            true,
+        );
+        assert_eq!(host.items.len(), 3, "A,B,A appends");
+        assert_eq!(
+            host.items[2].text, "same failure",
+            "the new card is the newest row"
+        );
+        // And the untouched older cards keep their own pills.
+        assert!(host.items[0].action.is_some(), "old card keeps its action");
+    }
+
+    #[test]
+    fn the_action_less_push_clears_the_newest_cards_pill() {
+        // hikari's "latest push owns the action": an action-less push on
+        // a fresh consecutive match clears the pill.
+        let mut host = ToastHost::new();
+        host.push_with_action(
+            ToastTone::Error,
+            "same failure",
+            "details",
+            ToastIntent::ShowDetails {
+                title: String::new(),
+                body: String::new(),
+            },
+            true,
+        );
+        assert!(host.items[0].action.is_some());
+        host.push(ToastTone::Error, "same failure");
+        assert_eq!(host.items.len(), 1, "the plain push dedupes too");
+        assert!(
+            host.items[0].action.is_none(),
+            "the latest push cleared the action"
+        );
+    }
+
     #[test]
     fn the_card_sits_in_the_top_right_seat() {
         let ctx = egui::Context::default();
