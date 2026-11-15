@@ -1073,7 +1073,13 @@ export default defineComponent({
     async function applyNestRootDir(raw: string) {
       const nested = await invoke<string>("nest_root_dir", { dir: raw });
       if (nested !== raw.trim()) {
-        notify(withProduct(strings(locale.value)).target.nestedNote);
+        // The only explanation of a silently rewritten folder — hold it
+        // longer than the 3 s info default so the note is actually read
+        // before the install starts.
+        toast.show(withProduct(strings(locale.value)).target.nestedNote, {
+          type: "info",
+          duration: 8000,
+        });
       }
       dir.value = nested;
     }

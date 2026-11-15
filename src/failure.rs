@@ -167,6 +167,25 @@ fn classify_error(error: &ShunError) -> (FailureKind, Option<i32>, Option<String
     }
 }
 
+/// ENAMETOOLONG's number: 36 on Linux, 63 on Darwin (where 36 is
+/// EINPROGRESS — no family, plain Io). One constant, two consumers: the
+/// match arm above and the platform test, so they cannot drift.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+pub(crate) const ENAMETOOLONG: i32 = 36;
+#[cfg(target_os = "macos")]
+pub(crate) const ENAMETOOLONG: i32 = 63;
+
+/// The Unix network errnos, per platform: refused / timed out /
+/// net unreachable / host unreachable / host down. Linux and Darwin
+/// number them differently, and network failures usually arrive as
+/// strings (ureq's composed English), so this table serves the io-borne
+/// path — and the platform test reads the SAME constant, so coverage and
+/// arm cannot drift.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) const UNIX_NETWORK_ERRNOS: [i32; 5] = [101, 110, 111, 112, 113];
+#[cfg(target_os = "macos")]
+pub(crate) const UNIX_NETWORK_ERRNOS: [i32; 5] = [61, 60, 51, 64, 65];
+
 /// Maps a raw OS error code to the narrow reason. Kept public because the
 /// mapping is the contract between the classifier and the guide topics.
 ///
@@ -208,24 +227,12 @@ pub fn classify_os_error(code: i32) -> FailureKind {
         #[cfg(not(windows))]
         // ETXTBSY.
         26 => FailureKind::FileInUse,
-        // ENAMETOOLONG: 36 on Linux, 63 on Darwin (where 36 is
-        // EINPROGRESS — no family, plain Io).
-        #[cfg(all(not(windows), not(target_os = "macos")))]
-        36 => FailureKind::PathTooLong,
-        #[cfg(target_os = "macos")]
-        63 => FailureKind::PathTooLong,
-        // Unix network errnos: refused / timed out / net unreachable /
-        // host unreachable / host down. Linux and Darwin number them
-        // differently, and network failures usually arrive as strings —
-        // these arms serve the io-borne path.
-        #[cfg(all(unix, not(target_os = "macos")))]
-        // Refused / timed out / no route (net+host) / host down /
-        // net unreachable.
-        101 | 110..=113 => FailureKind::Network,
-        #[cfg(target_os = "macos")]
-        // Refused / timed out / net unreachable / host down / host
-        // unreachable.
-        61 | 60 | 51 | 64 | 65 => FailureKind::Network,
+        // ENAMETOOLONG — the per-platform constant above.
+        #[cfg(not(windows))]
+        ENAMETOOLONG => FailureKind::PathTooLong,
+        // The Unix network errnos — the per-platform table above.
+        #[cfg(unix)]
+        code if UNIX_NETWORK_ERRNOS.contains(&code) => FailureKind::Network,
         _ => FailureKind::Io,
     }
 }
@@ -476,61 +483,30 @@ mod tests {
                 );
             }
         } else {
-            // Darwin numbers ENAMETOOLONG 63 (its 36 is EINPROGRESS) and
-            // the network set 61/60/51/64/65; Linux numbers ENAMETOOLONG 36
-            // and the network set 101/110/111/112/113.
-            let (too_long, net): (i32, [(i32, FailureKind); 5]) = if cfg!(target_os = "macos") {
-                (
-                    63,
-                    [
-                        (61, FailureKind::Network), // ECONNREFUSED
-                        (60, FailureKind::Network), // ETIMEDOUT
-                        (51, FailureKind::Network), // ENETUNREACH
-                        (64, FailureKind::Network), // EHOSTDOWN
-                        (65, FailureKind::Network), // EHOSTUNREACH
-                    ],
-                )
-            } else {
-                (
-                    36,
-                    [
-                        (111, FailureKind::Network), // ECONNREFUSED
-                        (110, FailureKind::Network), // ETIMEDOUT
-                        (113, FailureKind::Network), // EHOSTUNREACH
-                        (112, FailureKind::Network), // EHOSTDOWN
-                        (101, FailureKind::Network), // ENETUNREACH
-                    ],
-                )
-            };
+            // ENAMETOOLONG and the network set come from the SAME
+            // constants the match arm reads — the test cannot describe a
+            // different table than the classifier implements.
+            let net = UNIX_NETWORK_ERRNOS;
             let cases: [(i32, FailureKind); 6] = [
-                (1, FailureKind::Permissions),        // EPERM
-                (13, FailureKind::Permissions),       // EACCES
-                (30, FailureKind::Permissions),       // EROFS
-                (28, FailureKind::DiskFull),          // ENOSPC
-                (26, FailureKind::FileInUse),         // ETXTBSY
-                (too_long, FailureKind::PathTooLong), // ENAMETOOLONG
+                (1, FailureKind::Permissions),  // EPERM
+                (13, FailureKind::Permissions), // EACCES
+                (30, FailureKind::Permissions), // EROFS
+                (28, FailureKind::DiskFull),    // ENOSPC
+                (26, FailureKind::FileInUse),   // ETXTBSY
+                (ENAMETOOLONG, FailureKind::PathTooLong),
             ];
             for (code, kind) in cases {
                 assert_eq!(classify_os_error(code), kind, "unix code {code}");
             }
-            for (code, kind) in net {
-                assert_eq!(classify_os_error(code), kind, "unix network code {code}");
+            for (code, kind) in net.iter().zip(std::iter::repeat(FailureKind::Network)) {
+                assert_eq!(classify_os_error(*code), kind, "unix network code {code}");
             }
-            // The Windows-only numbers mean nothing on Unix — plain Io,
-            // never a Windows remedy (28 is ENOSPC here, NOT paper-out).
-            // 112 is NOT in this loop: on Linux it is EHOSTDOWN, which
-            // the unix network arm claims by design.
-            for code in [5, 1314, 39, 32, 1224, 206, 161, 10061, 12029] {
-                assert_eq!(
-                    classify_os_error(code),
-                    FailureKind::Io,
-                    "windows code {code} on unix"
-                );
-            }
-            // And the OTHER Unix flavor's ENAMETOOLONG number is plain Io
+            // The OTHER Unix flavor's ENAMETOOLONG number means nothing
             // here (Darwin's 36 is EINPROGRESS; Linux's 63 is unknown).
             let other_enametoolang: i32 = if cfg!(target_os = "macos") { 36 } else { 63 };
             assert_eq!(classify_os_error(other_enametoolang), FailureKind::Io);
+            // And none of this flavor's family numbers collides with a
+            // Windows meaning — the Windows block above owns its own.
         }
         for kind in [
             FailureKind::AppControlBlocked,
