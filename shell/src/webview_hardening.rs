@@ -125,6 +125,12 @@ mod tests {
     const DEMO_BUNDLE: &str = include_str!("../../demo-app/ui/app.js");
     /// The demo web project — the build that turns the source into the bundle.
     const DEMO_PACKAGE_JSON: &str = include_str!("../../demo-app/web/package.json");
+    /// The shell manifest, capabilities and builder source: the guide
+    /// window's external links need all three halves (dependency / permission
+    /// / registration) or they silently do nothing on a real machine.
+    const SHELL_CARGO: &str = include_str!("../Cargo.toml");
+    const CAPABILITIES: &str = include_str!("../capabilities/default.json");
+    const SHELL_MAIN: &str = include_str!("main.rs");
     /// The shell's Tauri surface (the only module allowed to name it).
     const TAURI_TS: &str = include_str!("../web/src/tauri.ts");
     /// The frontend's dependency list — the imports must be installable.
@@ -356,6 +362,28 @@ mod tests {
         assert!(
             command.contains("pnpm --dir web build"),
             "demo tauri.conf.json must rebuild its face before a tauri build: {command:?}"
+        );
+    }
+
+    /// The guide window external anchors are the ONE door out of the
+    /// sandboxed page: hikari's markdown renderer tries the global opener
+    /// (absent — withGlobalTauri is off), then the plugin:opener|open_url
+    /// invoke (this plugin), then window.open (wry drops it). Missing any
+    /// half turns article links into a silent no-op — the exact state a real
+    /// machine run caught — so all three are pinned together.
+    #[test]
+    fn the_guide_links_can_reach_the_system_browser() {
+        assert!(
+            SHELL_CARGO.contains("tauri-plugin-opener"),
+            "shell/Cargo.toml must depend on tauri-plugin-opener"
+        );
+        assert!(
+            CAPABILITIES.contains("\"opener:default\""),
+            "shell/capabilities/default.json must grant opener:default to the windows"
+        );
+        assert!(
+            SHELL_MAIN.contains("tauri_plugin_opener::init()"),
+            "the webview builder must register the opener plugin"
         );
     }
 }

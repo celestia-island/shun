@@ -50,6 +50,12 @@ shun = { path = ".." }
 # Direct (non-workspace) deps — a demo shell should build lean.
 tauri = { version = "^2" }
 tauri-plugin-dialog = { version = "^2" }
+# The guide window external anchors (hikari markdown renderer) reach the
+# SYSTEM browser through this plugin command plugin:opener|open_url — the
+# only path left with withGlobalTauri off (the global object opener is not
+# injected, and wry drops a raw window.open). The command surface is
+# unchanged: the plugin opens a URL, it exposes no file/IPC handle.
+tauri-plugin-opener = { version = "^2" }
 
 # The wallpaper fetch (the manifest's image source; the same client the
 # online payload lane rides). Platform-neutral: the fallback UI runs on
