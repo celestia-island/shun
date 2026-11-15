@@ -299,8 +299,13 @@ export default defineComponent({
     // force it open so the cause is visible without a manual click.
     const logExpanded = ref(false);
     const stamp = () => new Date().toTimeString().slice(0, 8);
+    // Row identity for the pane's keys: monotonic, never reused (never reset without clearing logLines in the same statement), so the
+    // newest-first list diffs as one insertion per pushed line no matter
+    // where the 500-line cap trims (an index key would re-text the whole
+    // body on every echo).
+    let logSeq = 0;
     const pushLog = (kind: LogLine["kind"], text: string) => {
-      logLines.value.push({ time: stamp(), kind, text });
+      logLines.value.push({ key: (logSeq += 1), time: stamp(), kind, text });
       if (logLines.value.length > 500) logLines.value.shift();
       if (kind === "error") logExpanded.value = true;
     };
