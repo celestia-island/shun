@@ -569,7 +569,10 @@ mod tests {
 
     #[test]
     fn install_stage_is_a_first_class_wire_value() {
-        let failure = FinishFailure::from_os_error(FinishStage::Install, 28, "disk full");
+        // The host's own "disk full" code: ERROR_DISK_FULL on Windows,
+        // ENOSPC on Unix (28 is ERROR_OUT_OF_PAPER on Windows).
+        let code: i32 = if cfg!(windows) { 112 } else { 28 };
+        let failure = FinishFailure::from_os_error(FinishStage::Install, code, "disk full");
         let json = serde_json::to_value(&failure).expect("serializes");
         assert_eq!(json["stage"], "install");
         assert_eq!(json["kind"], "disk-full");
