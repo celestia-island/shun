@@ -992,7 +992,19 @@ export default defineComponent({
         // real rejection, plus the details seat `classify_error` would name.
         installFailed.value = true;
         failMessage.value = "preview: simulated install failure";
-        if (isGuideTopic(previewTopic)) installHelpTopic.value = previewTopic;
+        if (isGuideTopic(previewTopic)) {
+          installHelpTopic.value = previewTopic;
+          // The production lane arms lastFailure through classify_error;
+          // the preview (a dead IPC) arms the same payload so the online
+          // fallback renders this failure, not a blank window.
+          lastFailure.value = {
+            stage: "install",
+            kind: "other",
+            message: failMessage.value,
+            osError: null,
+            helpTopic: previewTopic,
+          };
+        }
       }
       if (previewGuide) {
         // Direct window open (mode-independent) so both modes are

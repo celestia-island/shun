@@ -219,7 +219,9 @@ pub fn classify_os_error(code: i32) -> FailureKind {
         // failures usually arrive as strings — these arms serve the
         // io-borne path.
         #[cfg(all(unix, not(target_os = "macos")))]
-        110..=113 => FailureKind::Network,
+        // Refused / timed out / no route (net+host) / host down /
+        // net unreachable.
+        101 | 110..=113 => FailureKind::Network,
         #[cfg(target_os = "macos")]
         61 | 60 | 51 | 64 => FailureKind::Network,
         _ => FailureKind::Io,
@@ -473,16 +475,17 @@ mod tests {
             }
         } else {
             // Darwin numbers ENAMETOOLONG 63 (its 36 is EINPROGRESS) and
-            // the network set 61/60/51/64; Linux numbers ENAMETOOLONG 36
+            // the network set 61/60/51/64/65; Linux numbers ENAMETOOLONG 36
             // and the network set 111/110/113/112.
-            let (too_long, net): (i32, [(i32, FailureKind); 4]) = if cfg!(target_os = "macos") {
+            let (too_long, net): (i32, [(i32, FailureKind); 5]) = if cfg!(target_os = "macos") {
                 (
                     63,
                     [
                         (61, FailureKind::Network), // ECONNREFUSED
                         (60, FailureKind::Network), // ETIMEDOUT
-                        (51, FailureKind::Network), // EHOSTUNREACH
+                        (51, FailureKind::Network), // ENETUNREACH
                         (64, FailureKind::Network), // EHOSTDOWN
+                        (65, FailureKind::Network), // EHOSTUNREACH
                     ],
                 )
             } else {
@@ -493,6 +496,7 @@ mod tests {
                         (110, FailureKind::Network), // ETIMEDOUT
                         (113, FailureKind::Network), // EHOSTUNREACH
                         (112, FailureKind::Network), // EHOSTDOWN
+                        (101, FailureKind::Network), // ENETUNREACH
                     ],
                 )
             };

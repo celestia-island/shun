@@ -1004,10 +1004,11 @@ fn preview_failure(value: &str) -> Option<(shun::failure::FailureKind, String)> 
     let denied: i32 = if cfg!(windows) { 5 } else { 13 };
     let disk_full: i32 = if cfg!(windows) { 112 } else { 28 };
     let in_use: i32 = if cfg!(windows) { 32 } else { 26 };
+    // too-long: 206 (Win) / 63 (Darwin ENAMETOOLONG) / 36 (Linux).
     let too_long: i32 = if cfg!(windows) {
         206
     } else if cfg!(target_os = "macos") {
-        63 // Darwin's ENAMETOOLONG (its 36 is EINPROGRESS).
+        63
     } else {
         36
     };
@@ -1032,9 +1033,15 @@ fn preview_failure(value: &str) -> Option<(shun::failure::FailureKind, String)> 
             format!("io error: The filename or extension is too long. (os error {too_long})"),
         ),
         "fail-network" => {
-            // Refused is 10061 (Winsock) / 111 (Unix ECONNREFUSED) —
-            // both carry the wording marker as a second net.
-            let refused: i32 = if cfg!(windows) { 10061 } else { 111 };
+            // Refused is 10061 (Winsock) / 61 (Darwin) / 111 (Linux) —
+            // all carry the wording marker as a second net.
+            let refused: i32 = if cfg!(windows) {
+                10061
+            } else if cfg!(target_os = "macos") {
+                61
+            } else {
+                111
+            };
             (
                 Kind::Network,
                 format!("download failed: Connection refused (os error {refused})"),
