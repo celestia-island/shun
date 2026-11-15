@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "identifier": "world.celestia.shun.demo.app",
   "build": {
+    "beforeBuildCommand": "pnpm --dir web build",
     "frontendDist": "./ui"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "label": "main",
