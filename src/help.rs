@@ -329,7 +329,6 @@ fn linux_url(topic: &str, distro: Option<&Distro>) -> Option<String> {
 pub fn open_url(url: &str) -> bool {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         // ShellExecuteW via cmd's start would quote-mangle URLs with
         // `&`; the direct loader call is the documented path. `false` =
         // no console window for the GUI-subsystem shell.

@@ -491,12 +491,12 @@ mod tests {
     /// constants the match arms read — the test cannot describe a
     /// different table than the classifier implements. Windows-only
     /// numbers are plain Io here, never a Windows remedy; that probe is
-    /// a mechanical guard for the PROBED Windows numbers being typo'd
-    /// into UNIX_NETWORK_ERRNOS (the table iteration verifies itself — a
+    /// a mechanical guard for EVERY Windows number being typo'd into
+    /// UNIX_NETWORK_ERRNOS (the table iteration verifies itself — a
     /// duplicated entry still passes its own iteration, so the ascent
-    /// assert is load-bearing too; the Winsock numbers 10060/10051/10053/
-    /// 10054/12002/12007 are NOT probed and would still verify themselves,
-    /// noted as a known limit).
+    /// assert is load-bearing too). The one deliberate non-probe is 112:
+    /// on Linux it is EHOSTDOWN, which the network arm above claims by
+    /// design.
     #[cfg(not(windows))]
     #[test]
     fn unix_os_codes_map_to_their_families() {
