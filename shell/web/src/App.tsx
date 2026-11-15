@@ -326,6 +326,30 @@ function classifyFinishError(
   return { stage, kind, message, osError, helpTopic };
 }
 
+/** The plain-language headline for a TOPIC — what the help window shows as
+ *  its title and stand-in body while the topic's article is not authored
+ *  yet, so the window still says what happened instead of rendering empty. */
+function topicHeadline(topic: GuideTopic, notices: NoticeStrings): string {
+  switch (topic) {
+    case "app-control":
+      return notices.launchBlocked;
+    case "permissions":
+      return notices.permissions;
+    case "disk-space":
+      return notices.diskFull;
+    case "file-in-use":
+      return notices.fileInUse;
+    case "path-too-long":
+      return notices.pathTooLong;
+    case "network":
+      return notices.network;
+    case "missing-files":
+      return notices.missingFiles;
+    default:
+      return notices.errorTitle;
+  }
+}
+
 /** The plain-language headline for a classified failure — one per family,
  *  short on purpose: it becomes the toast text, and the toast clamps to
  *  three lines. */
@@ -431,6 +455,9 @@ export default defineComponent({
      *   builder would: `app-control` · `permissions` · `disk-full` ·
      *   `file-in-use` · `path-too-long` · `network` · `missing-files` ·
      *   `launch-failed` · `shortcuts-failed`.
+     * - `&fail=install` renders the failed-install page (`&topic=` also
+     *   names the details seat it opens) — the one state a browser preview
+     *   cannot reach on its own, since `classify_error` needs the backend.
      * - `&guides=online` forces the online-guides mode (overrides
      *   `get_config`), so both help modes are capturable: online routes the
      *   toast action straight to `open_help_url` instead of the article.
@@ -455,6 +482,7 @@ export default defineComponent({
     const previewGuide = query.get("guide") === "1";
     const previewTopic = query.get("topic");
     const previewGuides = query.get("guides");
+    const previewFail = query.get("fail");
     const previewHelp = query.get("help") ?? undefined;
     const previewLanguage = query.get("language");
     const previewProduct = query.get("product");
@@ -954,6 +982,13 @@ export default defineComponent({
           osError: previewKind === "app-control-blocked" ? 4551 : null,
           helpTopic: KIND_TOPIC[previewKind] ?? null,
         });
+      }
+      if (previewFail === "install") {
+        // The failed-install page: same state `installFailed` reaches after a
+        // real rejection, plus the details seat `classify_error` would name.
+        installFailed.value = true;
+        failMessage.value = "preview: simulated install failure";
+        if (isGuideTopic(previewTopic)) installHelpTopic.value = previewTopic;
       }
       if (previewGuide) {
         // Direct window open (mode-independent) so both modes are
@@ -1667,17 +1702,20 @@ export default defineComponent({
                       <HkButton variant="primary" onClick={start}>
                         {s.done.retry}
                       </HkButton>
+                      <HkButton variant="ghost" onClick={() => tauriWindow()?.close()}>
+                        {s.done.close}
+                      </HkButton>
+                      {/* The retry/close pair stays adjacent; the topic seat
+                          follows them so a wrapped row never splits it. */}
                       {installHelpTopic.value !== null && (
                         <HkButton
                           variant="ghost"
+                          size="sm"
                           onClick={() => openHelp(installHelpTopic.value as GuideTopic)}
                         >
                           {s.notices.details}
                         </HkButton>
                       )}
-                      <HkButton variant="ghost" onClick={() => tauriWindow()?.close()}>
-                        {s.done.close}
-                      </HkButton>
                     </>
                   ),
                 }}
@@ -1849,8 +1887,8 @@ export default defineComponent({
             onUpdate:modelValue={(value: boolean) => (guideOpen.value = value)}
             locale={locale.value}
             topic={guideTopic.value}
-            fallbackTitle={s.notices.errorTitle}
-            fallbackBody={s.notices.launchBlocked}
+            fallbackTitle={topicHeadline(guideTopic.value, s.notices)}
+            fallbackBody={topicHeadline(guideTopic.value, s.notices)}
             errorTitle={s.notices.errorTitle}
             errorHeadline={guideError.value?.headline ?? ""}
             errorMessage={guideError.value?.message ?? ""}
