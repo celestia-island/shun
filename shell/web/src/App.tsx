@@ -1348,8 +1348,6 @@ export default defineComponent({
       tauriWindow()?.close();
     }
 
-    /** Pushes a transient notice into the shared top-right toast stack —
-     *  the ONLY notice sink this face has (no in-flow banners). */
     // Light/dark resolution (hikari rules, user direction): `system`
     // resolves from the SUN, not the OS preference — the same altitude
     // bands and first-paint estimate the egui face runs (day above

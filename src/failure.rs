@@ -454,84 +454,97 @@ mod tests {
         assert!(!failure.has_help());
     }
 
+    /// The Windows half: each Windows code maps to its family, and the
+    /// Unix-only numbers are plain Io here (28 is ERROR_OUT_OF_PAPER on
+    /// Windows, NOT ENOSPC). cfg-attributed, not cfg!'d — the Unix half
+    /// names Unix-only consts that do not exist on Windows.
+    #[cfg(windows)]
     #[test]
-    fn os_codes_map_to_the_failure_families_per_platform() {
-        // Windows and Unix code spaces are deliberately separate (28 is
-        // ERROR_OUT_OF_PAPER on Windows but ENOSPC on Unix) — each host
-        // classifies only its OWN codes, and the colliding numbers must
-        // land on the host's meaning (usually plain Io).
-        if cfg!(windows) {
-            let cases: [(i32, FailureKind); 10] = [
-                (5, FailureKind::Permissions),    // ERROR_ACCESS_DENIED
-                (1314, FailureKind::Permissions), // ERROR_PRIVILEGE_NOT_HELD
-                (112, FailureKind::DiskFull),     // ERROR_DISK_FULL
-                (39, FailureKind::DiskFull),      // ERROR_HANDLE_DISK_FULL
-                (32, FailureKind::FileInUse),     // ERROR_SHARING_VIOLATION
-                (1224, FailureKind::FileInUse),   // ERROR_USER_MAPPED_FILE
-                (206, FailureKind::PathTooLong),  // ERROR_FILENAME_EXCEDNAV
-                (161, FailureKind::PathTooLong),  // ERROR_BAD_PATHNAME
-                (10061, FailureKind::Network),    // WSAECONNREFUSED
-                (12029, FailureKind::Network),    // ERROR_INTERNET_CANNOT_CONNECT
-            ];
-            for (code, kind) in cases {
-                assert_eq!(classify_os_error(code), kind, "windows code {code}");
-            }
-            // The Unix-only numbers mean nothing on Windows — plain Io,
-            // never a Unix remedy.
-            for code in [1, 13, 26, 28, 30, 36] {
-                assert_eq!(
-                    classify_os_error(code),
-                    FailureKind::Io,
-                    "unix code {code} on windows"
-                );
-            }
-        } else {
-            // ENAMETOOLONG and the network set come from the SAME
-            // constants the match arm reads — the test cannot describe a
-            // different table than the classifier implements.
-            let net = UNIX_NETWORK_ERRNOS;
-            let cases: [(i32, FailureKind); 6] = [
-                (1, FailureKind::Permissions),  // EPERM
-                (13, FailureKind::Permissions), // EACCES
-                (30, FailureKind::Permissions), // EROFS
-                (28, FailureKind::DiskFull),    // ENOSPC
-                (26, FailureKind::FileInUse),   // ETXTBSY
-                (ENAMETOOLONG, FailureKind::PathTooLong),
-            ];
-            for (code, kind) in cases {
-                assert_eq!(classify_os_error(code), kind, "unix code {code}");
-            }
-            for (code, kind) in net.iter().zip(std::iter::repeat(FailureKind::Network)) {
-                assert_eq!(classify_os_error(*code), kind, "unix network code {code}");
-            }
-            // The OTHER Unix flavor's ENAMETOOLONG number means nothing
-            // here (Darwin's 36 is EINPROGRESS; Linux's 63 is unknown).
-            let other_enametoolang: i32 = if cfg!(target_os = "macos") { 36 } else { 63 };
-            assert_eq!(classify_os_error(other_enametoolang), FailureKind::Io);
-            // The Windows-only numbers mean nothing on Unix — plain Io,
-            // never a Windows remedy. This is the only guard that catches
-            // a Windows number creeping into UNIX_NETWORK_ERRNOS (the
-            // table test iterates the const, so a wrong entry would
-            // otherwise verify itself).
-            if cfg!(unix) {
-                for code in [5, 1314, 39, 32, 1224, 206, 161, 10061, 12029] {
-                    assert_eq!(
-                        classify_os_error(code),
-                        FailureKind::Io,
-                        "windows code {code} on unix"
-                    );
-                }
-                // And the table carries no duplicates: a typo'd repeat
-                // (round-2's 111→110 probe) fails here instead of
-                // silently testing one code twice.
-                let mut sorted = UNIX_NETWORK_ERRNOS;
-                sorted.sort_unstable();
-                assert!(
-                    sorted.windows(2).all(|pair| pair[0] < pair[1]),
-                    "UNIX_NETWORK_ERRNOS has no duplicates: {sorted:?}"
-                );
-            }
+    fn windows_os_codes_map_to_their_families() {
+        let cases: [(i32, FailureKind); 10] = [
+            (5, FailureKind::Permissions),    // ERROR_ACCESS_DENIED
+            (1314, FailureKind::Permissions), // ERROR_PRIVILEGE_NOT_HELD
+            (112, FailureKind::DiskFull),     // ERROR_DISK_FULL
+            (39, FailureKind::DiskFull),      // ERROR_HANDLE_DISK_FULL
+            (32, FailureKind::FileInUse),     // ERROR_SHARING_VIOLATION
+            (1224, FailureKind::FileInUse),   // ERROR_USER_MAPPED_FILE
+            (206, FailureKind::PathTooLong),  // ERROR_FILENAME_EXCEDNAV
+            (161, FailureKind::PathTooLong),  // ERROR_BAD_PATHNAME
+            (10061, FailureKind::Network),    // WSAECONNREFUSED
+            (12029, FailureKind::Network),    // ERROR_INTERNET_CANNOT_CONNECT
+        ];
+        for (code, kind) in cases {
+            assert_eq!(classify_os_error(code), kind, "windows code {code}");
         }
+        // The Unix-only numbers mean nothing on Windows — plain Io,
+        // never a Unix remedy.
+        for code in [1, 13, 26, 28, 30, 36] {
+            assert_eq!(
+                classify_os_error(code),
+                FailureKind::Io,
+                "unix code {code} on windows"
+            );
+        }
+    }
+
+    /// The Unix half: ENAMETOOLONG and the network set come from the SAME
+    /// constants the match arms read — the test cannot describe a
+    /// different table than the classifier implements. Windows-only
+    /// numbers are plain Io here, never a Windows remedy; that probe is
+    /// a mechanical guard for the PROBED Windows numbers being typo'd
+    /// into UNIX_NETWORK_ERRNOS (the table iteration verifies itself — a
+    /// duplicated entry still passes its own iteration, so the ascent
+    /// assert is load-bearing too; the Winsock numbers 10060/10051/10053/
+    /// 10054/12002/12007 are NOT probed and would still verify themselves,
+    /// noted as a known limit).
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_os_codes_map_to_their_families() {
+        let cases: [(i32, FailureKind); 6] = [
+            (1, FailureKind::Permissions),  // EPERM
+            (13, FailureKind::Permissions), // EACCES
+            (30, FailureKind::Permissions), // EROFS
+            (28, FailureKind::DiskFull),    // ENOSPC
+            (26, FailureKind::FileInUse),   // ETXTBSY
+            (ENAMETOOLONG, FailureKind::PathTooLong),
+        ];
+        for (code, kind) in cases {
+            assert_eq!(classify_os_error(code), kind, "unix code {code}");
+        }
+        for code in UNIX_NETWORK_ERRNOS {
+            assert_eq!(
+                classify_os_error(code),
+                FailureKind::Network,
+                "unix network code {code}"
+            );
+        }
+        // The OTHER Unix flavor's ENAMETOOLONG number means nothing here
+        // (Darwin's 36 is EINPROGRESS; Linux's 63 is unknown).
+        let other_enametoolang: i32 = if cfg!(target_os = "macos") { 36 } else { 63 };
+        assert_eq!(classify_os_error(other_enametoolang), FailureKind::Io);
+        // Windows-only numbers are plain Io on this host (their families
+        // belong to the Windows table), and the table carries no
+        // duplicates — a typo'd repeat (round-2's 111→110 probe) fails
+        // the ascent assert instead of silently testing one code twice.
+        for code in [
+            5, 1314, 39, 32, 1224, 206, 161, 10060, 10061, 10051, 10053, 10054, 12002, 12007, 12029,
+        ] {
+            assert_eq!(
+                classify_os_error(code),
+                FailureKind::Io,
+                "windows code {code} on unix"
+            );
+        }
+        let mut sorted = UNIX_NETWORK_ERRNOS;
+        sorted.sort_unstable();
+        assert!(
+            sorted.windows(2).all(|pair| pair[0] < pair[1]),
+            "UNIX_NETWORK_ERRNOS has no duplicates: {sorted:?}"
+        );
+    }
+
+    #[test]
+    fn every_family_names_a_known_topic() {
         for kind in [
             FailureKind::AppControlBlocked,
             FailureKind::Permissions,

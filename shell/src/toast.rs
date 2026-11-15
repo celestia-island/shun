@@ -29,9 +29,11 @@
 //!   `…` — the CSS `-webkit-line-clamp: 3`, so a long error can never grow
 //!   the card without bound;
 //! - newest card appends at the BOTTOM (HkToast's `TransitionGroup` order),
-//!   12pt between cards; an identical repeat of the NEWEST card of a tone
-//!   refreshes it in place (hikari's consecutive dedupe), keeping the
-//!   order = recency invariant that `trim()` relies on;
+//!   12pt between cards; an identical repeat of the stack's newest card
+//!   refreshes it in place (hikari's consecutive dedupe — hikari compares
+//!   within a per-type slot, this face runs one slot per push since every
+//!   producer is an Error today), keeping the order = recency invariant
+//!   that `trim()` relies on;
 //! - lifetime table mirrors `TOAST_DURATION`: error/warning 30 s,
 //!   info/success 3 s;
 //! - controls, left to right: the inline action pill (dismisses the card
@@ -233,8 +235,10 @@ impl ToastHost {
         let text = text.into();
         let action_label = action_label.into();
         // Hikari's CONSECUTIVE dedupe (useToast compares only the slot's
-        // LAST message): an identical repeat of the NEWEST card of this
-        // tone refreshes it in place — clock restart, action/copy update,
+        // LAST message): an identical repeat of the stack's newest card
+        // (the tail — every producer is an Error today, so tail == the
+        // tone's newest) refreshes it in place — clock restart,
+        // action/copy update,
         // "latest push owns the action" — instead of stacking a dup.
         // An older card is NEVER resurrected (A,B,A appends a third
         // card): stack order must keep mirroring recency, or trim() would
