@@ -1923,10 +1923,9 @@ pub(crate) fn webview2_loader_ready() -> bool {
 /// face never auto-degrades there (`--no-webview` still forces egui).
 #[cfg(not(windows))]
 pub(crate) fn webview2_loader_ready() -> bool {
-    if std::env::var_os("SHUN_FORCE_FALLBACK").is_some() {
-        return false;
-    }
-    true
+    // Same test override as the Windows probe; the platform above always has
+    // a system webview otherwise.
+    std::env::var_os("SHUN_FORCE_FALLBACK").is_none()
 }
 
 /// Aligns the probed capabilities with the loader's verdict: the webview
