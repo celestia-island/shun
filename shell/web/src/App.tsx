@@ -1075,7 +1075,10 @@ export default defineComponent({
       if (nested !== raw.trim()) {
         // The only explanation of a silently rewritten folder — hold it
         // longer than the 3 s info default so the note is actually read
-        // before the install starts.
+        // before the install starts. (Caveat, hikari's contract: the
+        // duration is read at SLOT-CREATION time, so this holds only
+        // while this call creates the face's first `info` slot — true
+        // today, as the other pushes are errors.)
         toast.show(withProduct(strings(locale.value)).target.nestedNote, {
           type: "info",
           duration: 8000,
@@ -1347,10 +1350,6 @@ export default defineComponent({
 
     /** Pushes a transient notice into the shared top-right toast stack —
      *  the ONLY notice sink this face has (no in-flow banners). */
-    function notify(text: string, type: "info" | "success" | "warning" = "info") {
-      toast.show(text, { type });
-    }
-
     // Light/dark resolution (hikari rules, user direction): `system`
     // resolves from the SUN, not the OS preference — the same altitude
     // bands and first-paint estimate the egui face runs (day above

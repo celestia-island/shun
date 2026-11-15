@@ -169,7 +169,7 @@ fn classify_error(error: &ShunError) -> (FailureKind, Option<i32>, Option<String
 
 /// ENAMETOOLONG's number: 36 on Linux, 63 on Darwin (where 36 is
 /// EINPROGRESS — no family, plain Io). One constant, two consumers: the
-/// match arm above and the platform test, so they cannot drift.
+/// match arms in [`classify_os_error`] below and the platform test.
 #[cfg(all(not(windows), not(target_os = "macos")))]
 pub(crate) const ENAMETOOLONG: i32 = 36;
 #[cfg(target_os = "macos")]
@@ -179,8 +179,11 @@ pub(crate) const ENAMETOOLONG: i32 = 63;
 /// net unreachable / host unreachable / host down. Linux and Darwin
 /// number them differently, and network failures usually arrive as
 /// strings (ureq's composed English), so this table serves the io-borne
-/// path — and the platform test reads the SAME constant, so coverage and
-/// arm cannot drift.
+/// path — and the platform test reads the SAME constant, so the arm and
+/// its coverage cannot drift apart. (What the constant CANNOT prove is
+/// that each number is the right errno for its family — that mapping is
+/// pinned by the Windows-negative probe and human review against the
+/// vendor tables.)
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) const UNIX_NETWORK_ERRNOS: [i32; 5] = [101, 110, 111, 112, 113];
 #[cfg(target_os = "macos")]
@@ -505,8 +508,29 @@ mod tests {
             // here (Darwin's 36 is EINPROGRESS; Linux's 63 is unknown).
             let other_enametoolang: i32 = if cfg!(target_os = "macos") { 36 } else { 63 };
             assert_eq!(classify_os_error(other_enametoolang), FailureKind::Io);
-            // And none of this flavor's family numbers collides with a
-            // Windows meaning — the Windows block above owns its own.
+            // The Windows-only numbers mean nothing on Unix — plain Io,
+            // never a Windows remedy. This is the only guard that catches
+            // a Windows number creeping into UNIX_NETWORK_ERRNOS (the
+            // table test iterates the const, so a wrong entry would
+            // otherwise verify itself).
+            if cfg!(unix) {
+                for code in [5, 1314, 39, 32, 1224, 206, 161, 10061, 12029] {
+                    assert_eq!(
+                        classify_os_error(code),
+                        FailureKind::Io,
+                        "windows code {code} on unix"
+                    );
+                }
+                // And the table carries no duplicates: a typo'd repeat
+                // (round-2's 111→110 probe) fails here instead of
+                // silently testing one code twice.
+                let mut sorted = UNIX_NETWORK_ERRNOS;
+                sorted.sort_unstable();
+                assert!(
+                    sorted.windows(2).all(|pair| pair[0] < pair[1]),
+                    "UNIX_NETWORK_ERRNOS has no duplicates: {sorted:?}"
+                );
+            }
         }
         for kind in [
             FailureKind::AppControlBlocked,
