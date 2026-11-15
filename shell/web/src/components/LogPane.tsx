@@ -20,6 +20,13 @@ export interface LogLine {
   time: string;
   kind: "echo" | "step" | "ok" | "error";
   text: string;
+  /** Stable row identity, assigned once by the producer and never reused
+   *  within a run (a monotonic counter is enough). The list is rendered
+   *  newest-first, so an index key shifts every row on each push and Vue
+   *  rewrites the whole body's text; an identity key diffs as a single
+   *  insertion instead, which is what keeps the 500-line cap × a chatty
+   *  echo stream from going quadratic during install. */
+  key: number;
 }
 
 export default defineComponent({
@@ -95,9 +102,9 @@ export default defineComponent({
                 (props.lines.length === 0 ? (
                   <span class="log-pane__line log-pane__line--echo">…</span>
                 ) : (
-                  ordered().map((line, index) => (
+                  ordered().map((line) => (
                     <span
-                      key={index}
+                      key={line.key}
                       class={`log-pane__line log-pane__line--${line.kind}`}
                     >
                       <time class="log-pane__time">{line.time}</time>
