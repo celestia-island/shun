@@ -8,7 +8,7 @@
 
 社内ネットワークでは、ダウンロード先を IT に許可してもらう必要があることがあります。スマホのテザリングに切り替えると、ネットワークの問題かすぐ分かります。
 
-[Windows の参考: Wi-Fi 接続の問題を解決する](https://support.microsoft.com/ja-jp/windows/fix-wi-fi-connection-issues-in-windows-9424a1f7-6a3b-65a6-4d78-7f07eee84d2c)
+[Windows の参考: Wi-Fi 接続の問題を解決する](https://support.microsoft.com/ja-jp/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows)
 
 ---
 

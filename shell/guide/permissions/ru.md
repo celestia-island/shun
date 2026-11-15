@@ -8,7 +8,7 @@
 
 Предлагаемая по умолчанию папка лежит в вашем профиле, поэтому администратор там не нужен. Папка на флешке или сетевом диске тоже может быть недоступна — сначала попробуйте локальный диск.
 
-[Справка Windows: как работает контроль учётных записей](https://learn.microsoft.com/ru-ru/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Справка Windows: параметры контроля учётных записей](https://learn.microsoft.com/ru-ru/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 

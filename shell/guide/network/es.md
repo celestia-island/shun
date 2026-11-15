@@ -7,7 +7,7 @@ Parte de la instalación se descarga, y esa descarga no llegó al servidor: sin 
 
 En redes de empresa a veces hay que pedir a TI que permita el host de descarga, y con los datos del móvil sabrás en un minuto si el problema es la red. La URL del registro dice qué servidor no respondía.
 
-[Referencia de Windows: solucionar problemas de conexión Wi-Fi](https://support.microsoft.com/es-es/windows/fix-wi-fi-connection-issues-in-windows-9424a1f7-6a3b-65a6-4d78-7f07eee84d2c)
+[Referencia de Windows: solucionar problemas de conexión Wi-Fi](https://support.microsoft.com/es-es/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows)
 
 ---
 

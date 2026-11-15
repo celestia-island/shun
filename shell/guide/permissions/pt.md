@@ -8,7 +8,7 @@ O instalador tentou escrever nesta pasta e o Windows recusou. Normalmente a past
 
 O local que o instalador sugere fica na sua pasta de utilizador, por isso não precisa de permissões de administrador. Uma pasta numa pen também pode ser recusada.
 
-[Referência do Windows: como funciona o Controlo de Conta de Utilizador](https://learn.microsoft.com/pt-pt/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Referência do Windows: definições do Controlo de Conta de Utilizador](https://learn.microsoft.com/pt-pt/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 

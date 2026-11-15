@@ -6,7 +6,7 @@ The install finished, but the program's main file is missing from the install fo
 - Still disappearing? Send the developer your antivirus name — the build may need a signed release.
 - Also check whether Controlled Folder Access is blocking the install folder, and turn it off for one run.
 
-Most antivirus tools park the file in quarantine; restoring it from there and marking it trusted is faster than reinstalling. If files vanish after every install, exclude the whole folder instead.
+Most antivirus tools park the file in quarantine; restoring it from there and marking it trusted is faster than reinstalling.
 
 ---
 

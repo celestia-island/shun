@@ -10,7 +10,7 @@
 
 로그의 다운로드 주소가 사내 미러를 가리킨다면 그 서버가 살아 있는지 먼저 확인하세요. 공용 미러로 바꾸면 바로 되는 경우가 많습니다. VPN을 잠시 끄고 해 보는 것도 좋습니다.
 
-[Windows 참고: Wi-Fi 연결 문제 해결](https://support.microsoft.com/ko-kr/windows/fix-wi-fi-connection-issues-in-windows-9424a1f7-6a3b-65a6-4d78-7f07eee84d2c)
+[Windows 참고: Wi-Fi 연결 문제 해결](https://support.microsoft.com/ko-kr/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows)
 
 ---
 

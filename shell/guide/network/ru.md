@@ -7,7 +7,7 @@
 
 В корпоративной сети иногда нужно, чтобы ИТ разрешил хост загрузки, а точка доступа с телефона за минуту покажет, в сети ли дело. По адресу из журнала видно, какой сервер не отвечал.
 
-[Справка Windows: устранить неполадки Wi-Fi](https://support.microsoft.com/ru-ru/windows/fix-wi-fi-connection-issues-in-windows-9424a1f7-6a3b-65a6-4d78-7f07eee84d2c)
+[Справка Windows: устранить неполадки Wi-Fi](https://support.microsoft.com/ru-ru/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows)
 
 ---
 

@@ -6,7 +6,7 @@ Die Installation ist fertig, aber die Hauptdatei des Programms fehlt im Ordner. 
 - Verschwindet sie weiterhin? Nennen Sie dem Entwickler das Antivirus — vielleicht braucht es eine signierte Version.
 - Prüfen Sie auch den überwachten Ordnerzugriff — er kann den Installationsordner sperren.
 
-Die meisten Antivirus-Programme legen die Datei in Quarantäne — von dort wiederherstellen und als vertrauenswürdig markieren geht schneller als neu installieren. Verschwindet sie immer, nehmen Sie den ganzen Ordner aus.
+Die meisten Antivirus-Programme legen die Datei in Quarantäne — von dort wiederherstellen und als vertrauenswürdig markieren geht schneller als neu installieren.
 
 ---
 

@@ -5,7 +5,7 @@ The installer has to replace a file that something else is holding open. Usually
 - Quit the app (check the tray too), wait a few seconds, then run the installer again.
 - If that doesn't help, restart the computer. A reboot always releases the file.
 
-The install log names the file it could not replace, so that line tells you what to close. A leftover process often hides in the notification area, so quit it there too.
+The install log names the file it could not replace, so that line tells you exactly what to close.
 
 [Windows reference: fixing a sharing violation](https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/copying-exe-files-sharing-violation-error-folder-in-use)
 

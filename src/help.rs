@@ -221,12 +221,9 @@ fn windows_url(topic: &str, locale: &str) -> Option<String> {
         TOPIC_DISK_SPACE => {
             "https://support.microsoft.com/en-us/windows/experience/storage-filemanagement/free-up-drive-space-in-windows"
         }
-        // The consumer article lives on the support host (blocked to
-        // curl here); the localized SEARCH LANDING is the stable,
-        // never-404 stand-in — it lands on the live article list and the
-        // matrix verification may replace it with the direct article.
+        // curl 200 in all ten localized forms.
         TOPIC_FILE_IN_USE => {
-            "https://support.microsoft.com/en-us/search/results?query=file%20in%20use"
+            "https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/copying-exe-files-sharing-violation-error-folder-in-use"
         }
         TOPIC_PATH_TOO_LONG => {
             "https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation"
@@ -250,16 +247,13 @@ fn macos_url(topic: &str, locale: &str) -> Option<String> {
         // Gatekeeper / "app cannot be opened because it is from an
         // unidentified developer".
         TOPIC_APP_CONTROL => "https://support.apple.com/en-us/102445",
-        TOPIC_PERMISSIONS => {
-            return Some(localized(
-                "https://support.apple.com/en-us/HT204012",
-                locale,
-            ));
-        }
+        TOPIC_PERMISSIONS => "https://support.apple.com/en-us/102367",
         TOPIC_DISK_SPACE => "https://support.apple.com/en-us/102639",
         TOPIC_FILE_IN_USE => return None,
         TOPIC_PATH_TOO_LONG => return None,
-        TOPIC_NETWORK => "https://support.apple.com/en-us/HT202628",
+        // 101588: the consumer Wi-Fi troubleshooting page (HT202628
+        // redirects to a roaming-deployment guide — not consumer help).
+        TOPIC_NETWORK => "https://support.apple.com/en-us/101588",
         TOPIC_MISSING_FILES => return None,
         _ => return None,
     };
@@ -275,21 +269,12 @@ fn linux_url(topic: &str, distro: Option<&Distro>) -> Option<String> {
         ids.iter()
             .any(|id| distro.id == *id || distro.id_like.iter().any(|like| like == id))
     };
-    // help.ubuntu.com answered 503 to this datacenter at authoring
-    // time (the paths are long-stable; the matrix pass re-verifies).
+    // help.ubuntu.com answered 503 host-wide at verification time, so
+    // the Ubuntu family points at the canonical documentation hub (200,
+    // serves the desktop docs) instead of three per-topic stable paths
+    // that could not be re-verified.
     if known(&["ubuntu", "debian", "linuxmint", "pop"]) {
-        return match topic {
-            TOPIC_PERMISSIONS => {
-                Some("https://help.ubuntu.com/stable/ubuntu-help/user-admin-explain.html".into())
-            }
-            TOPIC_DISK_SPACE => {
-                Some("https://help.ubuntu.com/stable/ubuntu-help/disk-capacity.html".into())
-            }
-            TOPIC_NETWORK => {
-                Some("https://help.ubuntu.com/stable/ubuntu-help/net-problem.html".into())
-            }
-            _ => None,
-        };
+        return Some("https://documentation.ubuntu.com/".into());
     }
     if known(&["fedora", "rhel", "centos", "rocky", "almalinux"]) {
         return match topic {
@@ -423,7 +408,10 @@ mod tests {
             home_url: Some("https://ubuntu.com/".into()),
         };
         let url = help_url_for(TOPIC_DISK_SPACE, "en", "linux", Some(&ubuntu)).unwrap();
-        assert!(url.contains("help.ubuntu.com"), "{url}");
+        assert!(
+            url.contains("documentation.ubuntu.com"),
+            "ubuntu family points at the canonical docs hub: {url}"
+        );
         // Derivatives inherit: Pop!_OS carries ubuntu in ID_LIKE.
         let pop = Distro {
             id: "pop".into(),
@@ -431,7 +419,10 @@ mod tests {
             home_url: Some("https://pop.system76.com/".into()),
         };
         let url = help_url_for(TOPIC_PERMISSIONS, "en", "linux", Some(&pop)).unwrap();
-        assert!(url.contains("help.ubuntu.com"), "{url}");
+        assert!(
+            url.contains("documentation.ubuntu.com"),
+            "ubuntu family points at the canonical docs hub: {url}"
+        );
         // Arch gets Arch wiki pages, not Ubuntu's.
         let arch = Distro {
             id: "arch".into(),

@@ -7,7 +7,7 @@ Une partie de l'installation se télécharge, et ce téléchargement n'a pas att
 
 En entreprise, l'informatique doit parfois autoriser l'hôte de téléchargement, et un partage de connexion mobile dit en une minute si le réseau est en cause. L'URL du journal indique quel serveur ne répondait pas.
 
-[Référence Windows : résoudre les problèmes de connexion Wi-Fi](https://support.microsoft.com/fr-fr/windows/fix-wi-fi-connection-issues-in-windows-9424a1f7-6a3b-65a6-4d78-7f07eee84d2c)
+[Référence Windows : résoudre les problèmes de connexion Wi-Fi](https://support.microsoft.com/fr-fr/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows)
 
 ---
 

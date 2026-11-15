@@ -8,7 +8,7 @@ The installer tried to write files into that folder and Windows said no. Usually
 
 The place the installer suggests by default sits in your user folder, so it needs no administrator rights at all. Folders on a USB stick or a network drive can also be refused — try a local disk first.
 
-[Windows reference: how User Account Control works](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Windows reference: User Account Control settings](https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 

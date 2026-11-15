@@ -5,7 +5,7 @@ Windows gives a path 260 characters by default. Your install folder plus its fil
 - Pick a shorter folder, something like C:\App.
 - Keep it near the drive root — every extra folder eats characters.
 
-Moving the install folder to something like C:\X is enough, and the installer remembers your last choice. Folder and file names both count, and characters are characters whatever the alphabet.
+The log prints the full path it tried, so you can count the characters yourself.
 
 [Microsoft on the limit: maximum path length](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
 

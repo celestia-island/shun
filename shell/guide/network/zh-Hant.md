@@ -10,7 +10,7 @@
 
 如果日誌裡的下載位址指向內網鏡像，先確認那台機器還開著；換成公網鏡像往往立刻就能裝。暫時關掉 VPN 再試一次也值得——很多「連不上」其實是 VPN 把流量帶到了走不通的地方。公司電腦也可能是防火牆把安裝程式本身攔了。
 
-[Windows 參考：修復 Wi-Fi 連線問題](https://support.microsoft.com/zh-tw/windows/fix-wi-fi-connection-issues-in-windows-9424a1f7-6a3b-65a6-4d78-7f07eee84d2c)
+[Windows 參考：修復 Wi-Fi 連線問題](https://support.microsoft.com/zh-tw/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows)
 
 ---
 

@@ -6,7 +6,7 @@ L'installation a bien fini, mais le fichier principal du programme manque dans l
 - Le fichier disparaît encore ? Donnez le nom de votre antivirus au développeur — la version devra peut-être être signée.
 - Vérifiez aussi l'Accès contrôlé aux dossiers : il peut bloquer le dossier d'installation.
 
-La plupart des antivirus placent le fichier en quarantaine : le restaurer de là et le marquer comme fiable va plus vite qu'une réinstallation. S'il disparaît à chaque fois, excluez le dossier entier.
+La plupart des antivirus placent le fichier en quarantaine : le restaurer de là et le marquer comme fiable va plus vite qu'une réinstallation.
 
 ---
 

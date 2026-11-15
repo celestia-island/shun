@@ -11,7 +11,7 @@
 
 裝到 C:\Program Files 或系統碟根目錄，安裝程式一定會被拒絕，那些地方只有系統管理員能寫。
 
-[Windows 參考：使用者帳戶控制怎麼運作](https://learn.microsoft.com/zh-tw/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Windows 參考：使用者帳戶控制的設定](https://learn.microsoft.com/zh-tw/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 

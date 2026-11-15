@@ -10,7 +10,7 @@
 
 如果日志里的下载地址指向内网镜像，先确认那台机器还开着；换成公网镜像往往立刻就能装。临时关掉 VPN 再试一次也值得——很多「连不上」其实是 VPN 把流量带到了走不通的地方。公司电脑也可能是防火墙把安装器本身拦了。
 
-[Windows 参考：修复 Wi-Fi 连接问题](https://support.microsoft.com/zh-cn/windows/fix-wi-fi-connection-issues-in-windows-9424a1f7-6a3b-65a6-4d78-7f07eee84d2c)
+[Windows 参考：修复 Wi-Fi 连接问题](https://support.microsoft.com/zh-cn/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows)
 
 ---
 

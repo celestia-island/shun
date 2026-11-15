@@ -6,7 +6,7 @@ A instalação terminou, mas o ficheiro principal do programa não está na past
 - Continua a desaparecer? Envie ao programador o nome do antivírus — pode ser precisa uma versão assinada.
 - Veja também o Acesso controlado a pastas: pode estar a bloquear a pasta de instalação.
 
-Quase todos os antivírus guardam o ficheiro em quarentena: restaurá-lo de lá e marcá-lo como fidedigno é mais rápido do que reinstalar. Se desaparece sempre, exclua a pasta inteira.
+Quase todos os antivírus guardam o ficheiro em quarentena: restaurá-lo de lá e marcá-lo como fidedigno é mais rápido do que reinstalar.
 
 ---
 

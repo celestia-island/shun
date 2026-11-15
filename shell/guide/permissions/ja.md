@@ -9,7 +9,7 @@
 
 インストーラーが最初に出す場所はユーザーフォルダーの下なので、管理者権限は要りません。USB メモリやネットワークドライブのフォルダーでも断られることがあるので、まずは内蔵ディスクに変えてみてください。
 
-[Windows の参考: ユーザー アカウント制御のしくみ](https://learn.microsoft.com/ja-jp/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Windows の参考: ユーザー アカウント制御の設定](https://learn.microsoft.com/ja-jp/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 

@@ -6,7 +6,7 @@ La instalación terminó, pero el archivo principal del programa falta en la car
 - ¿Sigue desapareciendo? Envía al desarrollador el nombre de tu antivirus: puede que haga falta una versión firmada.
 - Comprueba también el Acceso controlado a carpetas: puede estar bloqueando la carpeta de instalación.
 
-Casi todos los antivirus dejan el archivo en cuarentena: restaurarlo desde ahí y marcarlo como de confianza es más rápido que reinstalar. Si desaparece siempre, excluye la carpeta entera.
+Casi todos los antivirus dejan el archivo en cuarentena: restaurarlo desde ahí y marcarlo como de confianza es más rápido que reinstalar.
 
 ---
 

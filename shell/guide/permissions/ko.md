@@ -9,7 +9,7 @@
 
 설치 관리자가 처음 보여 주는 위치는 사용자 폴더 아래라 관리자 권한이 필요 없습니다. USB나 네트워크 드라이브의 폴더도 거절될 수 있으니 먼저 내장 디스크로 바꿔 보세요.
 
-[Windows 참고: 사용자 계정 컨트롤의 동작 방식](https://learn.microsoft.com/ko-kr/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Windows 참고: 사용자 계정 컨트롤 설정](https://learn.microsoft.com/ko-kr/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 

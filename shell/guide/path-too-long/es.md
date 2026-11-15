@@ -5,7 +5,7 @@ Windows da 260 caracteres a una ruta de forma predeterminada. Tu carpeta de inst
 - Elige una carpeta más corta, por ejemplo C:\App.
 - Déjala cerca de la raíz del disco: cada carpeta extra consume caracteres.
 
-Basta con mover la carpeta a una ruta corta como C:\X, y el instalador recuerda tu última elección. Cuentan tanto los nombres de carpeta como los de archivo.
+El registro muestra la ruta completa que se intentó: puedes contar los caracteres.
 
 [La explicación de Microsoft: longitud máxima de ruta](https://learn.microsoft.com/es-es/windows/win32/fileio/maximum-file-path-limitation)
 

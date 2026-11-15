@@ -5,7 +5,7 @@ Windows erlaubt einem Pfad standardmäßig 260 Zeichen. Ihr Installationsordner 
 - Wählen Sie einen kürzeren Ordner, zum Beispiel C:\App.
 - Halten Sie ihn nah am Laufwerksanfang — jeder zusätzliche Ordner kostet Zeichen.
 
-Es genügt, den Ordner in einen kurzen Pfad wie C:\X zu legen; der Installer merkt sich die letzte Wahl. Ordner- und Dateinamen zählen beide.
+Das Protokoll zeigt den vollen versuchten Pfad — die Zeichen lassen sich nachzählen.
 
 [Microsoft zur Grenze: maximale Pfadlänge](https://learn.microsoft.com/de-de/windows/win32/fileio/maximum-file-path-limitation)
 

@@ -11,7 +11,7 @@
 
 装到 C:\Program Files 或者系统盘根目录，安装器一定会被拒，那些地方只有管理员能写。
 
-[Windows 参考：用户账户控制是怎么工作的](https://learn.microsoft.com/zh-cn/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Windows 参考：用户账户控制的设置](https://learn.microsoft.com/zh-cn/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 

@@ -5,7 +5,7 @@ Der Installer muss eine Datei ersetzen, die etwas anderes offen hält. Meist ist
 - Beenden Sie die App (auch im Infobereich nachsehen), warten Sie ein paar Sekunden und starten Sie den Installer erneut.
 - Hilft das nicht, starten Sie den Computer neu. Ein Neustart gibt die Datei sicher frei.
 
-Das Installationsprotokoll nennt die Datei, die nicht ersetzt werden konnte — dort steht, was Sie schließen müssen. Oft bleibt ein Prozess im Infobereich zurück.
+Das Installationsprotokoll nennt die Datei, die nicht ersetzt werden konnte — dort steht genau, was Sie schließen müssen.
 
 [Windows-Hilfe: Eine Freigabeverletzung beheben](https://learn.microsoft.com/de-de/troubleshoot/windows-server/performance/copying-exe-files-sharing-violation-error-folder-in-use)
 

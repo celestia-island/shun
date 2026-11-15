@@ -8,7 +8,7 @@ Der Installer wollte dort Dateien schreiben, Windows hat es abgelehnt. Meist geh
 
 Der vom Installer vorgeschlagene Ort liegt in Ihrem Benutzerordner — dort sind keine Administratorrechte nötig.
 
-[Windows-Hilfe: So funktioniert die Benutzerkontensteuerung](https://learn.microsoft.com/de-de/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Windows-Hilfe: Einstellungen der Benutzerkontensteuerung](https://learn.microsoft.com/de-de/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 

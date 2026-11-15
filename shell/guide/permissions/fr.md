@@ -6,9 +6,9 @@ L'installateur a voulu écrire dans ce dossier et Windows a refusé. En généra
 - Ou fermez l'installateur, faites un clic droit dessus et choisissez **Exécuter en tant qu'administrateur**.
 - Sur Linux, installez dans votre dossier personnel, pas dans un chemin système — sinon lancez avec sudo.
 
-L'emplacement proposé est sous votre dossier utilisateur : aucun droit d'administrateur n'y est nécessaire.
+L'emplacement proposé est sous votre dossier utilisateur : aucun droit d'administrateur requis.
 
-[Référence Windows : le fonctionnement du contrôle de compte utilisateur](https://learn.microsoft.com/fr-fr/windows/security/application-security/application-control/user-account-control/how-it-works)
+[Référence Windows : les réglages du contrôle de compte utilisateur](https://learn.microsoft.com/fr-fr/windows/security/application-security/application-control/user-account-control/settings-and-configuration)
 
 ---
 
