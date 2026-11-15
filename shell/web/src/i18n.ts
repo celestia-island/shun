@@ -125,12 +125,29 @@ export interface NoticeStrings {
   launchFailed: string;
   /** Creating the chosen shortcuts failed (the raw message is appended). */
   shortcutsFailed: string;
+  /** One plain-language headline per classified failure family — the toast
+   *  text for that kind, and the article window's fallback body. Short
+   *  sentences in the spoken register: the reader is mid-install, not
+   *  reading documentation. */
+  permissions: string;
+  diskFull: string;
+  fileInUse: string;
+  pathTooLong: string;
+  network: string;
+  missingFiles: string;
   /** Toast inline action: open the details / guide window. */
   details: string;
   /** The details window's footer action. */
   close: string;
   /** The generic (non-guide) details window's headline. */
   errorTitle: string;
+  /** The article window's secondary action: open the topic's official
+   *  vendor page in the system browser. */
+  openOfficialPage: string;
+  /** Footer note for a topic this platform has no official page for (the
+   *  missing-files family): names the fallback channel instead of hiding
+   *  the fact. */
+  contactDeveloper: string;
 }
 
 /** Install-flow progress lines: the backend composes English labels, the
@@ -351,6 +368,14 @@ const zhHans: InstallerStrings = {
     launchBlocked: "%PRODUCT% 已安装完成，但 Windows 应用控制策略阻止了启动（0x11C7）。",
     launchFailed: "%PRODUCT% 未能启动。",
     shortcutsFailed: "快捷方式创建失败。",
+    permissions: "这一步需要管理员权限，被系统挡住了。",
+    diskFull: "目标磁盘空间不足，装不下了。",
+    fileInUse: "有文件正被占用，装不进去。",
+    pathTooLong: "安装路径太长了，Windows 放不下。",
+    network: "连不上下载服务器，网络好像断了。",
+    missingFiles: "装好的程序少了关键文件，启动不了。",
+    openOfficialPage: "打开官方说明",
+    contactDeveloper: "没有官方说明页，请联系开发者。",
     details: "查看详情",
     close: "关闭",
     errorTitle: "启动失败",
@@ -488,6 +513,14 @@ const zhHant: InstallerStrings = {
     launchBlocked: "%PRODUCT% 已安裝完成，但 Windows 應用程式控制阻止了啟動（0x11C7）。",
     launchFailed: "%PRODUCT% 未能啟動。",
     shortcutsFailed: "捷徑建立失敗。",
+    permissions: "這一步需要系統管理員權限，被系統擋住了。",
+    diskFull: "目標磁碟空間不足，裝不下了。",
+    fileInUse: "有檔案正被佔用，裝不進去。",
+    pathTooLong: "安裝路徑太長了，Windows 放不下。",
+    network: "連不上下載伺服器，網路好像斷了。",
+    missingFiles: "裝好的程式少了關鍵檔案，啟動不了。",
+    openOfficialPage: "開啟官方說明",
+    contactDeveloper: "沒有官方說明頁，請聯絡開發者。",
     details: "查看詳情",
     close: "關閉",
     errorTitle: "啟動失敗",
@@ -627,6 +660,14 @@ const en: InstallerStrings = {
     launchBlocked: "%PRODUCT% installed. Windows blocked the launch (0x11C7).",
     launchFailed: "%PRODUCT% could not be started.",
     shortcutsFailed: "The shortcuts could not be created.",
+    permissions: "This step needs administrator rights and was blocked.",
+    diskFull: "There's not enough space on the target drive.",
+    fileInUse: "A file is still open, so it can't be replaced.",
+    pathTooLong: "The install path is too long for Windows.",
+    network: "Can't reach the download server — the connection looks down.",
+    missingFiles: "The app is missing a file it needs and won't start.",
+    openOfficialPage: "Open the official page",
+    contactDeveloper: "No official page for this one — please contact the developer.",
     details: "Details",
     close: "Close",
     errorTitle: "Launch failed",
@@ -764,6 +805,14 @@ const ru: InstallerStrings = {
       "%PRODUCT% установлен. Запуск блокирует Windows (0x11C7).",
     launchFailed: "Не удалось запустить %PRODUCT%.",
     shortcutsFailed: "Не удалось создать ярлыки.",
+    permissions: "Для этого шага нужны права администратора — система не пустила.",
+    diskFull: "На диске не хватает места — установка не помещается.",
+    fileInUse: "Файл занят другой программой, заменить его не выходит.",
+    pathTooLong: "Путь установки слишком длинный для Windows.",
+    network: "Не удаётся достучаться до сервера загрузки — похоже, сеть отвалилась.",
+    missingFiles: "В программе не хватает нужного файла, поэтому она не запустится.",
+    openOfficialPage: "Открыть официальную страницу",
+    contactDeveloper: "Официальной страницы нет — напишите разработчику.",
     details: "Детали",
     close: "Закрыть",
     errorTitle: "Ошибка запуска",
@@ -915,6 +964,14 @@ const ja: InstallerStrings = {
       "%PRODUCT% はインストール済み。起動は Windows アプリ制御でブロック（0x11C7）。",
     launchFailed: "%PRODUCT% を起動できませんでした。",
     shortcutsFailed: "ショートカットを作成できませんでした。",
+    permissions: "この手順には管理者権限が必要で、止められました。",
+    diskFull: "ディスクの空きが足りず、入りきりません。",
+    fileInUse: "使用中のファイルがあり、置き換えられません。",
+    pathTooLong: "インストール先のパスが Windows には長すぎます。",
+    network: "ダウンロードサーバーにつながりません。回線が切れているようです。",
+    missingFiles: "必要なファイルが足りず、起動できません。",
+    openOfficialPage: "公式の説明を開く",
+    contactDeveloper: "公式の説明ページはありません。開発者に連絡してください。",
     details: "詳細",
     close: "閉じる",
     errorTitle: "起動に失敗しました",
@@ -1069,6 +1126,14 @@ const ko: InstallerStrings = {
       "%PRODUCT% 설치 완료. Windows 앱 제어가 실행 차단(0x11C7).",
     launchFailed: "%PRODUCT%을(를) 시작하지 못했습니다.",
     shortcutsFailed: "바로 가기를 만들지 못했습니다.",
+    permissions: "이 단계는 관리자 권한이 필요해 막혔습니다.",
+    diskFull: "디스크 공간이 부족해 들어가지 않습니다.",
+    fileInUse: "사용 중인 파일이 있어 바꿀 수 없습니다.",
+    pathTooLong: "설치 경로가 Windows에서 너무 깁니다.",
+    network: "다운로드 서버에 닿지 않습니다. 네트워크가 끊긴 것 같습니다.",
+    missingFiles: "필요한 파일이 빠져 실행할 수 없습니다.",
+    openOfficialPage: "공식 안내 열기",
+    contactDeveloper: "공식 안내 페이지가 없습니다. 개발자에게 알려 주세요.",
     details: "자세히",
     close: "닫기",
     errorTitle: "실행 실패",
@@ -1216,6 +1281,14 @@ const fr: InstallerStrings = {
       "%PRODUCT% installé. Windows bloque le lancement (0x11C7).",
     launchFailed: "%PRODUCT% n'a pas pu être démarré.",
     shortcutsFailed: "Les raccourcis n'ont pas pu être créés.",
+    permissions: "Cette étape demande les droits d'administrateur et a été bloquée.",
+    diskFull: "Il n'y a plus assez de place sur le disque.",
+    fileInUse: "Un fichier est encore ouvert, impossible de le remplacer.",
+    pathTooLong: "Le chemin d'installation est trop long pour Windows.",
+    network: "Impossible de joindre le serveur de téléchargement — la connexion semble coupée.",
+    missingFiles: "Il manque un fichier à l'application, elle ne démarrera pas.",
+    openOfficialPage: "Ouvrir la page officielle",
+    contactDeveloper: "Pas de page officielle ici — contactez le développeur.",
     details: "Détails",
     close: "Fermer",
     errorTitle: "Échec du lancement",
@@ -1367,6 +1440,14 @@ const es: InstallerStrings = {
       "%PRODUCT% instalado. Windows bloquea el inicio (0x11C7).",
     launchFailed: "No se pudo iniciar %PRODUCT%.",
     shortcutsFailed: "No se pudieron crear los accesos directos.",
+    permissions: "Este paso necesita permisos de administrador y se bloqueó.",
+    diskFull: "No queda espacio suficiente en el disco.",
+    fileInUse: "Un archivo sigue abierto y no se puede reemplazar.",
+    pathTooLong: "La ruta de instalación es demasiado larga para Windows.",
+    network: "No se llega al servidor de descarga: la conexión parece caída.",
+    missingFiles: "Falta un archivo de la aplicación y no arrancará.",
+    openOfficialPage: "Abrir la página oficial",
+    contactDeveloper: "No hay página oficial: escribe al desarrollador.",
     details: "Detalles",
     close: "Cerrar",
     errorTitle: "Error al iniciar",
@@ -1517,6 +1598,14 @@ const de: InstallerStrings = {
       "%PRODUCT% installiert. Windows blockiert den Start (0x11C7).",
     launchFailed: "%PRODUCT% konnte nicht gestartet werden.",
     shortcutsFailed: "Die Verknüpfungen konnten nicht erstellt werden.",
+    permissions: "Dieser Schritt braucht Administratorrechte und wurde blockiert.",
+    diskFull: "Auf dem Laufwerk ist nicht genug Platz.",
+    fileInUse: "Eine Datei ist noch geöffnet und lässt sich nicht ersetzen.",
+    pathTooLong: "Der Installationspfad ist zu lang für Windows.",
+    network: "Der Download-Server ist nicht erreichbar — die Verbindung scheint weg zu sein.",
+    missingFiles: "Der App fehlt eine Datei, sie startet deshalb nicht.",
+    openOfficialPage: "Offizielle Seite öffnen",
+    contactDeveloper: "Keine offizielle Seite — bitte den Entwickler kontaktieren.",
     details: "Details",
     close: "Schließen",
     errorTitle: "Start fehlgeschlagen",
@@ -1668,6 +1757,14 @@ const pt: InstallerStrings = {
       "%PRODUCT% instalado. Windows bloqueia o início (0x11C7).",
     launchFailed: "Não foi possível iniciar o %PRODUCT%.",
     shortcutsFailed: "Não foi possível criar os atalhos.",
+    permissions: "Este passo precisa de permissões de administrador e foi bloqueado.",
+    diskFull: "Não há espaço suficiente no disco.",
+    fileInUse: "Um ficheiro está aberto e não pode ser substituído.",
+    pathTooLong: "O caminho de instalação é longo demais para o Windows.",
+    network: "Não se chega ao servidor de transferência — a ligação parece em baixo.",
+    missingFiles: "Falta um ficheiro à aplicação, por isso não arranca.",
+    openOfficialPage: "Abrir a página oficial",
+    contactDeveloper: "Sem página oficial — fale com o programador.",
     details: "Detalhes",
     close: "Fechar",
     errorTitle: "Falha ao iniciar",

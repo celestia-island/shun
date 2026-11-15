@@ -292,9 +292,36 @@ const IMAGE_MAX_W: f32 = 560.0;
 /// Decoded-and-uploaded figure textures, owned by whichever window shows
 /// the document (the guide modal or, through [`render`], the license
 /// pane).
-#[derive(Default)]
 pub(crate) struct ImageBank {
+    /// The byte table this bank resolves against. Production uses
+    /// [`FIGURES`]; the tests hand in their own table (an online-mode build
+    /// ships EMPTY figure files, and that path must be exercised).
+    figures: &'static [(&'static str, &'static [u8])],
     textures: RefCell<HashMap<&'static str, Option<egui::TextureHandle>>>,
+}
+
+/// What a document image reference resolved to.
+enum Figure {
+    /// The bytes decoded and the texture is ready.
+    Ready(egui::TextureHandle),
+    /// The bank carries this reference but there are no usable bytes: an
+    /// `[shell] guides = "online"` build materializes EMPTY figure files
+    /// (its articles never embed them), and a missing authored PNG does the
+    /// same. The row is skipped entirely — the markdown syntax must never
+    /// leak into the article as prose.
+    Unavailable,
+    /// Not one of the bank's figures: the pre-image dialect renders the
+    /// line as prose, so a stale reference can never blank a document.
+    Unknown,
+}
+
+impl Default for ImageBank {
+    fn default() -> Self {
+        Self {
+            figures: FIGURES,
+            textures: RefCell::new(HashMap::new()),
+        }
+    }
 }
 
 impl ImageBank {
@@ -302,23 +329,49 @@ impl ImageBank {
         Self::default()
     }
 
-    /// Resolves one document image reference to its texture. `None` means
-    /// "this document references something the bank does not carry" — the
-    /// renderer then keeps the pre-image prose behaviour for that line,
-    /// so a stale reference can never blank a document.
-    fn texture(&self, ctx: &egui::Context, reference: &str) -> Option<egui::TextureHandle> {
+    /// A bank over `figures` — the tests' door to the empty/garbage byte
+    /// paths a release build reaches through build.rs placeholders.
+    #[cfg(test)]
+    fn with_figures(figures: &'static [(&'static str, &'static [u8])]) -> Self {
+        Self {
+            figures,
+            textures: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Resolves one document image reference.
+    fn lookup(&self, ctx: &egui::Context, reference: &str) -> Figure {
         let reference = reference.trim();
         let reference = reference.strip_prefix("./").unwrap_or(reference);
-        let (name, bytes) = *FIGURES.iter().find(|(name, _)| *name == reference)?;
+        let Some((name, bytes)) = self
+            .figures
+            .iter()
+            .find(|(name, _)| *name == reference)
+            .map(|entry| *entry)
+        else {
+            return Figure::Unknown;
+        };
         if let Some(cached) = self.textures.borrow().get(name) {
-            return cached.clone();
+            return match cached {
+                Some(texture) => Figure::Ready(texture.clone()),
+                None => Figure::Unavailable,
+            };
         }
-        let texture = Self::decode(ctx, name, bytes);
-        self.textures.borrow_mut().insert(name, texture.clone());
-        texture
+        let decoded = Self::decode(ctx, name, bytes);
+        self.textures.borrow_mut().insert(name, decoded.clone());
+        match decoded {
+            Some(texture) => Figure::Ready(texture),
+            None => Figure::Unavailable,
+        }
     }
 
     fn decode(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<egui::TextureHandle> {
+        // An empty byte string is "no figure embedded", not a decode
+        // failure worth logging: `guides = "online"` products ship exactly
+        // these (see build.rs `materialize_guides`).
+        if bytes.is_empty() {
+            return None;
+        }
         let image = image::load_from_memory(bytes).ok()?.to_rgba8();
         let size = [image.width() as usize, image.height() as usize];
         let color = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
@@ -404,9 +457,15 @@ pub(crate) fn render_with_images(
             continue;
         }
         if let Some((alt, reference)) = image_line(trimmed) {
-            if let Some(texture) = images.texture(ui.ctx(), reference) {
-                paint_figure(ui, theme, &texture, alt);
-                continue;
+            match images.lookup(ui.ctx(), reference) {
+                Figure::Ready(texture) => {
+                    paint_figure(ui, theme, &texture, alt);
+                    continue;
+                }
+                // No bytes (online build / missing PNG): the row vanishes.
+                Figure::Unavailable => continue,
+                // Unknown reference: keep the pre-image prose behaviour.
+                Figure::Unknown => {}
             }
         }
         if trimmed.chars().count() >= 3 && trimmed.chars().all(|c| c == '-' || c == '=') {
@@ -563,12 +622,12 @@ mod tests {
         let ctx = egui::Context::default();
         for (name, _) in FIGURES {
             assert!(
-                bank.texture(&ctx, name).is_some(),
+                matches!(bank.lookup(&ctx, name), Figure::Ready(_)),
                 "{name} is compiled in and decodes"
             );
         }
         assert!(
-            bank.texture(&ctx, "guide/not-a-figure.png").is_none(),
+            matches!(bank.lookup(&ctx, "guide/not-a-figure.png"), Figure::Unknown),
             "an unknown reference stays prose"
         );
 
@@ -585,6 +644,43 @@ mod tests {
         assert!(
             unknown < 60.0,
             "an unknown reference stays a one-row prose line (h={unknown})"
+        );
+    }
+
+    /// `[shell] guides = "online"` (and a missing authored PNG) ships EMPTY
+    /// figure files. That must be a silently skipped row — not a crash, not
+    /// the literal markdown syntax leaking into the article.
+    #[test]
+    fn empty_figure_bytes_skip_the_row_instead_of_leaking_markdown() {
+        const EMPTY: &[(&str, &[u8])] = &[("guide/empty.png", b"")];
+        let bank = ImageBank::with_figures(EMPTY);
+        let ctx = egui::Context::default();
+        assert!(matches!(
+            bank.lookup(&ctx, "guide/empty.png"),
+            Figure::Unavailable
+        ));
+        // The skipped row contributes nothing; an UNKNOWN reference in the
+        // same position renders one prose row. Compare the two instead of
+        // pinning absolute pixel heights (the trailing blank line adds its
+        // own 6pt either way).
+        let skipped = render_in_headless("![示意图](guide/empty.png)\n", 560.0, &bank);
+        let prose = render_in_headless("![示意图](guide/unknown.png)\n", 560.0, &bank);
+        assert!(
+            skipped + 8.0 < prose,
+            "the row is skipped, not rendered as prose (skipped={skipped}, prose={prose})"
+        );
+        // Garbage bytes take the same path as an empty file.
+        const GARBAGE: &[(&str, &[u8])] = &[("guide/bad.png", b"not a png")];
+        let bank = ImageBank::with_figures(GARBAGE);
+        assert!(matches!(
+            bank.lookup(&ctx, "guide/bad.png"),
+            Figure::Unavailable
+        ));
+        let skipped = render_in_headless("![x](guide/bad.png)\n", 560.0, &bank);
+        let prose = render_in_headless("![x](guide/none.png)\n", 560.0, &bank);
+        assert!(
+            skipped + 8.0 < prose,
+            "undecodable bytes skip the row too (skipped={skipped}, prose={prose})"
         );
     }
 

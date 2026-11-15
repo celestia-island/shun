@@ -893,6 +893,142 @@ struct Texts {
     notice_details: String,
     notice_close: String,
     notice_error_title: String,
+    // The widened failure families: one plain-language headline per
+    // classified kind (#167 only knew the launch block). `%PRODUCT%` is
+    // spliced by the caller, like every other wizard string.
+    notice_permissions: String,
+    notice_disk_full: String,
+    notice_file_in_use: String,
+    notice_path_too_long: String,
+    notice_network: String,
+    notice_missing_files: String,
+    /// The help window's footer action for the vendor page.
+    notice_open_official: String,
+    /// The details window's footer lead when no official page exists (a
+    /// missing install file is about this product, not the OS).
+    notice_contact_developer: String,
+}
+
+/// The ONE routing table behind every failure notice: a classified kind
+/// either names a help topic and a plain-language headline, or it falls
+/// through to the raw message in the generic details window.
+///
+/// Keep it in lockstep with `shun::failure::help_topic_for` (the core's own
+/// kind → topic mapping): the toast copy is the face's business, the topic
+/// ids are the core's. A kind added there without an arm here degrades to
+/// the details window rather than a blank action.
+fn family_notice(kind: shun::failure::FailureKind) -> Option<(&'static str, fn(&Texts) -> &str)> {
+    use shun::failure::FailureKind as Kind;
+    Some(match kind {
+        Kind::AppControlBlocked => (
+            shun::help::TOPIC_APP_CONTROL,
+            (|texts: &Texts| texts.notice_launch_blocked.as_str()) as fn(&Texts) -> &str,
+        ),
+        Kind::Permissions => (shun::help::TOPIC_PERMISSIONS, |texts: &Texts| {
+            texts.notice_permissions.as_str()
+        }),
+        Kind::DiskFull => (shun::help::TOPIC_DISK_SPACE, |texts: &Texts| {
+            texts.notice_disk_full.as_str()
+        }),
+        Kind::FileInUse => (shun::help::TOPIC_FILE_IN_USE, |texts: &Texts| {
+            texts.notice_file_in_use.as_str()
+        }),
+        Kind::PathTooLong => (shun::help::TOPIC_PATH_TOO_LONG, |texts: &Texts| {
+            texts.notice_path_too_long.as_str()
+        }),
+        Kind::Network => (shun::help::TOPIC_NETWORK, |texts: &Texts| {
+            texts.notice_network.as_str()
+        }),
+        Kind::MissingExecutable => (shun::help::TOPIC_MISSING_FILES, |texts: &Texts| {
+            texts.notice_missing_files.as_str()
+        }),
+        Kind::Io | Kind::Other => return None,
+    })
+}
+
+/// The install flow's last failure, classified once.
+///
+/// The flow reports through `Result<(), String>`, so the classification has
+/// to walk the MESSAGE (`shun::failure::classify_message`) rather than an
+/// `io::Error`. The failed landing page keeps this value: the toast that
+/// explains a family expires after 30 s, while the page stays up, so the
+/// help must still be one click away from there.
+#[derive(Clone)]
+struct InstallFailure {
+    message: String,
+    kind: shun::failure::FailureKind,
+    /// The help topic the kind maps to (`None` for a bare IO/other error).
+    topic: Option<String>,
+}
+
+impl InstallFailure {
+    /// Classifies the flow's string error — the worker's `Err` payload.
+    fn classify(message: String) -> Self {
+        let (kind, _os_error) = shun::failure::classify_message(&message);
+        Self {
+            topic: family_notice(kind).map(|(topic, _)| topic.to_string()),
+            message,
+            kind,
+        }
+    }
+
+    /// A failure whose kind the MESSAGE cannot express: `classify_message`
+    /// has no text marker for a missing install entry (the field produces
+    /// it from a `MissingEntry` error on the launch path), so the preview
+    /// hook states the kind directly.
+    #[cfg(debug_assertions)]
+    fn forced(message: String, kind: shun::failure::FailureKind) -> Self {
+        Self {
+            topic: family_notice(kind).map(|(topic, _)| topic.to_string()),
+            message,
+            kind,
+        }
+    }
+}
+
+/// The `fail-…` preview values and the synthetic message each one reports.
+/// The OS codes are the REAL ones a host produces (see
+/// `shun::failure::classify_os_error`), so the preview exercises the same
+/// classifier arm the field does.
+#[cfg(debug_assertions)]
+fn preview_failure(value: &str) -> Option<(shun::failure::FailureKind, String)> {
+    use shun::failure::FailureKind as Kind;
+    let (kind, message) = match value {
+        "fail-permissions" => (
+            Kind::Permissions,
+            "io error: Access is denied. (os error 5)",
+        ),
+        "fail-disk-space" => (
+            Kind::DiskFull,
+            "io error: There is not enough space on the disk. (os error 28)",
+        ),
+        "fail-file-in-use" => (
+            Kind::FileInUse,
+            "io error: The process cannot access the file because it is being \
+             used by another process. (os error 32)",
+        ),
+        "fail-path-too-long" => (
+            Kind::PathTooLong,
+            "io error: The filename or extension is too long. (os error 206)",
+        ),
+        "fail-network" => (
+            Kind::Network,
+            "download failed: Connection refused (os error 111)",
+        ),
+        // No text marker exists for a missing entry point: the kind is
+        // stated directly by the caller.
+        "fail-missing-files" => (
+            Kind::MissingExecutable,
+            "the installed application is missing from the install folder",
+        ),
+        "fail-app-control" => (
+            Kind::AppControlBlocked,
+            "io error: the process creation was blocked by application-control \
+             policy (os error 4551)",
+        ),
+        _ => return None,
+    };
+    Some((kind, message.to_string()))
 }
 
 /// Joins a localized notice lead with the raw failure detail — the hikari
@@ -1850,9 +1986,12 @@ struct FallbackApp {
     /// surface of the frame and can never sit under the footer's primary
     /// action.
     toast: crate::toast::ToastHost,
-    /// The help / error-details window (HkModal mirror): the embedded
-    /// app-control guide, or the raw finish-failure message.
+    /// The help / error-details window (HkModal mirror): a per-topic
+    /// article, or the raw failure message.
     guide: crate::guide::GuideWindow,
+    /// The install flow's last failure, classified once. The failed landing
+    /// page keeps it so help stays reachable after the toast expires.
+    install_failure: Option<InstallFailure>,
 }
 
 /// Shared control metrics for the egui face — one set of heights and
@@ -2158,6 +2297,7 @@ impl FallbackApp {
             receiver,
             toast: crate::toast::ToastHost::new(),
             guide: crate::guide::GuideWindow::new(),
+            install_failure: None,
         }
     }
 
@@ -2174,61 +2314,113 @@ impl FallbackApp {
     /// its action, every other failure the generic details window, so the
     /// raw message never dies behind the toast's three-row clamp.
     fn report_finish_failure(&mut self, failure: shun::failure::FinishFailure) {
-        use shun::failure::{FailureKind, FinishStage};
-        let product = self.config.product.name.clone();
-        let with_product = |raw: &str| raw.replace("%PRODUCT%", &product);
-        let details = self.texts.notice_details.clone();
-        let error_title = self.texts.notice_error_title.clone();
-        let body = with_product(&failure.message);
-        let show_details = |toast: &mut crate::toast::ToastHost, lead: String, body: String| {
-            let text = notice_with_detail(&lead, &body);
-            toast.push_with_action(
+        self.push_failure_notice(failure.kind, failure.stage, &failure.message);
+    }
+
+    /// Routes ONE classified failure to the notice stack — the single path
+    /// the done page, the install worker and the preview hook share.
+    ///
+    /// A family with a help topic gets its own plain-language headline and
+    /// an action that opens that topic (the article in embedded mode, the
+    /// official page in online mode); everything else keeps the raw message
+    /// in the generic details window, with a stage-appropriate lead.
+    fn push_failure_notice(
+        &mut self,
+        kind: shun::failure::FailureKind,
+        stage: shun::failure::FinishStage,
+        message: &str,
+    ) {
+        use shun::failure::FinishStage;
+        let body = self.with_product(message);
+        let details = crate::guide::GuideDetails {
+            title: self.texts.notice_error_title.clone(),
+            body: body.clone(),
+        };
+        let action_label = self.texts.notice_details.clone();
+        if let Some((topic, headline)) = family_notice(kind) {
+            // Resolve the copy before the mutable borrow of the stack.
+            let text = self.with_product(headline(&self.texts));
+            self.toast.push_with_action(
                 crate::toast::ToastTone::Error,
                 text,
-                details.clone(),
-                crate::toast::ToastIntent::ShowDetails {
-                    title: error_title.clone(),
-                    body,
+                action_label,
+                crate::toast::ToastIntent::OpenGuide {
+                    topic: topic.to_string(),
+                    details,
                 },
                 true,
             );
+            return;
+        }
+        // No family: the stage's own lead carries the context. An install
+        // failure uses the failed page's headline (there is no "could not
+        // start" to speak of when nothing was installed).
+        let lead = match stage {
+            FinishStage::Shortcuts => self.texts.notice_shortcuts_failed.clone(),
+            FinishStage::Launch => self.texts.notice_launch_failed.clone(),
+            FinishStage::Install => self.texts.failed.clone(),
         };
-        match failure.stage {
-            FinishStage::Shortcuts => {
-                let lead = with_product(&self.texts.notice_shortcuts_failed);
-                show_details(&mut self.toast, lead, body);
-            }
-            FinishStage::Launch => {
-                // The classifier names the topic; matching on the kind
-                // keeps a future topic that maps to app-control working.
-                let app_control = failure.kind == FailureKind::AppControlBlocked
-                    || failure.help_topic.as_deref() == Some(shun::help::TOPIC_APP_CONTROL);
-                if app_control {
-                    let text = with_product(&self.texts.notice_launch_blocked);
-                    self.toast.push_with_action(
-                        crate::toast::ToastTone::Error,
-                        text,
-                        details,
-                        crate::toast::ToastIntent::OpenGuide {
-                            topic: shun::help::TOPIC_APP_CONTROL.to_string(),
-                        },
-                        true,
-                    );
-                } else {
-                    let lead = with_product(&self.texts.notice_launch_failed);
-                    show_details(&mut self.toast, lead, body);
+        let text = notice_with_detail(&self.with_product(&lead), &body);
+        self.toast.push_with_action(
+            crate::toast::ToastTone::Error,
+            text,
+            action_label,
+            crate::toast::ToastIntent::ShowDetails {
+                title: details.title,
+                body: details.body,
+            },
+            true,
+        );
+    }
+
+    /// Records the flow's classified failure and routes its notice — the
+    /// install worker's `Err` and the preview hook both land here.
+    fn note_install_failure(&mut self, failure: InstallFailure) {
+        self.push_failure_notice(
+            failure.kind,
+            shun::failure::FinishStage::Install,
+            &failure.message,
+        );
+        self.install_failure = Some(failure);
+    }
+
+    /// Opens the help a notice action asked for.
+    ///
+    /// Embedded mode shows the in-app article. Online mode hands the
+    /// official page to the browser and opens NO window — but when
+    /// `help_url` has no page for this topic/platform (missing-files is
+    /// about this product, not the OS) the raw message must still be
+    /// reachable, so that case falls back to the details window.
+    fn open_help(&mut self, topic: &str, details: crate::guide::GuideDetails) {
+        if self.guides_online() {
+            if let Some(url) = shun::help::help_url(topic, &self.language) {
+                if shun::help::open_url(&url) {
+                    return;
                 }
             }
-            // The install flow itself failed (the failed-install landing
-            // page's classification). Interim wiring until the per-topic
-            // lane lands: the flow's classified message drives the same
-            // generic details window — the topic-specific headline set
-            // rides with the rest of the notice work.
-            FinishStage::Install => {
-                let lead = with_product(&self.texts.notice_launch_failed);
-                show_details(&mut self.toast, lead, body);
-            }
+            self.guide.open_details(details.title, details.body);
+            return;
         }
+        self.guide.open_topic(topic, &self.language);
+    }
+
+    /// The manifest's `[shell] guides` mode. Debug builds honor
+    /// `SHUN_SHELL_PREVIEW_GUIDES=online` so the screenshot pass can capture
+    /// both modes from one binary.
+    fn guides_online(&self) -> bool {
+        #[cfg(debug_assertions)]
+        if std::env::var("SHUN_SHELL_PREVIEW_GUIDES").is_ok_and(|mode| mode == "online") {
+            return true;
+        }
+        matches!(
+            self.config.shell.as_ref().map(|shell| shell.guides),
+            Some(shun::config::GuidesMode::Online)
+        )
+    }
+
+    /// The wizard copy's `%PRODUCT%` splice, shared by every notice path.
+    fn with_product(&self, raw: &str) -> String {
+        raw.replace("%PRODUCT%", &self.config.product.name)
     }
 
     /// Switches the wizard language: the TEXTS table, the license
@@ -2310,43 +2502,90 @@ impl FallbackApp {
         }
     }
 
-    /// Debug-only VERIFICATION HOOK (release builds ignore it entirely):
+    /// Debug-only VERIFICATION HOOK (release builds ignore it entirely).
     ///
-    /// - `SHUN_SHELL_PREVIEW=done-notice` — boot straight into the done
-    ///   page with the app-control notice already on the toast stack;
-    /// - `SHUN_SHELL_PREVIEW=done-notice+guide` — the same, with the
-    ///   app-control guide window open over it.
+    /// `SHUN_SHELL_PREVIEW` boots straight into the state the screenshot
+    /// pass wants to capture, with the notice already routed through the
+    /// REAL failure path — a screenshot can never show copy the shipped
+    /// path would not produce:
     ///
-    /// This is the deterministic way the X11 screenshot pass captures the
-    /// two new surfaces without walking the wizard. The directory is a
-    /// temp path (nothing is installed) and the notice is produced by the
-    /// REAL failure path ([`Self::report_finish_failure`] from the same
-    /// classified `FinishFailure` a blocked launch yields), so a
-    /// screenshot can never show copy the shipped path would not.
+    /// | value | boots into |
+    /// |---|---|
+    /// | `done-notice` | done page + the app-control notice |
+    /// | `done-notice+guide` | the same, with the app-control article open |
+    /// | `fail-permissions` | failed-install page + the permissions notice |
+    /// | `fail-disk-space` | … disk-space |
+    /// | `fail-file-in-use` | … file-in-use |
+    /// | `fail-path-too-long` | … path-too-long |
+    /// | `fail-network` | … network |
+    /// | `fail-missing-files` | … missing-files |
+    /// | `fail-app-control` | … app-control (the launch-stage family) |
+    ///
+    /// Appending `+guide` to any `fail-…` value also opens that topic's
+    /// window. The synthetic messages carry the same OS codes the field
+    /// produces (`os error 5` / `28` / `32` / `206`, a refused connection),
+    /// so `classify_message` walks the production path; `missing-files` has
+    /// no code marker and states its kind directly (the field only reaches
+    /// it from a `MissingEntry` error on the launch path).
+    ///
+    /// `SHUN_SHELL_PREVIEW_GUIDES=online` forces the online guides mode, so
+    /// both modes are capturable from one binary (see [`Self::guides_online`]).
     #[cfg(debug_assertions)]
     fn debug_preview(&mut self) {
         let Ok(preview) = std::env::var("SHUN_SHELL_PREVIEW") else {
             return;
         };
-        let open_guide = match preview.as_str() {
-            "done-notice" => false,
-            "done-notice+guide" => true,
-            _ => return,
+        let (value, open_guide) = match preview.strip_suffix("+guide") {
+            Some(base) => (base, true),
+            None => (preview.as_str(), false),
         };
+        if value == "done-notice" {
+            self.stage = Stage::Finished;
+            self.outcome = Some(Outcome::InstallOk);
+            self.dir = std::env::temp_dir()
+                .join(format!("{}-preview", self.config.product.name))
+                .display()
+                .to_string();
+            self.report_finish_failure(shun::failure::FinishFailure::from_os_error(
+                shun::failure::FinishStage::Launch,
+                shun::failure::ERROR_APPLICATION_CONTROL_POLICY_BLOCKED,
+                "io error: the process creation was blocked by application-control \
+                 policy (os error 4551)",
+            ));
+            if open_guide {
+                self.guide
+                    .open_topic(shun::help::TOPIC_APP_CONTROL, &self.language);
+            }
+            return;
+        }
+        let Some((kind, message)) = preview_failure(value) else {
+            return;
+        };
+        // missing-files is the one family `classify_message` cannot recover
+        // from text; every other arm classifies exactly like the field.
+        let failure = if value == "fail-missing-files" {
+            InstallFailure::forced(message, kind)
+        } else {
+            let classified = InstallFailure::classify(message);
+            debug_assert_eq!(
+                classified.kind, kind,
+                "the preview message must classify to its family"
+            );
+            classified
+        };
+        let topic = failure.topic.clone();
+        let message = failure.message.clone();
+        self.outcome = Some(Outcome::Failed(message.clone()));
         self.stage = Stage::Finished;
-        self.outcome = Some(Outcome::InstallOk);
-        self.dir = std::env::temp_dir()
-            .join(format!("{}-preview", self.config.product.name))
-            .display()
-            .to_string();
-        self.report_finish_failure(shun::failure::FinishFailure::from_os_error(
-            shun::failure::FinishStage::Launch,
-            shun::failure::ERROR_APPLICATION_CONTROL_POLICY_BLOCKED,
-            "io error: the process creation was blocked by application-control \
-             policy (os error 4551)",
-        ));
+        self.terminal.push(
+            crate::terminal::LineKind::Error,
+            format!("× {} {message}", self.texts.failed),
+        );
+        self.note_install_failure(failure);
         if open_guide {
-            self.guide.open_topic(shun::help::TOPIC_APP_CONTROL);
+            if let Some(topic) = topic {
+                self.guide.open_topic(&topic, &self.language);
+            }
         }
     }
 
@@ -2833,8 +3072,21 @@ impl FallbackApp {
                             format!("× {} {err}", self.texts.failed),
                         ),
                     }
+                    let failed = match &outcome {
+                        Outcome::Failed(message) => Some(message.clone()),
+                        _ => None,
+                    };
                     self.outcome = Some(outcome);
                     self.stage = Stage::Finished;
+                    // An install failure used to land on the failed page
+                    // with nothing but the log line. Classify the flow's
+                    // string error and route the family's notice; the
+                    // uninstall page keeps its silent landing.
+                    if !uninstalling {
+                        if let Some(message) = failed {
+                            self.note_install_failure(InstallFailure::classify(message));
+                        }
+                    }
                 }
             }
         }
@@ -5273,7 +5525,23 @@ impl FallbackApp {
             Outcome::Failed(err) => {
                 // The HkAlert error analog, plus the hikari error
                 // landing's copy action: the failure text onto the
-                // clipboard for a bug report.
+                // clipboard for a bug report. A classified failure also
+                // keeps its help one click away: the toast that explains
+                // the family expires after 30 s, this page does not.
+                let help_topic = self
+                    .install_failure
+                    .as_ref()
+                    .filter(|failure| failure.topic.is_some())
+                    .map(|failure| {
+                        (
+                            failure.topic.clone().unwrap_or_default(),
+                            crate::guide::GuideDetails {
+                                title: self.texts.notice_error_title.clone(),
+                                body: self.with_product(&failure.message),
+                            },
+                        )
+                    });
+                let mut help_request = None;
                 Frame::default()
                     .fill(theme.error_tint())
                     .stroke(Stroke::new(1.0f32, theme.error))
@@ -5291,25 +5559,50 @@ impl FallbackApp {
                             ui.add_space(4.0);
                             ui.label(RichText::new(err.clone()).size(12.5).color(theme.error));
                             ui.add_space(6.0);
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new(&self.texts.error_copy)
-                                            .size(12.5)
-                                            .color(theme.text),
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(&self.texts.error_copy)
+                                                .size(12.5)
+                                                .color(theme.text),
+                                        )
+                                        .fill(theme.surface)
+                                        .stroke(Stroke::new(1.0f32, theme.border))
+                                        .corner_radius(CornerRadius::same(6))
+                                        .min_size(egui::vec2(132.0, 26.0)),
                                     )
-                                    .fill(theme.surface)
-                                    .stroke(Stroke::new(1.0f32, theme.border))
-                                    .corner_radius(CornerRadius::same(6))
-                                    .min_size(egui::vec2(132.0, 26.0)),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                ui.ctx().copy_text(err.clone());
-                            }
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    ui.ctx().copy_text(err.clone());
+                                }
+                                if let Some((topic, details)) = help_topic.clone() {
+                                    ui.add_space(8.0);
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new(&self.texts.notice_details)
+                                                    .size(12.5)
+                                                    .color(theme.primary),
+                                            )
+                                            .fill(theme.surface)
+                                            .stroke(Stroke::new(1.0f32, theme.border))
+                                            .corner_radius(CornerRadius::same(6))
+                                            .min_size(egui::vec2(0.0, 26.0)),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        help_request = Some((topic, details));
+                                    }
+                                }
+                            });
                         });
                     });
+                if let Some((topic, details)) = help_request {
+                    self.open_help(&topic, details);
+                }
             }
         }
         // The done page shows the log ONLY on the failure variant (the
@@ -6132,12 +6425,21 @@ impl eframe::App for FallbackApp {
         // notice that explains why.
         let close_label = self.texts.notice_close.clone();
         let copy_label = self.texts.error_copy.clone();
-        self.guide
-            .draw(ctx, &theme, &self.language, &close_label, &copy_label);
+        let open_official_label = self.texts.notice_open_official.clone();
+        let contact_label = self.texts.notice_contact_developer.clone();
+        let labels = crate::guide::GuideLabels {
+            close: &close_label,
+            copy: &copy_label,
+            open_official: &open_official_label,
+            contact_developer: &contact_label,
+        };
+        self.guide.draw(ctx, &theme, &self.language, &labels);
         let intents = self.toast.draw(ctx, &theme, &self.caption_icons);
         for intent in intents {
             match intent {
-                crate::toast::ToastIntent::OpenGuide { topic } => self.guide.open_topic(&topic),
+                crate::toast::ToastIntent::OpenGuide { topic, details } => {
+                    self.open_help(&topic, details);
+                }
                 crate::toast::ToastIntent::ShowDetails { title, body } => {
                     self.guide.open_details(title, body);
                 }
@@ -6293,10 +6595,74 @@ mod strings_tests {
                 ("notice_details", &texts.notice_details),
                 ("notice_close", &texts.notice_close),
                 ("notice_error_title", &texts.notice_error_title),
+                ("notice_permissions", &texts.notice_permissions),
+                ("notice_disk_full", &texts.notice_disk_full),
+                ("notice_file_in_use", &texts.notice_file_in_use),
+                ("notice_path_too_long", &texts.notice_path_too_long),
+                ("notice_network", &texts.notice_network),
+                ("notice_missing_files", &texts.notice_missing_files),
+                ("notice_open_official", &texts.notice_open_official),
+                ("notice_contact_developer", &texts.notice_contact_developer),
             ] {
                 assert!(!value.is_empty(), "{locale}: {name}");
             }
         }
+    }
+
+    /// Every family the classifier names routes to a topic the core's table
+    /// knows, and the two bare kinds fall through to the details window.
+    /// This is the shell's half of the kind → topic contract: a kind added
+    /// upstream without an arm here lands on the details window, not a
+    /// blank action.
+    #[test]
+    fn every_classified_family_routes_to_a_known_help_topic() {
+        use shun::failure::FailureKind as Kind;
+        let families = [
+            Kind::AppControlBlocked,
+            Kind::Permissions,
+            Kind::DiskFull,
+            Kind::FileInUse,
+            Kind::PathTooLong,
+            Kind::Network,
+            Kind::MissingExecutable,
+        ];
+        for kind in families {
+            let (topic, headline) = family_notice(kind).unwrap_or_else(|| panic!("{kind:?}"));
+            assert!(
+                shun::help::TOPICS.contains(&topic),
+                "{kind:?} → {topic} is not an embedded topic"
+            );
+            let strings = wizard_strings();
+            for locale in &strings.locales {
+                let texts = strings.texts(locale);
+                assert!(
+                    !headline(&texts).is_empty(),
+                    "{locale}: {kind:?} has no headline"
+                );
+            }
+        }
+        assert!(family_notice(Kind::Io).is_none(), "io stays generic");
+        assert!(family_notice(Kind::Other).is_none(), "other stays generic");
+    }
+
+    /// The install-flow classifier lands on the same families from the
+    /// worker's string errors, and the missing-files kind is the one the
+    /// text cannot express.
+    #[test]
+    fn install_flow_messages_classify_through_the_shared_table() {
+        let failure = InstallFailure::classify("io error: denied (os error 5)".into());
+        assert_eq!(
+            failure.topic.as_deref(),
+            Some(shun::help::TOPIC_PERMISSIONS)
+        );
+        let failure = InstallFailure::classify("download failed: connection refused".into());
+        assert_eq!(failure.topic.as_deref(), Some(shun::help::TOPIC_NETWORK));
+        let failure =
+            InstallFailure::classify("the configuration declares no install target".into());
+        assert!(
+            failure.topic.is_none(),
+            "an unclassified error has no topic"
+        );
     }
 
     /// The toast body is ONE paragraph: the localized lead and the raw

@@ -57,9 +57,21 @@ const MAP: Record<string, string> = {
   notice_launch_blocked: "notices.launchBlocked",
   notice_launch_failed: "notices.launchFailed",
   notice_shortcuts_failed: "notices.shortcutsFailed",
+  // One headline per classified failure family (the toast text for that
+  // kind, and the article window's fallback body).
+  notice_permissions: "notices.permissions",
+  notice_disk_full: "notices.diskFull",
+  notice_file_in_use: "notices.fileInUse",
+  notice_path_too_long: "notices.pathTooLong",
+  notice_network: "notices.network",
+  notice_missing_files: "notices.missingFiles",
   notice_details: "notices.details",
   notice_close: "notices.close",
   notice_error_title: "notices.errorTitle",
+  // The article window's official-page action, and the fallback note where
+  // the platform has no page for the topic.
+  notice_open_official: "notices.openOfficialPage",
+  notice_contact_developer: "notices.contactDeveloper",
   license_agree: "license.agree",
   license_title: "license.title",
   license_sub: "license.sub",

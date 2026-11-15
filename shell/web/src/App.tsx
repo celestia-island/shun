@@ -30,7 +30,11 @@ import { solarWantsDark, startSolarClock } from "./solar";
 import AppTitleBar from "./components/AppTitleBar";
 import PathField, { type DriveInfo } from "./components/PathField";
 import LogPane, { type LogLine } from "./components/LogPane";
-import GuideWindow, { type GuideTopic } from "./components/GuideWindow";
+import GuideWindow, {
+  GUIDE_TOPICS,
+  isGuideTopic,
+  type GuideTopic,
+} from "./components/GuideWindow";
 import {
   isInstallerLocale,
   LOCALE_OPTIONS,
@@ -38,6 +42,7 @@ import {
   strings,
   type InstallerLocale,
   type InstallerStrings,
+  type NoticeStrings,
 } from "./i18n";
 import { renderRichText } from "./richText";
 import { invoke, listen, openDirectory, tauriWindow } from "./tauri";
@@ -116,14 +121,17 @@ interface FlowEventPayload {
 }
 
 /**
- * The classified rejection `finish_install` carries (the Rust
- * `shun::failure::FinishFailure` serialized over Tauri's invoke channel):
- * camelCase field names, kebab-case enum values. Both halves of the
- * done-page confirmation land here — the shortcut choices (`stage:
- * "shortcuts"`) and the immediate launch (`stage: "launch"`) — and a launch
- * refused by Windows application-control policy is called out as its own
- * `kind` so the face can offer the OS-remedy guide instead of a raw i/o
- * error string.
+ * The classified failure the backend hands this face, in both directions:
+ * `finish_install` REJECTS with it, and `classify_error` RETURNS it for a
+ * flow error that arrives as text (the failed-install page). It is the Rust
+ * `shun::failure::FinishFailure` serialized over Tauri's invoke channel —
+ * camelCase field names, kebab-case enum values.
+ *
+ * `stage` names which part of the flow failed (the install flow itself, the
+ * shortcut choices, or the immediate launch) and `kind` is the narrow family
+ * the face branches on. Every family except `io` / `other` carries a help
+ * topic (`shun::help::TOPICS`), i.e. an article of its own; the two bare
+ * families get the generic detail window.
  */
 interface FinishFailurePayload {
   stage?: string;
@@ -131,14 +139,43 @@ interface FinishFailurePayload {
   message?: string;
   /** Raw OS error (`4551` / 0x11C7 for an application-control block). */
   osError?: number | null;
-  /** Guide topic the backend names for this failure (`app-control`). */
+  /** Help topic the backend names for this failure. */
   helpTopic?: string | null;
 }
 
+/** Which part of the flow failed. */
+type FailureStage = "install" | "shortcuts" | "launch";
+
+/** The failure families the backend classifies (`shun::failure::FailureKind`). */
+type FailureKind =
+  | "app-control-blocked"
+  | "missing-executable"
+  | "permissions"
+  | "disk-full"
+  | "file-in-use"
+  | "path-too-long"
+  | "network"
+  | "io"
+  | "other";
+
+const FAILURE_KINDS: readonly FailureKind[] = [
+  "app-control-blocked",
+  "missing-executable",
+  "permissions",
+  "disk-full",
+  "file-in-use",
+  "path-too-long",
+  "network",
+  "io",
+  "other",
+];
+
+const FAILURE_STAGES: readonly FailureStage[] = ["install", "shortcuts", "launch"];
+
 /** The normalized failure every web surface branches on. */
 interface ClassifiedFinish {
-  stage: "shortcuts" | "launch";
-  kind: "app-control-blocked" | "missing-executable" | "io" | "other";
+  stage: FailureStage;
+  kind: FailureKind;
   message: string;
   osError: number | null;
   helpTopic: string | null;
@@ -153,8 +190,57 @@ interface ClassifiedFinish {
  */
 const APP_CONTROL_OS_ERRORS = [4551, 1260];
 
-/** The guide topic the backend names for an application-control block. */
+/** The help topic the backend names for an application-control block. */
 const APP_CONTROL_HELP_TOPIC = "app-control";
+
+/**
+ * Backend help topic → failure family. Used when a rejection names the topic
+ * but not the kind (a legacy string rejection carrying the message of a
+ * classified family), so the face still routes to the right article.
+ */
+const HELP_TOPIC_KIND: Record<string, FailureKind> = {
+  [APP_CONTROL_HELP_TOPIC]: "app-control-blocked",
+  permissions: "permissions",
+  "disk-space": "disk-full",
+  "file-in-use": "file-in-use",
+  "path-too-long": "path-too-long",
+  network: "network",
+  "missing-files": "missing-executable",
+};
+
+/**
+ * Failure family → the help article it opens. The ids mirror
+ * `shun::help::TOPICS`; `io` / `other` are absent on purpose — no official
+ * page exists for "something went wrong", so those keep the generic detail
+ * window (raw message + copy).
+ */
+const KIND_TOPIC: Partial<Record<FailureKind, GuideTopic>> = {
+  "app-control-blocked": "app-control",
+  permissions: "permissions",
+  "disk-full": "disk-space",
+  "file-in-use": "file-in-use",
+  "path-too-long": "path-too-long",
+  network: "network",
+  "missing-executable": "missing-files",
+};
+
+/**
+ * `&notice=<id>` → the failure family the preview pushes. The ids match the
+ * help topics where one exists (so `&topic=` and `&notice=` line up), the
+ * two legacy #167 ids still work for the generic faces, and every classified
+ * family has an id of its own so each article's toast is capturable.
+ */
+const PREVIEW_NOTICE_KINDS: Record<string, FailureKind> = {
+  "app-control": "app-control-blocked",
+  permissions: "permissions",
+  "disk-full": "disk-full",
+  "file-in-use": "file-in-use",
+  "path-too-long": "path-too-long",
+  network: "network",
+  "missing-files": "missing-executable",
+  "launch-failed": "other",
+  "shortcuts-failed": "other",
+};
 
 /** Recover an OS error code from a legacy string rejection — the old
  *  `launch_app` surfaced `io error: … (os error 4551)`, and some paths
@@ -167,34 +253,48 @@ function osErrorFromMessage(message: string): number | null {
   return null;
 }
 
-/** Normalize an untyped rejection kind: the classified object wins, a
- *  legacy string is recovered from its OS code / help topic. */
+/** Normalize an untyped rejection kind: the classified value wins, a legacy
+ *  string is recovered from its OS code / help topic. */
 function normalizeFinishKind(
   kind: unknown,
   osError: number | null,
   helpTopic: unknown,
-): ClassifiedFinish["kind"] {
-  if (
-    kind === "app-control-blocked" ||
-    kind === "missing-executable" ||
-    kind === "io" ||
-    kind === "other"
-  ) {
-    return kind;
+): FailureKind {
+  if (typeof kind === "string" && (FAILURE_KINDS as readonly string[]).includes(kind)) {
+    return kind as FailureKind;
   }
   if (osError !== null && APP_CONTROL_OS_ERRORS.includes(osError)) return "app-control-blocked";
-  if (helpTopic === APP_CONTROL_HELP_TOPIC) return "app-control-blocked";
+  if (typeof helpTopic === "string" && helpTopic in HELP_TOPIC_KIND) {
+    return HELP_TOPIC_KIND[helpTopic];
+  }
   return "other";
 }
 
+/** Normalize an untyped stage: a bare string rejection defaults to the
+ *  install lane (the flow's own errors are the strings that arrive here). */
+function normalizeFinishStage(stage: unknown, message: string): FailureStage {
+  if (typeof stage === "string" && (FAILURE_STAGES as readonly string[]).includes(stage)) {
+    return stage as FailureStage;
+  }
+  if (/shortcut/i.test(message)) return "shortcuts";
+  return "install";
+}
+
 /**
- * Defensive normalization of a `finish_install` rejection. The command
- * rejects with the classified object; a bare string (an older backend
- * whose `set_shortcuts` / `launch_app` returned plain messages) and a
- * plain `Error` (no Tauri bridge — a browser preview, a dead IPC) are
- * still classified instead of surfacing `[object Object]`.
+ * Defensive normalization of a classified rejection. The commands hand back
+ * the classified object; a bare string (a legacy backend whose commands
+ * returned plain messages) and a plain `Error` (no Tauri bridge — a browser
+ * preview, a dead IPC) are still classified instead of surfacing
+ * `[object Object]`.
+ *
+ * `fallbackStage` is the lane whose failure this is when the payload carries
+ * no stage: `finish_install` rejects from the done page (launch), while a
+ * bare `start_install` rejection is the install flow's.
  */
-function classifyFinishError(raw: unknown): ClassifiedFinish {
+function classifyFinishError(
+  raw: unknown,
+  fallbackStage: FailureStage = "launch",
+): ClassifiedFinish {
   const payload =
     raw !== null && typeof raw === "object" && !(raw instanceof Error)
       ? (raw as FinishFailurePayload)
@@ -210,19 +310,46 @@ function classifyFinishError(raw: unknown): ClassifiedFinish {
       ? payload.osError
       : osErrorFromMessage(message);
   const kind = normalizeFinishKind(payload?.kind, osError, payload?.helpTopic);
-  const stage: ClassifiedFinish["stage"] =
-    payload?.stage === "shortcuts" || payload?.stage === "launch"
-      ? payload.stage
+  const stage =
+    payload?.stage !== undefined
+      ? normalizeFinishStage(payload.stage, message)
       : /shortcut/i.test(message)
         ? "shortcuts"
-        : "launch";
+        : fallbackStage;
+  // The backend names the topic; a legacy payload that carries none still
+  // gets one from the family table (the table is the same mapping the core
+  // crate applies, so the two cannot disagree about which article to open).
   const helpTopic =
     typeof payload?.helpTopic === "string" && payload.helpTopic !== ""
       ? payload.helpTopic
-      : kind === "app-control-blocked"
-        ? APP_CONTROL_HELP_TOPIC
-        : null;
+      : (KIND_TOPIC[kind] ?? null);
   return { stage, kind, message, osError, helpTopic };
+}
+
+/** The plain-language headline for a classified failure — one per family,
+ *  short on purpose: it becomes the toast text, and the toast clamps to
+ *  three lines. */
+function failureHeadline(failure: ClassifiedFinish, notices: NoticeStrings): string {
+  switch (failure.kind) {
+    case "app-control-blocked":
+      return notices.launchBlocked;
+    case "missing-executable":
+      return notices.missingFiles;
+    case "permissions":
+      return notices.permissions;
+    case "disk-full":
+      return notices.diskFull;
+    case "file-in-use":
+      return notices.fileInUse;
+    case "path-too-long":
+      return notices.pathTooLong;
+    case "network":
+      return notices.network;
+    default:
+      if (failure.stage === "shortcuts") return notices.shortcutsFailed;
+      if (failure.stage === "install") return notices.errorTitle;
+      return notices.launchFailed;
+  }
 }
 
 // Quick-candidate row: label + glyph per candidate kind; drive candidates
@@ -300,11 +427,20 @@ export default defineComponent({
      * Preview hooks (browser / static previews only — production passes no
      * query): a screenshot pass must reach every transient state without a
      * real install. Alongside `?step=`:
-     * - `&notice=app-control` pushes the blocked-launch error toast;
-     *   `&notice=launch-failed` / `&notice=shortcuts-failed` push the other
-     *   two failure branches (the generic detail window behind them).
-     * - `&guide=1` opens the details window on mount (the app-control guide
-     *   when no notice is asked for).
+     * - `&notice=<id>` pushes that failure's toast, exactly as the shipped
+     *   builder would: `app-control` · `permissions` · `disk-full` ·
+     *   `file-in-use` · `path-too-long` · `network` · `missing-files` ·
+     *   `launch-failed` · `shortcuts-failed`.
+     * - `&guides=online` forces the online-guides mode (overrides
+     *   `get_config`), so both help modes are capturable: online routes the
+     *   toast action straight to `open_help_url` instead of the article.
+     * - `&guide=1` opens the help window on mount; `&topic=<id>` picks the
+     *   topic (otherwise the pushed notice's topic, else app-control). The
+     *   window is opened directly — the mode gate only governs the toast
+     *   action, so an online-mode capture can still show the article.
+     * - `&help=open|none` fakes the official-page probe inside the article
+     *   window (`open` seats the footer action, `none` shows the
+     *   "contact the developer" note) — a browser has no IPC to answer it.
      * - `&language=zh-Hans` pins the wizard language (a browser has no saved
      *   preference to restore).
      * - `&product=WoWSP&version=0.6.34` seeds the product/version refs that
@@ -312,11 +448,14 @@ export default defineComponent({
      *   `%PRODUCT%` token render real copy in a plain browser. Real IPC
      *   answers overwrite the seeds.
      *
-     * Full example: `index.html?step=done&notice=app-control&guide=1&`
-     * `language=zh-Hans&product=WoWSP&version=0.6.34`.
+     * Full example: `index.html?step=done&notice=permissions&guide=1&`
+     * `topic=permissions&language=zh-Hans&product=WoWSP&version=0.6.34`.
      */
     const previewNotice = query.get("notice");
     const previewGuide = query.get("guide") === "1";
+    const previewTopic = query.get("topic");
+    const previewGuides = query.get("guides");
+    const previewHelp = query.get("help") ?? undefined;
     const previewLanguage = query.get("language");
     const previewProduct = query.get("product");
     const previewVersion = query.get("version");
@@ -422,9 +561,9 @@ export default defineComponent({
     // `main.installer` is RETIRED: it sat under the absolutely-positioned
     // footer and painted over the primary button.
     const toast = useToast();
-    // The details window (HkModal) behind the toast's inline action:
-    // `app-control` carries the authored OS-remedy guide, `error` the
-    // classified failure's dry facts. Both stay hikari windows so the
+    // The help window (HkModal) behind every classified failure: one topic
+    // per failure family, plus `error` for the families with no official
+    // page (io / other — raw message + copy). Both stay hikari windows so the
     // popup manager owns the band and nested windows stack correctly.
     const guideOpen = ref(false);
     const guideTopic = ref<GuideTopic>("app-control");
@@ -433,6 +572,18 @@ export default defineComponent({
       message: string;
       copy: string;
     } | null>(null);
+    // How the faces resolve a help topic (`[shell] guides` in the manifest,
+    // reported by get_config): `embedded` opens the in-app article (with the
+    // official page one click away), `online` skips the article and opens
+    // the vendor page directly. A `&guides=` preview query wins over both.
+    const guidesMode = ref<"embedded" | "online">(
+      previewGuides === "online" ? "online" : "embedded",
+    );
+    // The install lane reports its failure as TEXT (`run_install` through
+    // `to_string()`), so the failed-install page asks `classify_error` for
+    // the family and keeps the topic it names — that is what the page's
+    // "details" seat opens.
+    const installHelpTopic = ref<GuideTopic | null>(null);
 
     // Uninstall mode (`/uninstall` without --silent): replaces the whole
     // wizard layout with a standalone confirm → progress → done page.
@@ -703,9 +854,20 @@ export default defineComponent({
           if (logo) logoUrl.value = `data:image/${logo.kind};base64,${logo.data}`;
         })
         .catch(() => {});
-      invoke<{ product: { name: string }; flash?: boolean } & { attachments?: { key: string; title: string; included: boolean; size: number | null }[] }>("get_config")
+      invoke<
+        { product: { name: string }; flash?: boolean } & {
+          attachments?: { key: string; title: string; included: boolean; size: number | null }[];
+        } & { guides_mode?: string; guidesMode?: string }
+      >("get_config")
         .then((view) => {
           product.value = view.product?.name ?? "";
+          // `guides_mode` is the wire name (the shell view serializes with
+          // its Rust field names); the camelCase read is a guard against a
+          // future rename, and a `&guides=` preview query outranks both.
+          const reported = view.guides_mode ?? view.guidesMode;
+          if (previewGuides !== "online" && previewGuides !== "embedded") {
+            guidesMode.value = reported === "online" ? "online" : "embedded";
+          }
           const viewSteps = (view as { steps?: { kind: string; title: string; body?: string | null }[] }).steps ?? [];
           stepsCfg.value = viewSteps;
           flashDeclared.value = Boolean(view.flash);
@@ -760,6 +922,9 @@ export default defineComponent({
           installFailed.value = true;
           failMessage.value = event.message;
           pushLog("error", event.message);
+          // The page's details seat needs the family (and its help topic);
+          // the flow only reports text, so the backend classifies it.
+          classifyInstallFailure(event.message);
         }
       });
       // Preview hook landed directly on the license step: arm the notice
@@ -768,23 +933,40 @@ export default defineComponent({
         licenseIndex.value = 0;
         startNoticeCountdown();
       }
-      // The `?notice=` / `&guide=1` preview hooks: push exactly the state a
-      // real failure would produce (same toast builder, same window), so
-      // the screenshot pass captures the shipped surfaces and not a
-      // parallel mock-up.
-      if (previewNotice) {
-        const blocked = previewNotice === "app-control";
+      // The `?notice=` / `&guide=1` / `&topic=` preview hooks: push exactly
+      // the state a real failure would produce (same toast builder, same
+      // window), so the screenshot pass captures the shipped surfaces and
+      // not a parallel mock-up.
+      const previewKind = previewNotice ? PREVIEW_NOTICE_KINDS[previewNotice] : undefined;
+      if (previewKind !== undefined) {
+        const stage: FailureStage =
+          previewNotice === "shortcuts-failed"
+            ? "shortcuts"
+            : previewNotice === "launch-failed" || previewNotice === "app-control"
+              ? "launch"
+              : "install";
         showFinishFailure({
-          stage: previewNotice === "shortcuts-failed" ? "shortcuts" : "launch",
-          kind: blocked ? "app-control-blocked" : "other",
-          // A real block carries the OS message; the preview's empty
-          // message keeps the toast on the headline, like the block path.
-          message: blocked ? "" : "preview: simulated finish failure",
-          osError: blocked ? 4551 : null,
-          helpTopic: blocked ? APP_CONTROL_HELP_TOPIC : null,
+          stage,
+          kind: previewKind,
+          // A real failure carries the OS message; the preview's empty
+          // message keeps the toast on the headline, like the topic path.
+          message: "",
+          osError: previewKind === "app-control-blocked" ? 4551 : null,
+          helpTopic: KIND_TOPIC[previewKind] ?? null,
         });
       }
-      if (previewGuide) openAppControlGuide();
+      if (previewGuide) {
+        // Direct window open (mode-independent) so both modes are
+        // capturable; `&topic=` picks the article, else the pushed notice's
+        // topic, else app-control.
+        openGuideWindow(
+          isGuideTopic(previewTopic)
+            ? previewTopic
+            : previewKind !== undefined
+              ? (KIND_TOPIC[previewKind] ?? "app-control")
+              : "app-control",
+        );
+      }
     });
 
     onBeforeUnmount(() => {
@@ -818,6 +1000,7 @@ export default defineComponent({
         running.value = true;
         installFailed.value = false;
         failMessage.value = "";
+        installHelpTopic.value = null;
         overall.value = null;
         flowStep.value = strings(locale.value).install.preparing;
         logLines.value = [];
@@ -885,6 +1068,7 @@ export default defineComponent({
       } catch (err) {
         installFailed.value = true;
         failMessage.value = String(err);
+        classifyInstallFailure(failMessage.value);
         // Failure lands on the done step too: the log lines stay (the
         // drawer auto-expanded on the error record) so the failure trail
         // remains readable next to the retry action. A retry resets them
@@ -918,44 +1102,44 @@ export default defineComponent({
         });
         tauriWindow()?.close();
       } catch (err) {
-        showFinishFailure(classifyFinishError(err));
+        // The done-page confirmation rejects from the shortcuts/launch
+        // lanes; a bare string keeps the launch label as the floor.
+        showFinishFailure(classifyFinishError(err, "launch"));
       } finally {
         finishing.value = false;
       }
     }
 
-    /** Routes a classified finish failure to the top-right toast stack.
-     *  An application-control block leads with the OS-policy wording AND
-     *  NOTHING ELSE — the install itself succeeded, the raw OS message
-     *  adds only noise, and the guide window carries the whole remedy
-     *  (the copy action still yields the text). Every other failure names
-     *  the failed step and appends the raw message. Both offer the same
-     *  inline action, which is the only path into the details window. */
+    /** Routes a classified failure to the top-right toast stack. Every
+     *  failure family gets ONE plain-language headline (spoken register,
+     *  short — the toast clamps to three lines and the reader is mid-install,
+     *  not reading documentation); a family with a help topic is answered by
+     *  its own article window, while the two bare families (io / other) keep
+     *  the raw message beside the generic detail window. The headline stands
+     *  alone whenever a topic carries the detail: a friendly sentence plus
+     *  `io error: … (os error 5)` is exactly the noise the copy action and
+     *  the article already handle. */
     function showFinishFailure(failure: ClassifiedFinish) {
-      const texts = withProduct(strings(locale.value)).notices;
-      const blocked = failure.kind === "app-control-blocked";
-      const headline = blocked
-        ? texts.launchBlocked
-        : failure.stage === "shortcuts"
-          ? texts.shortcutsFailed
-          : texts.launchFailed;
-      // A blocked launch is expected to be read, not dismissed: the error
-      // slot's default 30s hold is restated here so the intent sits in the
-      // call site. The stack holds ONE card per severity and dedupes
-      // consecutive identical text, so a retried finish replaces this
-      // entry instead of piling duplicate "finish-failure" cards.
-      const text = blocked || failure.message.trim() === ""
-        ? headline
-        : `${headline} ${failure.message}`;
+      const notices = withProduct(strings(locale.value)).notices;
+      const topic = KIND_TOPIC[failure.kind] ?? null;
+      const headline = failureHeadline(failure, notices);
+      const text =
+        topic !== null || failure.message.trim() === ""
+          ? headline
+          : `${headline} ${failure.message}`;
+      // The 30s hold is restated here so the intent sits in the call site
+      // (an error card is meant to be read, not dismissed). The stack holds
+      // one card per severity and dedupes consecutive identical text, so a
+      // retried finish replaces this entry instead of piling duplicates.
       toast.show(text, {
         type: "error",
         copyable: true,
         duration: 30000,
         action: {
-          label: texts.details,
+          label: notices.details,
           onClick: () => {
-            if (blocked) {
-              openAppControlGuide();
+            if (topic !== null) {
+              openHelp(topic);
             } else {
               openFinishErrorWindow(failure, headline);
             }
@@ -964,17 +1148,41 @@ export default defineComponent({
       });
     }
 
-    /** The toast action's guide window: the authored per-locale
-     *  application-control walkthrough. */
-    function openAppControlGuide() {
-      guideTopic.value = "app-control";
+    /** Opens a topic's help the way the manifest's `[shell] guides` mode asks
+     *  for: the in-app article (embedded), or the official page in the system
+     *  browser (online). Everything that surfaces a help affordance routes
+     *  through here — the toast action and the failed-install page's details
+     *  seat — so the two modes cannot diverge. */
+    function openHelp(topic: GuideTopic) {
+      if (guidesMode.value === "online") {
+        openOnlineHelp(topic);
+        return;
+      }
+      openGuideWindow(topic);
+    }
+
+    /** The online-guides mode's whole help experience: the backend resolves
+     *  the localized vendor URL and opens the system browser. Fire-and-forget
+     *  — a browser can always be refused (no handler, a headless preview),
+     *  and that must not take the face down. */
+    function openOnlineHelp(topic: GuideTopic) {
+      void invoke<boolean>("open_help_url", { topic, locale: locale.value }).catch((err) => {
+        console.warn(`[shun] opening the official help page for "${topic}" failed:`, err);
+      });
+    }
+
+    /** Opens the help window on a topic's article (the embedded mode's
+     *  action). The preview hook calls this directly, so a capture can still
+     *  show an article under `&guides=online`. */
+    function openGuideWindow(topic: GuideTopic) {
+      guideTopic.value = topic;
       guideError.value = null;
       guideOpen.value = true;
     }
 
-    /** The toast action's fallback window: every non-guide failure renders
-     *  the raw reason through the standard inline error landing, with the
-     *  full classified payload as its copy text. */
+    /** The help window's fallback face: a family with no article (io /
+     *  other) renders the raw reason through the standard inline error
+     *  landing, with the full classified payload as its copy text. */
     function openFinishErrorWindow(failure: ClassifiedFinish, headline: string) {
       guideTopic.value = "error";
       guideError.value = {
@@ -988,6 +1196,23 @@ export default defineComponent({
         ].join("\n"),
       };
       guideOpen.value = true;
+    }
+
+    /** Asks the backend to classify an install-lane failure that arrives as
+     *  TEXT (`run_install` reports through `to_string()`), and remembers the
+     *  help topic it names — that is what the failed-install page's details
+     *  seat opens. Best effort: a dead IPC or an unclassifiable message
+     *  simply leaves the page with retry/close. */
+    function classifyInstallFailure(message: string) {
+      const text = message.trim();
+      installHelpTopic.value = null;
+      if (!text) return;
+      invoke<FinishFailurePayload>("classify_error", { message: text })
+        .then((payload) => {
+          const topic = payload?.helpTopic;
+          installHelpTopic.value = isGuideTopic(topic) ? topic : null;
+        })
+        .catch(() => {});
     }
 
     function toggleDesktop(v: boolean) {
@@ -1442,6 +1667,14 @@ export default defineComponent({
                       <HkButton variant="primary" onClick={start}>
                         {s.done.retry}
                       </HkButton>
+                      {installHelpTopic.value !== null && (
+                        <HkButton
+                          variant="ghost"
+                          onClick={() => openHelp(installHelpTopic.value as GuideTopic)}
+                        >
+                          {s.notices.details}
+                        </HkButton>
+                      )}
                       <HkButton variant="ghost" onClick={() => tauriWindow()?.close()}>
                         {s.done.close}
                       </HkButton>
@@ -1623,6 +1856,9 @@ export default defineComponent({
             errorMessage={guideError.value?.message ?? ""}
             errorCopyText={guideError.value?.copy ?? ""}
             closeLabel={s.notices.close}
+            openOfficialLabel={s.notices.openOfficialPage}
+            contactDeveloper={s.notices.contactDeveloper}
+            helpPreview={previewHelp}
           />
         </>
       );

@@ -38,4 +38,15 @@
   .hk-error-landing {
     text-align: left;
   }
+
+  /* The footer's lead note, shown for a topic this platform has no official
+     page for (the `missing-files` family): the window names the fallback
+     channel instead of silently offering only "close". HkModal parks the
+     note at the footer's inline start, opposite the actions. */
+  .shun-guide-window__no-page {
+    font-size: var(--text-xs);
+    line-height: 1.4;
+    color: rgb(var(--color-muted));
+    overflow-wrap: anywhere;
+  }
 }

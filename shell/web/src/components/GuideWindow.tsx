@@ -1,4 +1,4 @@
-import { computed, defineComponent, type PropType } from "vue";
+import { computed, defineComponent, ref, watch, type PropType } from "vue";
 import {
   HkErrorLanding,
   HkMarkdownRenderer,
@@ -7,52 +7,93 @@ import {
 } from "@celestia-island/hikari";
 
 import { isInstallerLocale, type InstallerLocale } from "../i18n";
+import { invoke } from "../tauri";
 
 import "./GuideWindow.scss";
 
 /**
- * The installer's detail window — the "what do I do now" surface behind the
- * top-right toast's inline action. It is a hikari WINDOW (HkModal), not a
- * hand-rolled overlay: the popup manager owns its z band, nested windows
- * stack above it, ESC/backdrop/X close it, and the body scroller is the
- * modal's own (one scrollbar per window, the family rule).
+ * The installer's help window — the "what do I do now" surface behind every
+ * classified failure. It is a hikari WINDOW (HkModal), not a hand-rolled
+ * overlay: the popup manager owns its z band, nested windows stack above it,
+ * ESC/backdrop/X close it, and the body scroller is the modal's own (one
+ * scrollbar per window, the family rule).
  *
- * Two bodies:
- * - `app-control` — the authored per-locale markdown guide for a launch
- *   Windows application-control policy refused (0x11C7 / os error 4551):
- *   the OS remedy, with screenshots. The markdown lives beside the shell
- *   crate (`shell/guide/app-control/<locale>.md`, first line = `# <title>`)
- *   so both installer faces embed the same document; images are served
- *   from `public/guide/app-control-N.png` and referenced relatively.
- * - `error` — every other classified finish failure: the dry facts
- *   (headline + raw backend message) through the standard inline error
- *   landing, whose built-in copy action carries the full payload.
+ * ONE TOPIC PER WINDOW. The topic ids mirror `shun::help::TOPICS` (the core
+ * crate names them; this face only renders them):
  *
- * The guides are bundled as raw markdown at build time (eager
- * `import.meta.glob` — a static set of assets, no runtime fetch), with a
- * zh-Hans fallback (the original copy) and then English. A missing file
- * for a locale degrades to that fallback instead of an empty window.
+ *   app-control · permissions · disk-space · file-in-use · path-too-long ·
+ *   network · missing-files
+ *
+ * plus the `error` pseudo-topic: the generic detail window for a failure
+ * that has no official page (the `io` / `other` kinds), which renders the
+ * raw reason through the standard inline error landing instead of an
+ * article.
+ *
+ * The articles are the short, plain-language markdown under
+ * `shell/guide/<topic>/<locale>.md` (first line = `# <title>`), authored
+ * beside the shell crate so both faces embed the same documents. They are
+ * bundled as raw markdown at build time (one eager `import.meta.glob` over
+ * the whole tree — a static asset set, no runtime fetch), with the
+ * locale → zh-Hans → en fallback chain PER TOPIC. A topic whose files have
+ * not been authored yet renders the caller's `fallbackBody` (the toast
+ * headline) rather than an empty window.
+ *
+ * Every article window also carries the official page: on open it asks the
+ * backend for `get_help_url(topic, locale)` and, when the platform has one,
+ * seats an "open the official page" action in the footer that calls
+ * `open_help_url` (the system browser). Where no official page exists (the
+ * `missing-files` family), the footer says so instead of hiding the fact.
  */
-export type GuideTopic = "app-control" | "error";
+export type GuideTopic =
+  | "app-control"
+  | "permissions"
+  | "disk-space"
+  | "file-in-use"
+  | "path-too-long"
+  | "network"
+  | "missing-files"
+  | "error";
 
-/** `?raw` bodies of the authored guides, keyed by their source path. The
- *  glob is resolved by Vite at build time; a locale without a file simply
- *  has no entry (the fallback chain covers it). */
-const GUIDE_SOURCES = import.meta.glob<string>("../../../guide/app-control/*.md", {
+/** Every topic id the face accepts — the runtime guard for ids that arrive
+ *  from the backend (`helpTopic`) or from a preview query. */
+export const GUIDE_TOPICS: readonly GuideTopic[] = [
+  "app-control",
+  "permissions",
+  "disk-space",
+  "file-in-use",
+  "path-too-long",
+  "network",
+  "missing-files",
+  "error",
+];
+
+/** Narrow an untyped id (backend payload / query string) to a topic. */
+export function isGuideTopic(value: unknown): value is GuideTopic {
+  return typeof value === "string" && (GUIDE_TOPICS as readonly string[]).includes(value);
+}
+
+/** `?raw` bodies of the authored articles, keyed by their source path
+ *  (`…/guide/<topic>/<locale>.md`). Resolved by Vite at build time; a
+ *  missing file simply has no entry (the fallback chain covers it). */
+const GUIDE_SOURCES = import.meta.glob<string>("../../../guide/*/*.md", {
   query: "?raw",
   import: "default",
   eager: true,
 });
 
-const GUIDE_BY_LOCALE: Partial<Record<InstallerLocale, string>> = {};
+/** topic id → locale → raw markdown. */
+const GUIDE_BY_TOPIC: Record<string, Partial<Record<InstallerLocale, string>>> = {};
 for (const [path, raw] of Object.entries(GUIDE_SOURCES)) {
-  const name = path.slice(path.lastIndexOf("/") + 1).replace(/\.md$/i, "");
-  if (isInstallerLocale(name)) GUIDE_BY_LOCALE[name] = raw;
+  const parts = path.split("/");
+  const locale = parts[parts.length - 1].replace(/\.md$/i, "");
+  const topic = parts[parts.length - 2];
+  if (!topic || !isInstallerLocale(locale)) continue;
+  (GUIDE_BY_TOPIC[topic] ??= {})[locale] = raw;
 }
 
-/** Split the leading `# <title>` line off a guide: the window's title is
- *  the guide's own headline, the rest is the body the markdown renderer
- *  receives. A guide that skips the heading keeps its whole text as the
+/** Split the leading `# <title>` line off an article: the window's title is
+ *  the article's own headline, the rest is the body the markdown renderer
+ *  receives. An article that skips the heading keeps its whole text as the
  *  body and falls back to the caller's title. */
 export function splitGuide(raw: string | undefined): { title: string; body: string } {
   if (!raw) return { title: "", body: "" };
@@ -69,87 +110,168 @@ export function splitGuide(raw: string | undefined): { title: string; body: stri
   return { title: "", body: lines.slice(start).join("\n") };
 }
 
-/** Resolve the guide for a locale through the fallback chain. */
-function guideFor(locale: InstallerLocale): { title: string; body: string } {
-  return splitGuide(
-    GUIDE_BY_LOCALE[locale] ?? GUIDE_BY_LOCALE["zh-Hans"] ?? GUIDE_BY_LOCALE.en,
-  );
+/** Resolve an article for a topic + locale (locale → zh-Hans → en). */
+function guideFor(topic: string, locale: InstallerLocale): { title: string; body: string } {
+  const byLocale = GUIDE_BY_TOPIC[topic];
+  return splitGuide(byLocale?.[locale] ?? byLocale?.["zh-Hans"] ?? byLocale?.en);
 }
 
 export default defineComponent({
   name: "GuideWindow",
   props: {
     modelValue: { type: Boolean, required: true },
-    /** The wizard locale — the guide body follows it live, like every
-     *  other pane. */
+    /** The wizard locale — the article follows it live, like every other
+     *  pane. */
     locale: { type: String as PropType<InstallerLocale>, default: "zh-Hans" },
     topic: { type: String as PropType<GuideTopic>, default: "app-control" },
-    /** Window title when the guide markdown carries no `# ` heading. */
+    /** Window title when the article carries no `# ` heading. */
     fallbackTitle: { type: String, default: "" },
-    /** Body stand-in when no guide markdown is bundled yet (the authored
-     *  documents land beside the shell crate): the window still says what
-     *  happened instead of rendering empty. */
+    /** Body stand-in while the topic's article is not authored yet: the
+     *  window still says what happened instead of rendering empty. */
     fallbackBody: { type: String, default: "" },
-    /** Generic error mode: window title, the landing's headline, the raw
-     *  backend message, and the full copy payload for the built-in copy
-     *  action. */
+    /** Generic (`error`) mode: window title, the landing's headline, the
+     *  raw backend message, and the full copy payload for the built-in
+     *  copy action. */
     errorTitle: { type: String, default: "" },
     errorHeadline: { type: String, default: "" },
     errorMessage: { type: String, default: "" },
     errorCopyText: { type: String, default: "" },
-    /** Footer action label (the caller's i18n). */
+    /** Footer labels (the caller's i18n). */
     closeLabel: { type: String, default: "" },
+    /** Secondary footer action: open the topic's official vendor page. */
+    openOfficialLabel: { type: String, default: "" },
+    /** Footer note where the platform has no official page for the topic. */
+    contactDeveloper: { type: String, default: "" },
+    /** Preview override for the official-page probe (a browser has no IPC):
+     *  `"none"` simulates a topic without a page, any other value is used as
+     *  the resolved URL. Unset = ask the backend. */
+    helpPreview: { type: String, default: undefined },
   },
   emits: {
     "update:modelValue": (_value: boolean) => true,
   },
   setup(props, { emit }) {
-    const guide = computed(() => guideFor(props.locale));
-    const isGuide = computed(() => props.topic === "app-control");
+    const guide = computed(() => guideFor(props.topic, props.locale));
+    const isArticle = computed(() => props.topic !== "error");
     const title = computed(() =>
-      isGuide.value
+      isArticle.value
         ? guide.value.title || props.fallbackTitle
         : props.errorTitle || props.fallbackTitle,
     );
-    const guideBody = computed(() => {
-      if (!isGuide.value) return "";
+    const articleBody = computed(() => {
+      if (!isArticle.value) return "";
       const body = guide.value.body.trim();
       return body !== "" ? guide.value.body : props.fallbackBody;
     });
-    const footerActions = computed<ModalAction[]>(() => [
-      {
+
+    // The official page for this topic: resolved on open (and on a locale
+    // switch) from the ONE table the core crate owns — the article's footer
+    // and the online-guides mode therefore never disagree about the URL.
+    // `null` = the platform has no page for this topic (e.g. missing-files),
+    // `undefined` = the probe has not answered yet.
+    // `undefined` = still unknown: neither the action nor the "no page" note
+    // renders, so a refused probe never claims a page does not exist.
+    const helpUrl = ref<string | null | undefined>(undefined);
+    function probeHelpUrl() {
+      if (!isArticle.value) {
+        helpUrl.value = null;
+        return;
+      }
+      const preview = props.helpPreview;
+      if (preview !== undefined) {
+        helpUrl.value = preview === "none" ? null : preview;
+        return;
+      }
+      invoke<string | null>("get_help_url", { topic: props.topic, locale: props.locale })
+        .then((url) => {
+          helpUrl.value = url ?? null;
+        })
+        .catch(() => {
+          // No Tauri bridge (browser preview) or a refused probe: leave the
+          // answer unknown — the article stands on its own and the footer
+          // says nothing it cannot back up.
+          helpUrl.value = undefined;
+        });
+    }
+    watch(
+      () => props.modelValue,
+      (open) => {
+        if (open) probeHelpUrl();
+      },
+      { immediate: true },
+    );
+    watch(
+      [() => props.topic, () => props.locale],
+      () => {
+        if (props.modelValue) probeHelpUrl();
+      },
+    );
+
+    function openOfficialPage() {
+      void invoke<boolean>("open_help_url", { topic: props.topic, locale: props.locale }).catch(
+        (err) => {
+          console.warn(`[shun] opening the official help page for "${props.topic}" failed:`, err);
+        },
+      );
+    }
+
+    const footerActions = computed<ModalAction[]>(() => {
+      const actions: ModalAction[] = [];
+      if (isArticle.value && helpUrl.value) {
+        actions.push({
+          label: props.openOfficialLabel,
+          variant: "secondary",
+          onClick: openOfficialPage,
+        });
+      }
+      actions.push({
         label: props.closeLabel,
         variant: "ghost",
         onClick: () => emit("update:modelValue", false),
-      },
-    ]);
+      });
+      return actions;
+    });
+
+    /** The footer's lead note: an article whose platform has no official
+     *  page says so (and names the fallback channel) instead of silently
+     *  offering a single button. */
+    const showNoPageNote = computed(
+      () => isArticle.value && helpUrl.value === null && props.contactDeveloper !== "",
+    );
 
     return () => (
       <HkModal
         modelValue={props.modelValue}
         onUpdate:modelValue={(value: boolean) => emit("update:modelValue", value)}
         title={title.value}
-        // 40rem: the egui face's guide is a 640px card and the two faces
-        // must read as the same secondary window — `lg` (56rem) renders
-        // near-full-screen in the 800px installer surface.
+        // 40rem: the egui face's help window is a 640px card and the two
+        // faces must read as the same secondary window — `lg` (56rem)
+        // renders near-full-screen in the 800px installer surface.
         width="md"
         // Header-less naming fallback: the shared popup layer and the
-        // dialog's aria-label stay named even if the guide has no heading.
+        // dialog's aria-label stay named even if the article has no heading.
         surfaceTitle={title.value || props.fallbackTitle}
         contentClass="shun-guide-window"
         footerActions={footerActions.value}
       >
-        {isGuide.value ? (
-          <HkMarkdownRenderer content={guideBody.value} />
-        ) : (
-          <HkErrorLanding
-            variant="inline"
-            tone="error"
-            title={props.errorHeadline || props.errorTitle}
-            description={props.errorMessage}
-            copyText={props.errorCopyText}
-          />
-        )}
+        {{
+          default: () =>
+            isArticle.value ? (
+              <HkMarkdownRenderer content={articleBody.value} />
+            ) : (
+              <HkErrorLanding
+                variant="inline"
+                tone="error"
+                title={props.errorHeadline || props.errorTitle}
+                description={props.errorMessage}
+                copyText={props.errorCopyText}
+              />
+            ),
+          footerLead: () =>
+            showNoPageNote.value ? (
+              <span class="shun-guide-window__no-page">{props.contactDeveloper}</span>
+            ) : null,
+        }}
       </HkModal>
     );
   },

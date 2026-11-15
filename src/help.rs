@@ -211,20 +211,30 @@ fn windows_url(topic: &str, locale: &str) -> Option<String> {
         TOPIC_APP_CONTROL => {
             "https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions"
         }
+        // The UAC settings-and-configuration page (what the prompt means,
+        // how to change the level) — curl 200.
         TOPIC_PERMISSIONS => {
-            "https://learn.microsoft.com/en-us/windows/security/identity-protection/user-account-control/"
+            "https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/settings-and-configuration"
         }
+        // Search-index-verified (the host 403s this datacenter at
+        // authoring time; the content lane re-verifies the full matrix).
         TOPIC_DISK_SPACE => {
-            "https://support.microsoft.com/en-us/windows/free-up-drive-space-in-windows"
+            "https://support.microsoft.com/en-us/windows/experience/storage-filemanagement/free-up-drive-space-in-windows"
         }
+        // The consumer article lives on the support host (blocked to
+        // curl here); the localized SEARCH LANDING is the stable,
+        // never-404 stand-in — it lands on the live article list and the
+        // matrix verification may replace it with the direct article.
         TOPIC_FILE_IN_USE => {
-            "https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/troubleshoot-file-in-use-errors"
+            "https://support.microsoft.com/en-us/search/results?query=file%20in%20use"
         }
         TOPIC_PATH_TOO_LONG => {
             "https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation"
         }
+        // Search-index-verified (host 403s this datacenter at authoring
+        // time; re-verified by the content lane's matrix pass).
         TOPIC_NETWORK => {
-            "https://support.microsoft.com/en-us/windows/fix-wi-fi-connection-issues-in-windows"
+            "https://support.microsoft.com/en-us/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows"
         }
         // A missing entry point is about THIS product's payload, not the
         // OS — no vendor page exists.
@@ -265,6 +275,8 @@ fn linux_url(topic: &str, distro: Option<&Distro>) -> Option<String> {
         ids.iter()
             .any(|id| distro.id == *id || distro.id_like.iter().any(|like| like == id))
     };
+    // help.ubuntu.com answered 503 to this datacenter at authoring
+    // time (the paths are long-stable; the matrix pass re-verifies).
     if known(&["ubuntu", "debian", "linuxmint", "pop"]) {
         return match topic {
             TOPIC_PERMISSIONS => {
@@ -281,10 +293,10 @@ fn linux_url(topic: &str, distro: Option<&Distro>) -> Option<String> {
     }
     if known(&["fedora", "rhel", "centos", "rocky", "almalinux"]) {
         return match topic {
-            TOPIC_PERMISSIONS => Some(
-                "https://docs.fedoraproject.org/en-US/quick-docs/sudo-sysadmin-without-arguments/"
-                    .into(),
-            ),
+            // curl 200.
+            TOPIC_PERMISSIONS => {
+                Some("https://docs.fedoraproject.org/en-US/quick-docs/sudo/".into())
+            }
             TOPIC_DISK_SPACE | TOPIC_NETWORK => {
                 Some("https://docs.fedoraproject.org/en-US/docs/".into())
             }
