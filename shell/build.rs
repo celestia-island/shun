@@ -26,6 +26,81 @@
 
 use std::path::{Path, PathBuf};
 
+use shun::config::GuidesMode;
+
+/// The installer locales, in `wizard-strings.json`'s order — the guide
+/// tree materializes one article per (topic, locale).
+const GUIDE_LOCALES: [&str; 10] = [
+    "zh-Hans", "zh-Hant", "en", "ru", "ja", "ko", "fr", "es", "de", "pt",
+];
+
+/// Materializes the help-article tree the runtime `include!`s from
+/// OUT_DIR: `guide/<topic>/<locale>.md` plus `guide-img/` (the app-control
+/// figures). Two modes:
+///
+/// - **embedded** copies the authored articles from `shell/guide/` (a
+///   missing article materializes as a placeholder rather than failing
+///   the build — a locale the content lane has not authored yet must not
+///   break every other lane compiling);
+/// - **online** (the manifest's `[shell] guides = "online"`) materializes
+///   ONLY placeholders — an online product carries no article bytes, its
+///   faces open `shun::help::help_url` directly.
+///
+/// The generic preset always materializes placeholders: a stamped shell
+/// never reads product articles from the binary; its stamp container's
+/// config decides the mode at runtime.
+fn materialize_guides(out_dir: &Path, shell_dir: &Path, mode: GuidesMode) {
+    let dst_root = out_dir.join("guide");
+    let img_dst = out_dir.join("guide-img");
+    // Both trees are regenerated wholesale: stale real articles from an
+    // earlier embedded build must never survive into an online one (and
+    // vice versa) — the include! paths are identical.
+    let _ = std::fs::remove_dir_all(&dst_root);
+    let _ = std::fs::remove_dir_all(&img_dst);
+
+    let src_root = shell_dir.join("guide");
+    println!("cargo:rerun-if-changed={}", src_root.display());
+    let img_src = shell_dir.join("web").join("public").join("guide");
+    println!("cargo:rerun-if-changed={}", img_src.display());
+
+    for topic in shun::help::TOPICS {
+        for locale in GUIDE_LOCALES {
+            let rel = format!("{topic}/{locale}.md");
+            let authored = std::fs::read_to_string(src_root.join(&rel))
+                .ok()
+                .filter(|text| mode == GuidesMode::Embedded && !text.trim().is_empty());
+            let content = authored.unwrap_or_else(|| {
+                // Never rendered in online products (the face opens the
+                // URL instead); kept compilable so one missing article
+                // cannot break the lanes that do not need it.
+                "The official help page opens in your browser instead of an embedded article.\n"
+                    .to_string()
+            });
+            let dst = dst_root.join(&rel);
+            std::fs::create_dir_all(dst.parent().expect("topic directory"))
+                .expect("create guide dir");
+            std::fs::write(dst, content).expect("write guide article");
+        }
+    }
+
+    // The three figures the app-control article embeds. Online builds
+    // (and a missing authored figure) carry empty files: the markdown
+    // renderer skips an image it cannot decode.
+    std::fs::create_dir_all(&img_dst).expect("create guide-img dir");
+    for name in [
+        "app-control-1.png",
+        "app-control-2.png",
+        "app-control-3.png",
+    ] {
+        let bytes = if mode == GuidesMode::Embedded {
+            std::fs::read(img_src.join(name)).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        std::fs::write(img_dst.join(name), bytes).expect("write guide figure");
+    }
+}
+
 /// Warns when the embedded web frontend (`web/dist`, TRACKED in this
 /// repo) is older than its sources.
 ///
@@ -126,6 +201,9 @@ fn main() {
             .expect("write placeholder logo kind");
         std::fs::write(out_dir.join("shun-demo-payload.shun"), [])
             .expect("write placeholder payload");
+        // The generic preset carries no article bytes: its runtime mode
+        // comes from the stamp container's config.
+        materialize_guides(out_dir, Path::new(&own_manifest_dir), GuidesMode::Online);
         println!("cargo:rustc-env=SHUN_PRODUCT_LOG_NAME=installer");
         tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(
             tauri_build::WindowsAttributes::new().app_manifest(include_str!("app.manifest")),
@@ -158,6 +236,17 @@ fn main() {
     let config_json = serde_json::to_vec_pretty(&config).expect("config serializes");
     std::fs::write(out_dir.join("shun-config.json"), config_json).expect("write embedded config");
     println!("cargo:rerun-if-changed={}", manifest_path.display());
+    // 1a. The help-article tree: real bytes for an embedded product,
+    //     placeholders when the manifest declares `guides = "online"`.
+    materialize_guides(
+        out_dir,
+        Path::new(&own_manifest_dir),
+        config
+            .shell
+            .as_ref()
+            .map(|shell| shell.guides)
+            .unwrap_or_default(),
+    );
     // The per-run setup log's directory name (diag.rs sinks there): the
     // product identity, sanitized for a path segment.
     let log_name: String = config

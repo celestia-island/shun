@@ -940,6 +940,22 @@ pub(crate) fn non_empty_allowlist_default() -> Vec<String> {
         .collect()
 }
 
+/// How the shell resolves a classified failure's help topic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum GuidesMode {
+    /// The default: each face embeds the short per-topic articles under
+    /// the shell's `guide/` tree and opens them in a help window, with
+    /// the official vendor page one click away.
+    #[default]
+    Embedded,
+    /// The faces skip the articles entirely — the help action opens the
+    /// official page directly (`crate::help::help_url`), and the shell
+    /// build embeds placeholders instead of the guide tree so an
+    /// `online` product carries no article bytes.
+    Online,
+}
+
 /// Runtime shell UI knobs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -958,6 +974,16 @@ pub struct ShellUiConfig {
     /// `pt`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+
+    /// How the faces resolve a failure's help topic (`crate::help`):
+    /// `embedded` (the default) opens the in-app article and offers the
+    /// official page behind a footer button; `online` skips the article
+    /// and opens the vendor page directly — Microsoft's on Windows,
+    /// Apple's on macOS, the running distribution's documentation on
+    /// Linux. `online` products also ship no article bytes: the shell's
+    /// build embeds placeholders instead of the guide tree.
+    #[serde(default)]
+    pub guides: GuidesMode,
 
     /// Terminal log verbosity of the install pane: everything (the
     /// default), one family only (`files` or `scripts`), or `off` for
@@ -1800,6 +1826,44 @@ silent-progress = true
             toml::from_str("product = \"app\"\npayload = \"payload\"\n").unwrap();
         let config = draft.into_config("app".into(), "1.0".into(), Path::new(""));
         assert!(!config.shell.unwrap_or_default().silent_progress);
+    }
+
+    #[test]
+    fn guides_mode_defaults_to_embedded_and_parses_online() {
+        // Absent shell section / absent key: embedded (the default every
+        // existing manifest relies on).
+        let draft: ShunMetadataDraft =
+            toml::from_str("product = \"app\"\npayload = \"payload\"\n").unwrap();
+        let config = draft.into_config("app".into(), "1.0".into(), Path::new(""));
+        assert_eq!(
+            config.shell.unwrap_or_default().guides,
+            GuidesMode::Embedded
+        );
+
+        // The online declaration, spelled the manifest way.
+        let draft: ShunMetadataDraft = toml::from_str(
+            r#"
+product = "app"
+payload = "payload"
+
+[shell]
+guides = "online"
+"#,
+        )
+        .expect("draft parses");
+        let config = draft.into_config("app".into(), "1.0".into(), Path::new(""));
+        assert_eq!(config.shell.as_ref().unwrap().guides, GuidesMode::Online);
+
+        // The round trip keeps the kebab-case wire word: the same
+        // manifest text re-parses from the serialized config.
+        let round = toml::from_str::<ShellUiConfig>(
+            &toml::to_string(&config.shell.unwrap()).expect("serializes"),
+        )
+        .expect("round trips");
+        assert_eq!(round.guides, GuidesMode::Online);
+        // And the serde spelling is the documented manifest word.
+        let json = serde_json::to_value(GuidesMode::Online).expect("serializes");
+        assert_eq!(json, "online");
     }
 }
 

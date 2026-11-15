@@ -2202,7 +2202,7 @@ impl FallbackApp {
                 // The classifier names the topic; matching on the kind
                 // keeps a future topic that maps to app-control working.
                 let app_control = failure.kind == FailureKind::AppControlBlocked
-                    || failure.help_topic.as_deref() == Some(shun::failure::HELP_TOPIC_APP_CONTROL);
+                    || failure.help_topic.as_deref() == Some(shun::help::TOPIC_APP_CONTROL);
                 if app_control {
                     let text = with_product(&self.texts.notice_launch_blocked);
                     self.toast.push_with_action(
@@ -2210,7 +2210,7 @@ impl FallbackApp {
                         text,
                         details,
                         crate::toast::ToastIntent::OpenGuide {
-                            topic: shun::failure::HELP_TOPIC_APP_CONTROL.to_string(),
+                            topic: shun::help::TOPIC_APP_CONTROL.to_string(),
                         },
                         true,
                     );
@@ -2218,6 +2218,15 @@ impl FallbackApp {
                     let lead = with_product(&self.texts.notice_launch_failed);
                     show_details(&mut self.toast, lead, body);
                 }
+            }
+            // The install flow itself failed (the failed-install landing
+            // page's classification). Interim wiring until the per-topic
+            // lane lands: the flow's classified message drives the same
+            // generic details window — the topic-specific headline set
+            // rides with the rest of the notice work.
+            FinishStage::Install => {
+                let lead = with_product(&self.texts.notice_launch_failed);
+                show_details(&mut self.toast, lead, body);
             }
         }
     }
@@ -2337,7 +2346,7 @@ impl FallbackApp {
              policy (os error 4551)",
         ));
         if open_guide {
-            self.guide.open_topic(shun::failure::HELP_TOPIC_APP_CONTROL);
+            self.guide.open_topic(shun::help::TOPIC_APP_CONTROL);
         }
     }
 

@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use shun::config::{ShunConfig, TargetConfig};
-use shun::failure::{FailureKind, FinishStage, HELP_TOPIC_APP_CONTROL};
+use shun::failure::{FailureKind, FinishStage};
+use shun::help::TOPIC_APP_CONTROL as HELP_TOPIC_APP_CONTROL;
 use shun::wizard::{WizardCore, launch_installed_checked};
 
 /// The demo manifest with its entry point retargeted at `main_exe`, so the
@@ -73,16 +74,16 @@ fn a_present_but_unlaunchable_entry_point_is_plain_io_without_a_guide() {
     let failure = launch_installed_checked(&core, &dir.path().to_string_lossy())
         .expect_err("a non-executable file must not launch");
 
-    assert_eq!(failure.kind, FailureKind::Io);
     assert_eq!(failure.stage, FinishStage::Launch);
     assert!(
         failure.os_error.is_some(),
         "the OS refused the spawn with a code: {}",
         failure.message
     );
-    assert!(
-        failure.help_topic.is_none(),
-        "only application-control blocks open the app-control guide"
-    );
+    // The refusal's family is platform-shaped — unix answers EACCES
+    // (a permissions refusal), Windows answers ERROR_BAD_EXE_FORMAT
+    // (plain io) — but neither is ever an application-control block:
+    // only the app-control OS codes may open the app-control guide.
+    assert_ne!(failure.kind, FailureKind::AppControlBlocked);
     assert_ne!(failure.help_topic.as_deref(), Some(HELP_TOPIC_APP_CONTROL));
 }

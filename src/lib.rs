@@ -40,6 +40,9 @@ pub mod error;
 // blocks, missing entry points) — the one shape every face renders.
 pub mod failure;
 pub mod flow;
+// Help topics + the per-OS / per-distro official help URLs behind them
+// (see the module docs for the embedded-vs-online guides contract).
+pub mod help;
 // Install-target filesystem probes: drive enumeration (fixed drives
 // included, unlike the flash backend's removable-only list), writability
 // probing, and conventional install-root candidates.

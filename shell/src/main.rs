@@ -427,6 +427,9 @@ struct ShellView {
     log_level: shun::config::LogVerbosity,
     /// Whether a flash target is declared (the UI shows it as pending).
     flash: bool,
+    /// How the faces resolve a failure's help topic (`embedded` opens the
+    /// in-app article; `online` opens the vendor page directly).
+    guides_mode: shun::config::GuidesMode,
     /// Optional attachments resolved against the payload.
     attachments: Vec<AttachmentView>,
 }
@@ -471,6 +474,7 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
         language: shell.language,
         log_level: shell.log_level.unwrap_or_default(),
         flash,
+        guides_mode: shell.guides,
         attachments: shun::attachments::resolve(&config, &state.payload)
             .into_iter()
             .map(|a| AttachmentView {
@@ -875,6 +879,60 @@ async fn finish_install(
             format!("the finish task exited abnormally: {e}"),
         )
     })?
+}
+
+/// Resolves the localized official help URL for a classified failure's
+/// topic (`shun::help::help_url`): the vendor page on Windows/macOS, the
+/// running distribution's documentation on Linux. `None` when the topic
+/// has no page on this platform — the UI hides its online affordance.
+#[tauri::command]
+fn get_help_url(topic: String, locale: String) -> Option<String> {
+    shun::help::help_url(&topic, &locale)
+}
+
+/// Opens the topic's official help page in the system browser — the
+/// online-guides mode's whole help experience (`[shell] guides =
+/// "online"`), and the embedded article's footer button otherwise.
+#[tauri::command]
+fn open_help_url(topic: String, locale: String) -> Result<bool, String> {
+    let url = shun::help::help_url(&topic, &locale)
+        .ok_or_else(|| format!("no official help page for topic {topic:?} on this platform"))?;
+    Ok(shun::help::open_url(&url))
+}
+
+/// Classifies a flow error that arrives as text (the install lane's
+/// surface shape — `run_install` reports through `to_string()`): the web
+/// face feeds it the failed-install landing's message and branches on
+/// the same shape `finish_install` rejects with.
+#[tauri::command]
+fn classify_error(message: String) -> shun::failure::FinishFailure {
+    let (kind, os_error) = shun::failure::classify_message(&message);
+    shun::failure::FinishFailure {
+        stage: shun::failure::FinishStage::Install,
+        kind,
+        os_error,
+        help_topic: match kind {
+            shun::failure::FailureKind::AppControlBlocked => {
+                Some(shun::help::TOPIC_APP_CONTROL.to_string())
+            }
+            shun::failure::FailureKind::Permissions => {
+                Some(shun::help::TOPIC_PERMISSIONS.to_string())
+            }
+            shun::failure::FailureKind::DiskFull => Some(shun::help::TOPIC_DISK_SPACE.to_string()),
+            shun::failure::FailureKind::FileInUse => {
+                Some(shun::help::TOPIC_FILE_IN_USE.to_string())
+            }
+            shun::failure::FailureKind::PathTooLong => {
+                Some(shun::help::TOPIC_PATH_TOO_LONG.to_string())
+            }
+            shun::failure::FailureKind::Network => Some(shun::help::TOPIC_NETWORK.to_string()),
+            shun::failure::FailureKind::MissingExecutable => {
+                Some(shun::help::TOPIC_MISSING_FILES.to_string())
+            }
+            shun::failure::FailureKind::Io | shun::failure::FailureKind::Other => None,
+        },
+        message,
+    }
 }
 
 /// Runs the install flow for the wizard UI: the shared driver on a
@@ -2240,6 +2298,9 @@ fn run_shell(
             current_install_dir,
             perform_uninstall,
             finish_install,
+            get_help_url,
+            open_help_url,
+            classify_error,
             start_install,
             download_attachment,
         ])

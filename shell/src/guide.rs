@@ -409,21 +409,140 @@ fn paint_cross(painter: &egui::Painter, box_rect: Rect, color: Color32) {
     );
 }
 
-/// The embedded guide document for `language`. Ten locales, English as the
-/// catch-all (an unknown or unshipped language must still open the guide).
-pub(crate) fn app_control_source(language: &str) -> &'static str {
-    match language {
-        "zh-Hans" => include_str!("../guide/app-control/zh-Hans.md"),
-        "zh-Hant" => include_str!("../guide/app-control/zh-Hant.md"),
-        "ru" => include_str!("../guide/app-control/ru.md"),
-        "ja" => include_str!("../guide/app-control/ja.md"),
-        "ko" => include_str!("../guide/app-control/ko.md"),
-        "fr" => include_str!("../guide/app-control/fr.md"),
-        "es" => include_str!("../guide/app-control/es.md"),
-        "de" => include_str!("../guide/app-control/de.md"),
-        "pt" => include_str!("../guide/app-control/pt.md"),
-        _ => include_str!("../guide/app-control/en.md"),
+/// The embedded guide document for `topic` + `language`. The tree is
+/// materialized by build.rs into OUT_DIR (real bytes for an embedded
+/// product, one-line placeholders for `guides = "online"` — the face
+/// never renders those, it opens `shun::help::help_url` instead). Ten
+/// locales, English as the catch-all.
+pub(crate) fn guide_source(topic: &str, language: &str) -> &'static str {
+    match (topic, language) {
+        ("app-control", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/zh-Hans.md"))
+        }
+        ("app-control", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/zh-Hant.md"))
+        }
+        ("app-control", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/ru.md")),
+        ("app-control", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/ja.md")),
+        ("app-control", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/ko.md")),
+        ("app-control", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/fr.md")),
+        ("app-control", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/es.md")),
+        ("app-control", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/de.md")),
+        ("app-control", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/pt.md")),
+        ("permissions", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/zh-Hans.md"))
+        }
+        ("permissions", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/zh-Hant.md"))
+        }
+        ("permissions", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/ru.md")),
+        ("permissions", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/ja.md")),
+        ("permissions", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/ko.md")),
+        ("permissions", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/fr.md")),
+        ("permissions", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/es.md")),
+        ("permissions", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/de.md")),
+        ("permissions", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/pt.md")),
+        ("disk-space", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/zh-Hans.md"))
+        }
+        ("disk-space", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/zh-Hant.md"))
+        }
+        ("disk-space", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/ru.md")),
+        ("disk-space", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/ja.md")),
+        ("disk-space", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/ko.md")),
+        ("disk-space", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/fr.md")),
+        ("disk-space", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/es.md")),
+        ("disk-space", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/de.md")),
+        ("disk-space", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/pt.md")),
+        ("file-in-use", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/zh-Hans.md"))
+        }
+        ("file-in-use", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/zh-Hant.md"))
+        }
+        ("file-in-use", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/ru.md")),
+        ("file-in-use", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/ja.md")),
+        ("file-in-use", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/ko.md")),
+        ("file-in-use", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/fr.md")),
+        ("file-in-use", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/es.md")),
+        ("file-in-use", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/de.md")),
+        ("file-in-use", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/pt.md")),
+        ("path-too-long", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/zh-Hans.md"))
+        }
+        ("path-too-long", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/zh-Hant.md"))
+        }
+        ("path-too-long", "ru") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/ru.md"))
+        }
+        ("path-too-long", "ja") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/ja.md"))
+        }
+        ("path-too-long", "ko") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/ko.md"))
+        }
+        ("path-too-long", "fr") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/fr.md"))
+        }
+        ("path-too-long", "es") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/es.md"))
+        }
+        ("path-too-long", "de") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/de.md"))
+        }
+        ("path-too-long", "pt") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/pt.md"))
+        }
+        ("network", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/network/zh-Hans.md"))
+        }
+        ("network", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/network/zh-Hant.md"))
+        }
+        ("network", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/ru.md")),
+        ("network", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/ja.md")),
+        ("network", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/ko.md")),
+        ("network", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/fr.md")),
+        ("network", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/es.md")),
+        ("network", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/de.md")),
+        ("network", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/pt.md")),
+        ("missing-files", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/zh-Hans.md"))
+        }
+        ("missing-files", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/zh-Hant.md"))
+        }
+        ("missing-files", "ru") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/ru.md"))
+        }
+        ("missing-files", "ja") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/ja.md"))
+        }
+        ("missing-files", "ko") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/ko.md"))
+        }
+        ("missing-files", "fr") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/fr.md"))
+        }
+        ("missing-files", "es") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/es.md"))
+        }
+        ("missing-files", "de") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/de.md"))
+        }
+        ("missing-files", "pt") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/pt.md"))
+        }
+        (_, _) => include_str!(concat!(env!("OUT_DIR"), "/guide/", "app-control", "/en.md")),
     }
+}
+
+/// [`guide_source`] narrowed to the app-control topic — the first lane's
+/// call sites read clearer through it.
+pub(crate) fn app_control_source(language: &str) -> &'static str {
+    guide_source(shun::help::TOPIC_APP_CONTROL, language)
 }
 
 /// Splits an authored document into the modal title and the body.
@@ -525,13 +644,11 @@ mod tests {
     fn the_window_tracks_its_document() {
         let mut window = GuideWindow::new();
         assert!(!window.is_open());
-        window.open_topic(shun::failure::HELP_TOPIC_APP_CONTROL);
+        window.open_topic(shun::help::TOPIC_APP_CONTROL);
         assert!(window.is_open());
         assert_eq!(
             window.open,
-            Some(GuideDoc::Topic(
-                shun::failure::HELP_TOPIC_APP_CONTROL.to_string()
-            ))
+            Some(GuideDoc::Topic(shun::help::TOPIC_APP_CONTROL.to_string()))
         );
         window.close();
         assert!(!window.is_open());

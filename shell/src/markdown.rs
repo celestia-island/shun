@@ -272,15 +272,15 @@ fn paint_segments(
 const FIGURES: &[(&str, &[u8])] = &[
     (
         "guide/app-control-1.png",
-        include_bytes!("../web/public/guide/app-control-1.png"),
+        include_bytes!(concat!(env!("OUT_DIR"), "/guide-img/app-control-1.png")),
     ),
     (
         "guide/app-control-2.png",
-        include_bytes!("../web/public/guide/app-control-2.png"),
+        include_bytes!(concat!(env!("OUT_DIR"), "/guide-img/app-control-2.png")),
     ),
     (
         "guide/app-control-3.png",
-        include_bytes!("../web/public/guide/app-control-3.png"),
+        include_bytes!(concat!(env!("OUT_DIR"), "/guide-img/app-control-3.png")),
     ),
 ];
 
