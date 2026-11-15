@@ -143,9 +143,15 @@ impl ToastTone {
 /// host only sees the follow-up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ToastIntent {
-    /// Open the embedded help guide for `topic`
-    /// (`shun::failure::HELP_TOPIC_APP_CONTROL`).
-    OpenGuide { topic: String },
+    /// Open the help for `topic` — the in-app article in embedded mode, the
+    /// official page in `[shell] guides = "online"` products. `details` is
+    /// the raw message the host falls back to when online mode has no page
+    /// for this topic/platform (the user must always get the text they were
+    /// shown a headline for).
+    OpenGuide {
+        topic: String,
+        details: crate::guide::GuideDetails,
+    },
     /// Open the generic error-details window with the full raw message
     /// (the body the three-row clamp had to elide).
     ShowDetails { title: String, body: String },
@@ -691,6 +697,10 @@ mod tests {
             "Details",
             ToastIntent::OpenGuide {
                 topic: "app-control".into(),
+                details: crate::guide::GuideDetails {
+                    title: "Launch failed".into(),
+                    body: "io error: 4551".into(),
+                },
             },
             true,
         );
@@ -797,6 +807,10 @@ mod tests {
             "Details",
             ToastIntent::OpenGuide {
                 topic: "app-control".into(),
+                details: crate::guide::GuideDetails {
+                    title: "Launch failed".into(),
+                    body: "io error: 4551".into(),
+                },
             },
             true,
         );

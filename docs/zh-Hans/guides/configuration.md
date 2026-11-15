@@ -349,6 +349,7 @@ log-order = "newest"      # newest（默认，最新在顶）| oldest（追加�
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # 本产品壳可呈现的界面（默认三项全开）
 silent-progress = false   # 为 --silent 运行显示被动进度小窗（默认关闭）
+guides = "embedded"      # embedded（默认，内置短文）| online（直接打开官方页面）
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -360,6 +361,8 @@ accent = [34, 211, 238]    # RGB 通道——覆盖 --color-primary
 基底，无法禁用。请求被禁用的界面是错误；自动选择会跳过被禁用的面。
 
 `shell.silent-progress` 让无头通道带上被动进度小窗：`--silent` 运行会额外渲染一个置顶小窗，同步 stdout 正在报告的内容（当前步骤、有进度时的百分比）——没有页面、没有点击，stdout 原样不变。面向由更新器无人值守拉起安装器的产品：慢机器上安装不再被读成“什么都没发生”，也就没有人会把旧版本启动进正在交换的目录。这扇小窗走的是壳自身的设计语言：优先由 webview 车道渲染——无人值守更新所在的机器按定义已具备 WebView2（被替换的应用正需要它）——带自定义标题栏、主题令牌与本地化文案；当 webview 车道起不来（运行时缺失、face 被禁用、显式 `--no-webview`）时，由同样造型的 egui 小窗接替。没有桌面会话的环境（服务、CI）自动保持纯控制台。
+
+`shell.guides` 决定安装器怎么解释已归类的失败。`embedded`（默认）会针对具体故障打开一篇内置短文——文章随安装器分发，窗口底部还带官方页面链接。`online` 则完全不打开内置文章，帮助动作直接打开官方页面：Windows 开微软的说明，macOS 开苹果的说明，Linux 按正在运行的发行版打开对应文档。在意安装包体积，或更愿意让用户看官方页面时选 `online`。
 ### 向导语言
 
 向导在**第一步**询问语言：选择器列出全部十个支持的语言，每项都以

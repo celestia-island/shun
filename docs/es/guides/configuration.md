@@ -431,6 +431,7 @@ log-order = "newest"      # newest (por defecto, el último arriba) | oldest (se
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # caras que el shell de este producto puede presentar (por defecto: las tres)
 silent-progress = false   # ventana de progreso pasiva para --silent (desactivada por defecto)
+guides = "embedded"      # embedded (por defecto, artículos integrados) | online (abrir la página oficial)
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -444,6 +445,8 @@ sustrato y no se puede desactivar. Pedir una cara desactivada es un
 error; la selección automática omite las caras desactivadas.
 
 `shell.silent-progress` dota al carril headless de una ventana de progreso pasiva: una ejecución `--silent` también muestra una ventanita siempre visible que refleja lo que dice stdout (el paso actual, el porcentaje cuando existe) — sin páginas ni clics, stdout intacto. Pensado para productos cuyo actualizador lanza el instalador desatendido: en máquinas lentas la instalación ya no se lee como «no pasó nada», y nadie lanza la versión vieja sobre el directorio en pleno intercambio. La ventana viste el lenguaje de diseño del propio shell: la vía webview la renderiza primero — una actualización desatendida ocurre, por definición, donde WebView2 ya está (la app reemplazada lo necesitaba) — con su barra de título propia, sus tokens de tema y sus textos localizados; cuando la vía webview no puede abrirse (runtime ausente, face deshabilitada, `--no-webview` forzado), la ventana egui con el mismo estilo toma el relevo. Las sesiones sin escritorio (servicios, CI) permanecen en silencio solo consola.
+
+`shell.guides` decide cómo explican las caras un fallo clasificado. `embedded` (por defecto) abre un artículo corto integrado para el fallo concreto — los artículos viajan dentro del instalador y el pie de la ventana enlaza la página oficial. `online` no abre los artículos integrados: la acción de ayuda abre la página oficial directamente — la de Microsoft en Windows, la de Apple en macOS, la documentación de la distribución en uso en Linux. Elige `online` cuando el tamaño del artefacto pesa más que un artículo sin conexión o cuando el producto prefiere llevar al usuario a la página del fabricante.
 ### Idioma del asistente
 
 El asistente pregunta el idioma en el **primer paso**: un selector con

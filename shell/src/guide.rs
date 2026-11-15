@@ -2,16 +2,24 @@
 //! (`shell/web/node_modules/@celestia-island/hikari/src/components/
 //! HkModal.{tsx,scss}`).
 //!
-//! Two documents share one window:
+//! One window, two document families:
 //!
-//! - the **app-control guide** (`shell/guide/app-control/<locale>.md`, the
-//!   same file the webview face imports): what happened when Windows
-//!   application-control policy refused the launch, the Windows Security
-//!   path that unblocks it, the managed-device branch and the official
-//!   links, with three embedded figures;
-//! - the generic **error details** mode: the raw `FinishFailure` message,
-//!   verbatim, with a copy action (the hikari error landing's built-in
-//!   copy, egui-side).
+//! - the **help topics** (`shell/guide/<topic>/<locale>.md`, the same files
+//!   the webview face imports): one short, plain-language article per
+//!   failure family the classifier names (`shun::help::TOPICS` —
+//!   app-control, permissions, disk-space, file-in-use, path-too-long,
+//!   network, missing-files). The app-control article additionally embeds
+//!   its three schematic figures;
+//! - the generic **error details** mode: the raw failure message, verbatim,
+//!   with a copy action (the hikari error landing's built-in copy,
+//!   egui-side).
+//!
+//! In `[shell] guides = "online"` products the face never opens this
+//! window for a topic — it hands the official page to the browser instead
+//! (`shun::help::open_url`); the details family remains (`open_help` in
+//! fallback.rs picks between them). The build materializes one-line
+//! placeholders for online products, so the embedded loader stays
+//! compilable but is never reachable in that mode.
 //!
 //! Visual contract (HkModal.scss, desktop):
 //!
@@ -23,7 +31,7 @@
 //! ░  │  body — scrolls when it overflows (max 82% of the     │          │
 //! ░  │  window) — markdown with the embedded figures         │          │
 //! ░  ├───────────────────────────────────────────────────────┤  hairline│
-//! ░  │                                            [ Close ]  │  footer  │
+//! ░  │                              [Official page] [ Close ] │  footer  │
 //! ░  └───────────────────────────────────────────────────────┘          ░
 //! ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 //! ```
@@ -38,7 +46,13 @@
 //!   click INSIDE the card never does (the card registers its own click
 //!   blocker above the curtain);
 //! - light and dark both derive from the shared `Theme` tokens, so the
-//!   window follows `shell.theme.mode` exactly like every other surface.
+//!   window follows `shell.theme.mode` exactly like every other surface;
+//! - the footer's secondary action jumps to the official help page for the
+//!   open topic (`shun::help::help_url`) when the OS/distro has one; the
+//!   window stays open behind the browser. Topics with no page (a missing
+//!   install file is about this product, not the OS) hide it, and the
+//!   generic details window carries the "contact the developer" line
+//!   instead.
 //!
 //! Deviations from hikari — only what egui genuinely cannot express:
 //!
@@ -83,13 +97,38 @@ const CLOSE_BOX: f32 = 28.0;
 /// `rgba(0, 0, 0, 0.45)`.
 const SCRIM_ALPHA: u8 = 115;
 
+/// The generic details window's content — also the payload a toast action
+/// carries so an online-mode product can still show the raw message when
+/// the topic has no official page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GuideDetails {
+    pub title: String,
+    pub body: String,
+}
+
 /// Which document the window shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum GuideDoc {
-    /// An embedded help topic (today: `app-control`).
+    /// An embedded help topic — one of `shun::help::TOPICS`.
     Topic(String),
     /// A raw failure message — the generic "error details" window.
-    Details { title: String, body: String },
+    Details(GuideDetails),
+}
+
+/// The window's localized actions, handed in by the face (the guide module
+/// owns the chrome, the app owns the copy).
+pub(crate) struct GuideLabels<'a> {
+    /// The footer's primary action (`notice_close`).
+    pub close: &'a str,
+    /// The details window's copy action (`error_copy`).
+    pub copy: &'a str,
+    /// The footer's secondary action (`notice_open_official`) — hidden when
+    /// the topic has no official page on this platform.
+    pub open_official: &'a str,
+    /// The details window's footer lead (`notice_contact_developer`): the
+    /// raw message with no article and no official page still needs a next
+    /// step.
+    pub contact_developer: &'a str,
 }
 
 /// The guide/window state. One instance lives in the wizard app; the
@@ -97,6 +136,10 @@ pub(crate) enum GuideDoc {
 pub(crate) struct GuideWindow {
     open: Option<GuideDoc>,
     images: ImageBank,
+    /// The official help page for the open topic, resolved ONCE when the
+    /// window opens (`help_url` probes `/etc/os-release` on Linux, so it
+    /// must never run per frame).
+    official_url: Option<String>,
 }
 
 impl GuideWindow {
@@ -104,6 +147,7 @@ impl GuideWindow {
         Self {
             open: None,
             images: ImageBank::new(),
+            official_url: None,
         }
     }
 
@@ -117,33 +161,36 @@ impl GuideWindow {
 
     pub(crate) fn close(&mut self) {
         self.open = None;
+        self.official_url = None;
     }
 
-    /// Opens the embedded guide for `topic`. An unknown topic still opens
-    /// (the English document is the catch-all) rather than failing into a
-    /// dead action.
-    pub(crate) fn open_topic(&mut self, topic: &str) {
+    /// Opens the embedded guide for `topic`, resolving the topic's official
+    /// page for this OS / distribution / locale at the same time. An
+    /// unknown topic still opens (the English article is the catch-all)
+    /// rather than failing into a dead action.
+    pub(crate) fn open_topic(&mut self, topic: &str, language: &str) {
         self.open = Some(GuideDoc::Topic(topic.to_string()));
+        self.official_url = shun::help::help_url(topic, language);
     }
 
     /// Opens the generic details window with a title and the raw body.
     pub(crate) fn open_details(&mut self, title: impl Into<String>, body: impl Into<String>) {
-        self.open = Some(GuideDoc::Details {
+        self.open = Some(GuideDoc::Details(GuideDetails {
             title: title.into(),
             body: body.into(),
-        });
+        }));
+        // A raw message has no topic to look up.
+        self.official_url = None;
     }
 
     /// Paints the modal (screen-space, above every panel). `language` picks
-    /// the guide document; `close_label` / `copy_label` are the localized
-    /// footer and copy actions.
+    /// the guide document; `labels` are the localized footer / copy actions.
     pub(crate) fn draw(
         &mut self,
         ctx: &Context,
         theme: &Theme,
         language: &str,
-        close_label: &str,
-        copy_label: &str,
+        labels: &GuideLabels<'_>,
     ) {
         let Some(doc) = self.open.clone() else {
             return;
@@ -162,10 +209,15 @@ impl GuideWindow {
         // is the body. Details mode takes the caller's title + raw message.
         let (title, body) = match &doc {
             GuideDoc::Topic(topic) => {
-                let (heading, body) = split_document(app_control_source(language));
+                let (heading, body) = split_document(guide_source(topic, language));
                 (heading.unwrap_or_else(|| topic.clone()), body)
             }
-            GuideDoc::Details { title, body } => (title.clone(), body.as_str()),
+            GuideDoc::Details(details) => (details.title.clone(), details.body.as_str()),
+        };
+        // The official-page jump belongs to topical documents only.
+        let official = match &doc {
+            GuideDoc::Topic(_) => self.official_url.clone(),
+            GuideDoc::Details(_) => None,
         };
 
         let card_width = (screen.width() * CARD_MAX_W_RATIO).min(CARD_MAX_W);
@@ -175,7 +227,7 @@ impl GuideWindow {
         // frame hug its content) and only reaches the cap on a wall of text.
         let card_height = match &doc {
             GuideDoc::Topic(_) => max_height,
-            GuideDoc::Details { .. } => {
+            GuideDoc::Details(_) => {
                 let inner = card_width - 2.0 * GUTTER;
                 let galley = ctx.fonts(|fonts| {
                     fonts.layout(
@@ -312,7 +364,7 @@ impl GuideWindow {
                                         13.5,
                                         &self.images,
                                     ),
-                                    GuideDoc::Details { .. } => {
+                                    GuideDoc::Details(_) => {
                                         ui.add(
                                             egui::Label::new(
                                                 egui::RichText::new(body)
@@ -322,7 +374,7 @@ impl GuideWindow {
                                             .wrap(),
                                         );
                                         ui.add_space(16.0);
-                                        if footer_button(ui, theme, copy_label).clicked() {
+                                        if footer_button(ui, theme, labels.copy).clicked() {
                                             ui.ctx().copy_text(body.to_owned());
                                         }
                                     }
@@ -332,8 +384,26 @@ impl GuideWindow {
                     },
                 );
 
-                // ── Footer: the localized close action ───────────────
+                // ── Footer: close, plus the official page for a topic ──
                 divider(&painter, card.left(), card.right(), footer_top, theme);
+                // The details window has no article and no official page:
+                // its footer lead is the "contact the developer" line, so a
+                // raw message still ends with a next step.
+                if matches!(&doc, GuideDoc::Details(_)) && !labels.contact_developer.is_empty() {
+                    let galley = painter.layout_no_wrap(
+                        labels.contact_developer.to_owned(),
+                        egui::FontId::proportional(12.0),
+                        theme.text_tertiary,
+                    );
+                    painter.galley(
+                        pos2(
+                            card.left() + GUTTER,
+                            footer_top + (FOOTER_H - galley.size().y) / 2.0,
+                        ),
+                        galley,
+                        theme.text_tertiary,
+                    );
+                }
                 let footer_rect = Rect::from_min_max(pos2(card.left(), footer_top), card.max);
                 ui.scope_builder(
                     egui::UiBuilder::new()
@@ -341,8 +411,20 @@ impl GuideWindow {
                         .layout(Layout::right_to_left(Align::Center)),
                     |ui| {
                         ui.add_space(GUTTER);
-                        if footer_button(ui, theme, close_label).clicked() {
+                        if footer_button(ui, theme, labels.close).clicked() {
                             close_requested = true;
+                        }
+                        // The secondary action sits inline-start of the
+                        // close button (right-to-left layout: added after
+                        // it). The window STAYS open — the browser takes
+                        // focus, and the article stays where the user left
+                        // it when they come back.
+                        if let Some(url) = &official {
+                            if !labels.open_official.is_empty()
+                                && footer_ghost_button(ui, theme, labels.open_official).clicked()
+                            {
+                                shun::help::open_url(url);
+                            }
                         }
                     },
                 );
@@ -372,6 +454,30 @@ fn footer_button(ui: &mut egui::Ui, theme: &Theme, label: &str) -> egui::Respons
         egui::Button::new(egui::RichText::new(label).size(13.0).color(theme.text))
             .fill(theme.surface)
             .stroke(Stroke::new(1.0f32, theme.border))
+            .corner_radius(CornerRadius::same(6))
+            .min_size(Vec2::new(width, 32.0)),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The footer's secondary action — hikari's `ghost` variant: bare accent
+/// text on the window surface, no plate. Used for the official-page jump
+/// next to the primary close button.
+fn footer_ghost_button(ui: &mut egui::Ui, theme: &Theme, label: &str) -> egui::Response {
+    let width = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::proportional(13.0),
+            Color32::WHITE,
+        )
+        .size()
+        .x
+        + 24.0;
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).size(13.0).color(theme.primary))
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::NONE)
             .corner_radius(CornerRadius::same(6))
             .min_size(Vec2::new(width, 32.0)),
     )
@@ -409,21 +515,156 @@ fn paint_cross(painter: &egui::Painter, box_rect: Rect, color: Color32) {
     );
 }
 
-/// The embedded guide document for `language`. Ten locales, English as the
-/// catch-all (an unknown or unshipped language must still open the guide).
-pub(crate) fn app_control_source(language: &str) -> &'static str {
-    match language {
-        "zh-Hans" => include_str!("../guide/app-control/zh-Hans.md"),
-        "zh-Hant" => include_str!("../guide/app-control/zh-Hant.md"),
-        "ru" => include_str!("../guide/app-control/ru.md"),
-        "ja" => include_str!("../guide/app-control/ja.md"),
-        "ko" => include_str!("../guide/app-control/ko.md"),
-        "fr" => include_str!("../guide/app-control/fr.md"),
-        "es" => include_str!("../guide/app-control/es.md"),
-        "de" => include_str!("../guide/app-control/de.md"),
-        "pt" => include_str!("../guide/app-control/pt.md"),
-        _ => include_str!("../guide/app-control/en.md"),
+/// The embedded guide document for `topic` + `language`. The tree is
+/// materialized by build.rs into OUT_DIR (real bytes for an embedded
+/// product, one-line placeholders for `guides = "online"` — the face
+/// never renders those, it opens `shun::help::help_url` instead). Ten
+/// locales, English as the catch-all.
+pub(crate) fn guide_source(topic: &str, language: &str) -> &'static str {
+    match (topic, language) {
+        ("app-control", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/zh-Hans.md"))
+        }
+        ("app-control", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/zh-Hant.md"))
+        }
+        ("app-control", "en") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/en.md")),
+        ("app-control", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/ru.md")),
+        ("app-control", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/ja.md")),
+        ("app-control", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/ko.md")),
+        ("app-control", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/fr.md")),
+        ("app-control", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/es.md")),
+        ("app-control", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/de.md")),
+        ("app-control", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/app-control/pt.md")),
+        ("permissions", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/zh-Hans.md"))
+        }
+        ("permissions", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/zh-Hant.md"))
+        }
+        ("permissions", "en") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/en.md")),
+        ("permissions", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/ru.md")),
+        ("permissions", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/ja.md")),
+        ("permissions", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/ko.md")),
+        ("permissions", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/fr.md")),
+        ("permissions", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/es.md")),
+        ("permissions", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/de.md")),
+        ("permissions", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/permissions/pt.md")),
+        ("disk-space", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/zh-Hans.md"))
+        }
+        ("disk-space", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/zh-Hant.md"))
+        }
+        ("disk-space", "en") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/en.md")),
+        ("disk-space", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/ru.md")),
+        ("disk-space", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/ja.md")),
+        ("disk-space", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/ko.md")),
+        ("disk-space", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/fr.md")),
+        ("disk-space", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/es.md")),
+        ("disk-space", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/de.md")),
+        ("disk-space", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/disk-space/pt.md")),
+        ("file-in-use", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/zh-Hans.md"))
+        }
+        ("file-in-use", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/zh-Hant.md"))
+        }
+        ("file-in-use", "en") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/en.md")),
+        ("file-in-use", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/ru.md")),
+        ("file-in-use", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/ja.md")),
+        ("file-in-use", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/ko.md")),
+        ("file-in-use", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/fr.md")),
+        ("file-in-use", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/es.md")),
+        ("file-in-use", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/de.md")),
+        ("file-in-use", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/file-in-use/pt.md")),
+        ("path-too-long", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/zh-Hans.md"))
+        }
+        ("path-too-long", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/zh-Hant.md"))
+        }
+        ("path-too-long", "en") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/en.md"))
+        }
+        ("path-too-long", "ru") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/ru.md"))
+        }
+        ("path-too-long", "ja") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/ja.md"))
+        }
+        ("path-too-long", "ko") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/ko.md"))
+        }
+        ("path-too-long", "fr") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/fr.md"))
+        }
+        ("path-too-long", "es") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/es.md"))
+        }
+        ("path-too-long", "de") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/de.md"))
+        }
+        ("path-too-long", "pt") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/path-too-long/pt.md"))
+        }
+        ("network", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/network/zh-Hans.md"))
+        }
+        ("network", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/network/zh-Hant.md"))
+        }
+        ("network", "en") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/en.md")),
+        ("network", "ru") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/ru.md")),
+        ("network", "ja") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/ja.md")),
+        ("network", "ko") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/ko.md")),
+        ("network", "fr") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/fr.md")),
+        ("network", "es") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/es.md")),
+        ("network", "de") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/de.md")),
+        ("network", "pt") => include_str!(concat!(env!("OUT_DIR"), "/guide/network/pt.md")),
+        ("missing-files", "zh-Hans") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/zh-Hans.md"))
+        }
+        ("missing-files", "zh-Hant") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/zh-Hant.md"))
+        }
+        ("missing-files", "en") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/en.md"))
+        }
+        ("missing-files", "ru") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/ru.md"))
+        }
+        ("missing-files", "ja") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/ja.md"))
+        }
+        ("missing-files", "ko") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/ko.md"))
+        }
+        ("missing-files", "fr") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/fr.md"))
+        }
+        ("missing-files", "es") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/es.md"))
+        }
+        ("missing-files", "de") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/de.md"))
+        }
+        ("missing-files", "pt") => {
+            include_str!(concat!(env!("OUT_DIR"), "/guide/missing-files/pt.md"))
+        }
+        // Unknown topic or locale: the English app-control article is the
+        // last resort (an unknown topic's own "en" would be just as wrong
+        // and harder to find).
+        (_, _) => include_str!(concat!(env!("OUT_DIR"), "/guide/", "app-control", "/en.md")),
     }
+}
+
+/// [`guide_source`] narrowed to the app-control topic. The window itself is
+/// topic-driven now (every family opens its own article), so this wrapper
+/// survives only for the coverage tests, which read clearer through it.
+#[cfg(test)]
+pub(crate) fn app_control_source(language: &str) -> &'static str {
+    guide_source(shun::help::TOPIC_APP_CONTROL, language)
 }
 
 /// Splits an authored document into the modal title and the body.
@@ -458,10 +699,39 @@ pub(crate) fn split_document(source: &str) -> (Option<String>, &str) {
 mod tests {
     use super::*;
 
-    /// The authored contract: every locale's first line is the `# ` title
-    /// and the rest is a non-empty body.
+    /// Every topic × locale resolves to a document the window can show.
+    /// While an article is not authored yet build.rs materializes a
+    /// one-line placeholder: that degrades to a titled-by-fallback window
+    /// (the topic name), never a blank one.
     #[test]
-    fn every_locale_embeds_a_titled_document() {
+    fn every_topic_locale_resolves_to_a_document() {
+        for topic in shun::help::TOPICS {
+            for language in LOCALES {
+                let source = guide_source(topic, language);
+                assert!(
+                    !source.trim().is_empty(),
+                    "{topic}/{language}: a document is always embedded"
+                );
+                let (title, body) = split_document(source);
+                match title {
+                    Some(title) => assert!(!title.trim().is_empty(), "{topic}/{language}: title"),
+                    // The placeholder: one line, no heading. Authored
+                    // articles always carry the `# ` line.
+                    None => assert!(
+                        body.lines().count() <= 2,
+                        "{topic}/{language}: an untitled document must be the build placeholder"
+                    ),
+                }
+            }
+        }
+    }
+
+    /// The authored contract for the one fully-authored topic: the first
+    /// line is the `# ` title, the rest is a non-empty body, and the three
+    /// figures are referenced. (The other six topics are authored by the
+    /// content lane; their coverage is the test above.)
+    #[test]
+    fn app_control_keeps_its_titled_article_and_figures() {
         for language in LOCALES {
             let (title, body) = split_document(app_control_source(language));
             let title =
@@ -472,16 +742,6 @@ mod tests {
                 "{language}: the body carries the guide ({} chars)",
                 body.trim().len()
             );
-        }
-    }
-
-    /// The consumer's half of the figure contract: each locale shows all
-    /// three embedded figures, so the modal never renders a guide whose
-    /// pictures silently went missing.
-    #[test]
-    fn every_locale_references_the_three_figures() {
-        for language in LOCALES {
-            let (_, body) = split_document(app_control_source(language));
             for figure in 1..=3 {
                 let reference = format!("guide/app-control-{figure}.png");
                 assert!(
@@ -525,24 +785,140 @@ mod tests {
     fn the_window_tracks_its_document() {
         let mut window = GuideWindow::new();
         assert!(!window.is_open());
-        window.open_topic(shun::failure::HELP_TOPIC_APP_CONTROL);
+        window.open_topic(shun::help::TOPIC_APP_CONTROL, "en");
         assert!(window.is_open());
         assert_eq!(
             window.open,
-            Some(GuideDoc::Topic(
-                shun::failure::HELP_TOPIC_APP_CONTROL.to_string()
-            ))
+            Some(GuideDoc::Topic(shun::help::TOPIC_APP_CONTROL.to_string()))
         );
         window.close();
         assert!(!window.is_open());
+        assert!(window.official_url.is_none(), "closing drops the page");
         window.open_details("Launch failed", "io error: 4551");
         assert!(window.is_open());
         assert_eq!(
             window.open,
-            Some(GuideDoc::Details {
+            Some(GuideDoc::Details(GuideDetails {
                 title: "Launch failed".into(),
                 body: "io error: 4551".into()
-            })
+            }))
+        );
+        assert!(
+            window.official_url.is_none(),
+            "a raw message has no topic to look up"
+        );
+    }
+
+    /// The window resolves and caches the topic's official page exactly as
+    /// the core names it (`help_url` for the RUNNING host — so the
+    /// assertion stays host-independent by comparing against the same
+    /// call), and a raw message has no topic to look up.
+    #[test]
+    fn the_window_caches_the_topics_official_page() {
+        let mut window = GuideWindow::new();
+        for topic in shun::help::TOPICS {
+            window.open_topic(topic, "en");
+            assert_eq!(
+                window.official_url,
+                shun::help::help_url(topic, "en"),
+                "{topic}: the window resolves the page the core names"
+            );
+        }
+        window.open_details("x", "y");
+        assert!(
+            window.official_url.is_none(),
+            "a raw message has no topic to look up"
+        );
+        window.close();
+        assert!(window.official_url.is_none(), "closing drops the page");
+    }
+
+    /// The footer action hides where the vendor hosts no page: none of the
+    /// three OS tables has one for a missing install file (that failure is
+    /// about this product, not the OS). The PURE resolver takes the OS and
+    /// distro explicitly, so this holds on every host running the tests.
+    #[test]
+    fn topics_without_an_official_page_hide_the_footer_action() {
+        for os in ["windows", "macos", "linux"] {
+            assert_eq!(
+                shun::help::help_url_for(shun::help::TOPIC_MISSING_FILES, "en", os, None),
+                None,
+                "{os}: no vendor page for a missing install file"
+            );
+        }
+        // A topic the host DOES document still resolves.
+        assert!(
+            shun::help::help_url_for(shun::help::TOPIC_APP_CONTROL, "en", "windows", None)
+                .is_some(),
+            "the app-control remedy is a Microsoft page"
+        );
+    }
+
+    /// Measures one article's rendered height at the modal's body width
+    /// (640pt card − 2×24pt gutters − 8pt scrollbar).
+    fn article_height(topic: &str, language: &str) -> f32 {
+        let ctx = egui::Context::default();
+        let theme = Theme::dark(None);
+        let (_, body) = split_document(guide_source(topic, language));
+        // Two passes: a fresh context has no font metrics on pass one.
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |_ui| {});
+        });
+        let mut height = None;
+        let mut pending = Some(());
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.set_max_width(608.0);
+                if pending.take().is_some() {
+                    let top = ui.next_widget_position().y;
+                    markdown::render_with_images(ui, &theme, body, 13.5, &ImageBank::new());
+                    height = Some(ui.next_widget_position().y - top);
+                }
+            });
+        });
+        height.expect("the pass loop ran")
+    }
+
+    /// Audit (the round's item 8): every topic × locale renders inside the
+    /// modal's body column, and the longest article needs the scroll
+    /// viewport rather than growing the card past its 82% cap. `cargo test
+    /// -- --nocapture` prints the measured heights.
+    #[test]
+    fn every_topic_article_renders_and_the_longest_scrolls() {
+        // A 600pt-tall window (the wizard's own size): 82% card, minus the
+        // 56pt header, 56pt footer and the body's 20+20pt padding.
+        let viewport = 600.0 * CARD_MAX_H_RATIO - HEADER_H - FOOTER_H - 40.0;
+        let mut tallest = (String::new(), 0.0_f32);
+        let mut per_topic = Vec::new();
+        for topic in shun::help::TOPICS {
+            let mut topic_max = (String::new(), 0.0_f32);
+            for language in LOCALES {
+                let height = article_height(topic, language);
+                assert!(height > 0.0, "{topic}/{language}: renders");
+                assert!(
+                    height < 6000.0,
+                    "{topic}/{language}: the article stays article-sized ({height})"
+                );
+                if height > topic_max.1 {
+                    topic_max = (language.to_string(), height);
+                }
+                if height > tallest.1 {
+                    tallest = (format!("{topic}/{language}"), height);
+                }
+            }
+            per_topic.push(format!("{topic} {:.0}pt ({})", topic_max.1, topic_max.0));
+        }
+        eprintln!(
+            "article heights at the modal body width — {} | tallest {} at {:.0}pt (scroll viewport {:.0}pt)",
+            per_topic.join(", "),
+            tallest.0,
+            tallest.1,
+            viewport
+        );
+        assert!(
+            tallest.1 > viewport,
+            "the longest article ({:.0}pt) exercises the scroll body (viewport {viewport:.0}pt)",
+            tallest.1
         );
     }
 
@@ -552,8 +928,17 @@ mod tests {
     #[test]
     fn unknown_topics_still_render_the_english_guide() {
         let english = app_control_source("en");
-        assert_eq!(app_control_source("xx-unknown"), english);
-        assert_eq!(app_control_source(""), english);
+        assert_eq!(guide_source("xx-unknown", "en"), english);
+        assert_eq!(guide_source("", ""), english);
         assert!(!english.is_empty());
+        // Every KNOWN topic keeps its own English article instead of the
+        // catch-all (the interim matrix sent them all to app-control).
+        for topic in shun::help::TOPICS {
+            let own = guide_source(topic, "en");
+            if topic == shun::help::TOPIC_APP_CONTROL {
+                continue;
+            }
+            assert_ne!(own, english, "{topic}/en must not serve app-control");
+        }
     }
 }

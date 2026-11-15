@@ -32,6 +32,7 @@ fn sample() -> ShunConfig {
         shell: Some(shun::config::ShellUiConfig {
             faces: None,
             silent_progress: true,
+            guides: shun::config::GuidesMode::Online,
             timeline: Some(shun::config::TimelineOrientation::Left),
             theme: Some(ThemeConfig {
                 background: None,
@@ -110,6 +111,9 @@ fn config_roundtrips_through_json() {
     let json = serde_json::to_string(&cfg).unwrap();
     let back: ShunConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(cfg, back);
+    // The guides mode's wire word is the manifest spelling.
+    let json = serde_json::to_value(&cfg).unwrap();
+    assert_eq!(json["shell"]["guides"], "online");
 }
 
 #[test]

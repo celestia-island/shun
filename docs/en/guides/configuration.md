@@ -412,6 +412,7 @@ log-order = "newest"    # newest (default, latest on top) | oldest (append at ta
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # faces this product may present (default: all three)
 silent-progress = false   # passive progress window over --silent runs (default off)
+guides = "embedded"      # embedded (default, in-app articles) | online (open the vendor page directly)
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -425,6 +426,8 @@ substrate and cannot be disabled. Requesting a disabled face is an
 error; auto-selection skips disabled faces.
 
 `shell.silent-progress` opts the headless lane into a passive progress window: a `--silent` run then also renders a small always-on-top window mirroring what stdout says (the running step, the percent when the step has one) — no pages, no clicks, stdout unchanged. Meant for products whose updater spawns the installer unattended: on a slow machine the install stops reading as "nothing happened", so nobody launches the old build into the directory mid-swap. The window rides the shell's own design language: the webview lane renders it first — an unattended update by definition happens where WebView2 already is (the app being replaced needed it) — with the custom caption bar, the theme tokens and the localized copy; when the webview lane cannot come up (runtime missing, the face disabled, a forced `--no-webview`), the styled egui window takes its place. Sessions without a desktop (services, CI) silently stay console-only.
+
+`shell.guides` picks how the faces explain a classified failure. `embedded` (the default) opens a short in-app article for the failure at hand — the articles ship inside the installer, and the window's footer links the official vendor page. `online` skips the articles entirely — the help action opens the official page directly: Microsoft's on Windows, Apple's on macOS, the running distribution's documentation on Linux. Pick `online` when artifact size matters more than an offline article, or when the product prefers pointing users at the vendor page.
 ### Wizard language
 
 The wizard asks for its language on the **first step**: a selector

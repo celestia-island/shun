@@ -427,6 +427,9 @@ struct ShellView {
     log_level: shun::config::LogVerbosity,
     /// Whether a flash target is declared (the UI shows it as pending).
     flash: bool,
+    /// How the faces resolve a failure's help topic (`embedded` opens the
+    /// in-app article; `online` opens the vendor page directly).
+    guides_mode: shun::config::GuidesMode,
     /// Optional attachments resolved against the payload.
     attachments: Vec<AttachmentView>,
 }
@@ -471,6 +474,7 @@ fn get_config(state: State<'_, AppState>) -> ShellView {
         language: shell.language,
         log_level: shell.log_level.unwrap_or_default(),
         flash,
+        guides_mode: shell.guides,
         attachments: shun::attachments::resolve(&config, &state.payload)
             .into_iter()
             .map(|a| AttachmentView {
@@ -875,6 +879,34 @@ async fn finish_install(
             format!("the finish task exited abnormally: {e}"),
         )
     })?
+}
+
+/// Resolves the localized official help URL for a classified failure's
+/// topic (`shun::help::help_url`): the vendor page on Windows/macOS, the
+/// running distribution's documentation on Linux. `None` when the topic
+/// has no page on this platform — the UI hides its online affordance.
+#[tauri::command]
+fn get_help_url(topic: String, locale: String) -> Option<String> {
+    shun::help::help_url(&topic, &locale)
+}
+
+/// Opens the topic's official help page in the system browser — the
+/// online-guides mode's whole help experience (`[shell] guides =
+/// "online"`), and the embedded article's footer button otherwise.
+#[tauri::command]
+fn open_help_url(topic: String, locale: String) -> Result<bool, String> {
+    let url = shun::help::help_url(&topic, &locale)
+        .ok_or_else(|| format!("no official help page for topic {topic:?} on this platform"))?;
+    Ok(shun::help::open_url(&url))
+}
+
+/// Classifies a flow error that arrives as text (the install lane's
+/// surface shape — `run_install` reports through `to_string()`): the web
+/// face feeds it the failed-install landing's message and branches on
+/// the same shape `finish_install` rejects with.
+#[tauri::command]
+fn classify_error(message: String) -> shun::failure::FinishFailure {
+    shun::failure::FinishFailure::from_message(shun::failure::FinishStage::Install, message)
 }
 
 /// Runs the install flow for the wizard UI: the shared driver on a
@@ -2240,6 +2272,9 @@ fn run_shell(
             current_install_dir,
             perform_uninstall,
             finish_install,
+            get_help_url,
+            open_help_url,
+            classify_error,
             start_install,
             download_attachment,
         ])
@@ -2443,6 +2478,39 @@ fn passive_state() -> Option<passive::PassiveEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The web face's only bridge into the classifier: the command must
+    /// return the CLASSIFIED shape (the same kind/topic pairing the other
+    /// faces consume), never an unclassified stub — round-6's surviving
+    /// mutation was exactly this command going stub.
+    #[test]
+    fn classify_error_names_the_family_and_topic() {
+        // The host's own access-denied code (5 = ERROR_ACCESS_DENIED on
+        // Windows, 13 = EACCES on Unix).
+        let denied: i32 = if cfg!(windows) { 5 } else { 13 };
+        let failure = classify_error(format!("io error: Access is denied. (os error {denied})"));
+        assert_eq!(failure.stage, shun::failure::FinishStage::Install);
+        assert_eq!(failure.kind, shun::failure::FailureKind::Permissions);
+        assert_eq!(failure.os_error, Some(denied));
+        assert_eq!(
+            failure.help_topic.as_deref(),
+            Some(shun::help::TOPIC_PERMISSIONS)
+        );
+        assert!(failure.has_help());
+
+        // A message with no family stays unclassified on purpose.
+        let failure = classify_error("this configuration declares no install target".into());
+        assert_eq!(failure.kind, shun::failure::FailureKind::Io);
+        assert!(failure.help_topic.is_none());
+
+        // The application-control hex form classifies with the topic.
+        let failure = classify_error("CreateProcess failed: 0x11C7 before any output".into());
+        assert_eq!(failure.kind, shun::failure::FailureKind::AppControlBlocked);
+        assert_eq!(
+            failure.help_topic.as_deref(),
+            Some(shun::help::TOPIC_APP_CONTROL)
+        );
+    }
 
     fn cli(args: &[&str]) -> Cli {
         // parse_from takes argv0 first; feed a placeholder.

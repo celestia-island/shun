@@ -431,6 +431,7 @@ log-order = "newest"      # newest (défaut, dernier en haut) | oldest (ajout à
 language = "auto"          # auto | en | zh-Hans | zh-Hant | ja | ko | fr | ru | es | de | pt
 faces = ["webview", "egui", "tui"]  # faces que le shell de ce produit peut présenter (défaut : les trois)
 silent-progress = false   # fenêtre de progression passive pour --silent (désactivée par défaut)
+guides = "embedded"      # embedded (par défaut, articles intégrés) | online (ouvrir la page officielle)
 
 [shell.theme]
 mode = "system"            # system | light | dark
@@ -444,6 +445,8 @@ substrat et ne peut pas être désactivée. Demander une face désactivée
 est une erreur ; la sélection automatique saute les faces désactivées.
 
 `shell.silent-progress` dote la voie headless d'une fenêtre de progression passive : une exécution `--silent` affiche aussi une petite fenêtre toujours au premier plan qui reflète ce que dit stdout (l'étape en cours, le pourcentage quand il existe) — pas de pages, pas de clics, stdout inchangé. Pensé pour les produits dont l'updater lance l'installateur sans surveillance : sur une machine lente l'installation ne se lit plus comme « rien ne s'est passé », et personne ne lance l'ancienne version dans le répertoire en plein échange. La fenêtre habille le langage graphique du shell : la voie webview la rend d'abord — une mise à jour sans surveillance se produit par définition là où WebView2 est déjà présent (l'appli remplacée en avait besoin) — avec sa barre de titre dédiée, ses jetons de thème et ses textes localisés ; quand la voie webview ne peut pas s'ouvrir (runtime absent, face désactivée, `--no-webview` forcé), la fenêtre egui stylée prend le relais. Les sessions sans bureau (services, CI) restent silencieusement en console seule.
+
+`shell.guides` décide comment les interfaces expliquent un échec classé. `embedded` (par défaut) ouvre un court article intégré pour l'échec en question — les articles voyagent dans l'installeur et le pied de la fenêtre relie la page officielle. `online` n'ouvre pas les articles intégrés : l'action d'aide ouvre directement la page officielle — celle de Microsoft sous Windows, celle d'Apple sous macOS, la documentation de la distribution en cours sous Linux. Choisissez `online` quand la taille de l'artefact compte plus qu'un article hors ligne, ou quand le produit préfère renvoyer vers la page de l'éditeur.
 ### Langue de l'assistant
 
 L'assistant demande sa langue à la **première étape** : un sélecteur

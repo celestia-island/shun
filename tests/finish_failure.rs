@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use shun::config::{ShunConfig, TargetConfig};
-use shun::failure::{FailureKind, FinishStage, HELP_TOPIC_APP_CONTROL};
+use shun::failure::{FailureKind, FinishStage};
+use shun::help::TOPIC_APP_CONTROL as HELP_TOPIC_APP_CONTROL;
 use shun::wizard::{WizardCore, launch_installed_checked};
 
 /// The demo manifest with its entry point retargeted at `main_exe`, so the
@@ -34,7 +35,7 @@ fn core_with_main_exe(main_exe: &str) -> WizardCore {
 }
 
 #[test]
-fn a_missing_entry_point_is_its_own_kind_without_a_guide() {
+fn a_missing_entry_point_is_its_own_kind_naming_the_missing_files_topic() {
     let core = core_with_main_exe("bin/absent-app");
     let dir = tempfile::tempdir().unwrap();
 
@@ -44,9 +45,11 @@ fn a_missing_entry_point_is_its_own_kind_without_a_guide() {
     assert_eq!(failure.kind, FailureKind::MissingExecutable);
     assert_eq!(failure.stage, FinishStage::Launch);
     assert!(failure.os_error.is_none(), "no OS code for a path check");
-    assert!(
-        failure.help_topic.is_none(),
-        "there is no guide for a missing file"
+    // The kind's table row names the missing-files article (an AV
+    // quarantine is the usual cause).
+    assert_eq!(
+        failure.help_topic.as_deref(),
+        Some(shun::help::TOPIC_MISSING_FILES)
     );
     assert!(
         failure.message.contains("absent-app"),
@@ -56,7 +59,7 @@ fn a_missing_entry_point_is_its_own_kind_without_a_guide() {
 }
 
 #[test]
-fn a_present_but_unlaunchable_entry_point_is_plain_io_without_a_guide() {
+fn a_present_but_unlaunchable_entry_point_is_never_app_control() {
     // A real file at the entry point: the OS refuses the process creation
     // (EACCES on unix, ERROR_BAD_EXE_FORMAT on Windows) and the failure is
     // an ordinary I/O error — NOT an application-control block, so no guide
@@ -73,16 +76,16 @@ fn a_present_but_unlaunchable_entry_point_is_plain_io_without_a_guide() {
     let failure = launch_installed_checked(&core, &dir.path().to_string_lossy())
         .expect_err("a non-executable file must not launch");
 
-    assert_eq!(failure.kind, FailureKind::Io);
     assert_eq!(failure.stage, FinishStage::Launch);
     assert!(
         failure.os_error.is_some(),
         "the OS refused the spawn with a code: {}",
         failure.message
     );
-    assert!(
-        failure.help_topic.is_none(),
-        "only application-control blocks open the app-control guide"
-    );
+    // The refusal's family is platform-shaped — unix answers EACCES
+    // (a permissions refusal), Windows answers ERROR_BAD_EXE_FORMAT
+    // (plain io) — but neither is ever an application-control block:
+    // only the app-control OS codes may open the app-control guide.
+    assert_ne!(failure.kind, FailureKind::AppControlBlocked);
     assert_ne!(failure.help_topic.as_deref(), Some(HELP_TOPIC_APP_CONTROL));
 }
