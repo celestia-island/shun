@@ -22,6 +22,8 @@ pnpm --dir shell/web install
 cargo run -p shun_installer
 ```
 
+demo 應用自己的 webview 面從 `demo-app/web` 打包進已提交的 `demo-app/ui`；改動 `demo-app/web/src` 後，先執行一次 `pnpm --dir demo-app/web install`，再執行 `pnpm --dir demo-app/web build` 重新產生。
+
 殼在建置期嵌入 demo payload（單檔安裝器模式），並渲染
 `demo-app/Cargo.toml` → `[package.metadata.shun]` 宣告的交付模式——
 即相鄰 demo crate 的清單，由 build.rs 嵌入（`SHUN_MANIFEST` 可覆寫；

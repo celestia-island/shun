@@ -111,6 +111,26 @@ mod tests {
 
     /// `tauri.conf.json` as tauri-build reads it.
     const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+
+    /// The sibling demo app's webview face (`demo-app/ui`), which tauri-build
+    /// reads the same way. Kept beside the shell's so a regression in either
+    /// surface fails one `cargo test`.
+    const DEMO_CONF: &str = include_str!("../../demo-app/tauri.conf.json");
+    const DEMO_HTML: &str = include_str!("../../demo-app/ui/index.html");
+    /// The demo face SOURCE — the only place a global-object read could be
+    /// introduced; the committed bundle below must be its build.
+    const DEMO_JS_SRC: &str = include_str!("../../demo-app/web/src/app.js");
+    /// The committed esbuild output (pnpm --dir web build), shipped through
+    /// tauri.conf.json's frontendDist: the source plus the inlined packaged API.
+    const DEMO_BUNDLE: &str = include_str!("../../demo-app/ui/app.js");
+    /// The demo web project — the build that turns the source into the bundle.
+    const DEMO_PACKAGE_JSON: &str = include_str!("../../demo-app/web/package.json");
+    /// The shell manifest, capabilities and builder source: the guide
+    /// window's external links need all three halves (dependency / permission
+    /// / registration) or they silently do nothing on a real machine.
+    const SHELL_CARGO: &str = include_str!("../Cargo.toml");
+    const CAPABILITIES: &str = include_str!("../capabilities/default.json");
+    const SHELL_MAIN: &str = include_str!("main.rs");
     /// The shell's Tauri surface (the only module allowed to name it).
     const TAURI_TS: &str = include_str!("../web/src/tauri.ts");
     /// The frontend's dependency list — the imports must be installable.
@@ -243,5 +263,127 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The demo app's sibling webview face carries the same posture the
+    /// installer adopted: a pinned CSP, no inline script/style blocks, and no
+    /// global Tauri object. Its script is BUILD OUTPUT now (esbuild bundles
+    /// demo-app/web/src into demo-app/ui/app.js; the HTML and stylesheet stay
+    /// authored files), so both halves are checked: the source must ride the
+    /// packaged imports, and the committed bundle must be the build of that
+    /// source — a stale app.js still reading the global object would ship a
+    /// page with no command surface nothing injects.
+    #[test]
+    fn the_demo_app_carries_the_pinned_posture_too() {
+        let conf: serde_json::Value =
+            serde_json::from_str(DEMO_CONF).expect("demo tauri.conf.json parses");
+        let csp = conf
+            .get("app")
+            .and_then(|a| a.get("security"))
+            .and_then(|s| s.get("csp"))
+            .and_then(serde_json::Value::as_str)
+            .expect("demo-app must carry a CSP string, not null");
+        for directive in [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self'",
+            "img-src 'self' data:",
+            "connect-src 'self' ipc: http://ipc.localhost",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'none'",
+        ] {
+            assert!(csp.contains(directive), "demo-app CSP lacks {directive}");
+        }
+        assert!(
+            !csp.contains("unsafe-inline"),
+            "demo-app CSP must not re-open inline script/style: {csp}"
+        );
+        // The global object is off, exactly like the installer's.
+        assert_eq!(
+            conf["app"]["withGlobalTauri"],
+            serde_json::Value::Bool(false),
+            "demo-app must run with app.withGlobalTauri false"
+        );
+        // With no inline allowance, the HTML must not carry inline blocks.
+        for (label, needle) in [("<script>", "<script>"), ("<style>", "<style>")] {
+            assert!(
+                !DEMO_HTML.contains(needle),
+                "demo-app/index.html has an inline {label} block; extract it to a file"
+            );
+        }
+        assert!(
+            DEMO_HTML.contains("type=\"module\" src=\"app.js\""),
+            "demo-app/index.html must load the external bundle as a module script"
+        );
+        assert!(
+            DEMO_HTML.contains("href=\"app.css\""),
+            "demo-app/index.html must load its stylesheet as an external file"
+        );
+        // The source that bundle is built from rides the packaged API only.
+        assert!(
+            DEMO_JS_SRC.contains("@tauri-apps/api/core"),
+            "demo-app/web/src/app.js must import invoke from @tauri-apps/api/core"
+        );
+        for read in ["__TAURI__.core", "__TAURI__?.core"] {
+            assert!(
+                !DEMO_JS_SRC.contains(read),
+                "demo-app/web/src/app.js still reads the global Tauri object ({read})"
+            );
+        }
+        // …and the committed bundle is the one built from that source: the
+        // packaged ipc transport is inlined, the global object is not.
+        assert!(
+            DEMO_BUNDLE.contains("__TAURI_INTERNALS__"),
+            "demo-app/ui/app.js lacks the packaged ipc transport — run pnpm --dir web build"
+        );
+        assert!(
+            !DEMO_BUNDLE.contains("__TAURI__"),
+            "demo-app/ui/app.js still carries the global Tauri object — rebuild it"
+        );
+        // A distinctive line of the source must survive into the bundle, or
+        // the committed artifact was built from something else entirely.
+        assert!(
+            DEMO_BUNDLE.contains("chip.classList.remove(\"placeholder\")"),
+            "demo-app/ui/app.js does not match demo-app/web/src/app.js — rebuild it"
+        );
+        // The build must stay reproducible from the tree it ships in.
+        assert!(
+            DEMO_PACKAGE_JSON.contains("\"@tauri-apps/api\""),
+            "demo-app/web/package.json must declare @tauri-apps/api"
+        );
+        assert!(
+            DEMO_PACKAGE_JSON.contains("\"build\": \"esbuild"),
+            "demo-app/web/package.json must carry the esbuild build script"
+        );
+        let command = conf["build"]["beforeBuildCommand"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            command.contains("pnpm --dir web build"),
+            "demo tauri.conf.json must rebuild its face before a tauri build: {command:?}"
+        );
+    }
+
+    /// The guide window external anchors are the ONE door out of the
+    /// sandboxed page: hikari's markdown renderer tries the global opener
+    /// (absent — withGlobalTauri is off), then the plugin:opener|open_url
+    /// invoke (this plugin), then window.open (wry drops it). Missing any
+    /// half turns article links into a silent no-op — the exact state a real
+    /// machine run caught — so all three are pinned together.
+    #[test]
+    fn the_guide_links_can_reach_the_system_browser() {
+        assert!(
+            SHELL_CARGO.contains("tauri-plugin-opener"),
+            "shell/Cargo.toml must depend on tauri-plugin-opener"
+        );
+        assert!(
+            CAPABILITIES.contains("\"opener:default\""),
+            "shell/capabilities/default.json must grant opener:default to the windows"
+        );
+        assert!(
+            SHELL_MAIN.contains("tauri_plugin_opener::init()"),
+            "the webview builder must register the opener plugin"
+        );
     }
 }

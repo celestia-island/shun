@@ -26,6 +26,8 @@ pnpm --dir shell/web install
 cargo run -p shun_installer
 ```
 
+La propia cara webview de la app demo se empaqueta desde `demo-app/web` en el `demo-app/ui` versionado; tras editar `demo-app/web/src`, ejecuta una vez `pnpm --dir demo-app/web install` y después `pnpm --dir demo-app/web build`.
+
 El shell incrusta el payload de demo en tiempo de construcción (patrón de
 instalador mono-archivo) y muestra los modos de entrega declarados en
 `demo-app/Cargo.toml` → `[package.metadata.shun]` — el manifiesto de la

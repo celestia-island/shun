@@ -1,0 +1,6 @@
+# Same release-age floor as shell/web: a fresh publish must not be able to
+# enter this lockfile just because it landed a minute ago. esbuild's install
+# script materializes the platform binary, so it stays explicitly allowed.
+allowBuilds:
+  esbuild: true
+minimumReleaseAge: 1440

@@ -25,6 +25,8 @@ pnpm --dir shell/web install
 cargo run -p shun_installer
 ```
 
+デモアプリ自身の webview 面は `demo-app/web` から、コミット済みの `demo-app/ui` へバンドルされます。`demo-app/web/src` を編集したら、まず一度 `pnpm --dir demo-app/web install` を実行し、続けて `pnpm --dir demo-app/web build` で再生成してください。
+
 シェルはビルド時にデモ payload を埋め込み（シングルファイルインストーラー
 パターン）、`demo-app/Cargo.toml` → `[package.metadata.shun]` で宣言された
 配布モードを描画します——隣接するデモ crate のマニフェストを build.rs が

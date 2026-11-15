@@ -1923,10 +1923,9 @@ pub(crate) fn webview2_loader_ready() -> bool {
 /// face never auto-degrades there (`--no-webview` still forces egui).
 #[cfg(not(windows))]
 pub(crate) fn webview2_loader_ready() -> bool {
-    if std::env::var_os("SHUN_FORCE_FALLBACK").is_some() {
-        return false;
-    }
-    true
+    // Same test override as the Windows probe; the platform above always has
+    // a system webview otherwise.
+    std::env::var_os("SHUN_FORCE_FALLBACK").is_none()
 }
 
 /// Aligns the probed capabilities with the loader's verdict: the webview
@@ -2309,6 +2308,11 @@ fn run_shell(
 ) -> Result<(), tauri::Error> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // The guide window external links: hikari markdown renderer invokes
+        // plugin:opener|open_url when the global object is off (which it is —
+        // see tauri.conf.json), so the plugin must be registered for an
+        // article link to reach the system browser.
+        .plugin(tauri_plugin_opener::init())
         .manage({
             AppState {
                 core: std::sync::Mutex::new(core),

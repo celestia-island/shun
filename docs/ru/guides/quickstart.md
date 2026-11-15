@@ -25,6 +25,8 @@ pnpm --dir shell/web install
 cargo run -p shun_installer
 ```
 
+Собственная webview-грань демо-приложения собирается из `demo-app/web` в закоммиченный `demo-app/ui`; после правки `demo-app/web/src` один раз выполните `pnpm --dir demo-app/web install`, затем `pnpm --dir demo-app/web build`.
+
 Оболочка встраивает демо-payload во время сборки (паттерн однофайлового
 установщика) и отображает режимы доставки, объявленные в
 `demo-app/Cargo.toml` → `[package.metadata.shun]` — манифест соседнего
