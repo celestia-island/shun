@@ -615,7 +615,18 @@ mod tests {
     fn figures_resolve_and_unknown_references_stay_prose() {
         let bank = ImageBank::new();
         let ctx = egui::Context::default();
-        for (name, _) in FIGURES {
+        for (name, bytes) in FIGURES {
+            if bytes.is_empty() {
+                // The generic preset / online mode materialize empty
+                // placeholder files — the lookup skips them instead of
+                // failing the decode (and this test runs in those
+                // presets too).
+                assert!(
+                    !matches!(bank.lookup(&ctx, name), Figure::Ready(_)),
+                    "{name} with no bytes is skipped"
+                );
+                continue;
+            }
             assert!(
                 matches!(bank.lookup(&ctx, name), Figure::Ready(_)),
                 "{name} is compiled in and decodes"

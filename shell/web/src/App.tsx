@@ -600,6 +600,10 @@ export default defineComponent({
       message: string;
       copy: string;
     } | null>(null);
+    // The classified failure behind the CURRENT help affordance — the
+    // online mode's fallback shows its raw message when the vendor hosts
+    // no page for the topic.
+    const lastFailure = ref<ClassifiedFinish | null>(null);
     // How the faces resolve a help topic (`[shell] guides` in the manifest,
     // reported by get_config): `embedded` opens the in-app article (with the
     // official page one click away), `online` skips the article and opens
@@ -1155,6 +1159,7 @@ export default defineComponent({
      *  `io error: … (os error 5)` is exactly the noise the copy action and
      *  the article already handle. */
     function showFinishFailure(failure: ClassifiedFinish) {
+      lastFailure.value = failure;
       const notices = withProduct(strings(locale.value)).notices;
       const topic = KIND_TOPIC[failure.kind] ?? null;
       const headline = failureHeadline(failure, notices);
@@ -1197,13 +1202,35 @@ export default defineComponent({
     }
 
     /** The online-guides mode's whole help experience: the backend resolves
-     *  the localized vendor URL and opens the system browser. Fire-and-forget
-     *  — a browser can always be refused (no handler, a headless preview),
-     *  and that must not take the face down. */
+     *  the localized vendor URL and opens the system browser. A vendor with
+     *  no page for the topic (missing-files, everywhere) answers `false`,
+     *  and a refused browser (no handler, a headless preview) rejects —
+     *  both fall back to the details window with the raw reason, exactly
+     *  like the egui face, so online mode never swallows the failure. */
     function openOnlineHelp(topic: GuideTopic) {
-      void invoke<boolean>("open_help_url", { topic, locale: locale.value }).catch((err) => {
-        console.warn(`[shun] opening the official help page for "${topic}" failed:`, err);
-      });
+      const headline = topicHeadline(topic, withProduct(strings(locale.value)).notices);
+      const fallback = () =>
+        openFinishErrorWindow(
+          // The vendor hosts no page for this topic (missing-files,
+          // everywhere) or the browser was refused — show the raw reason
+          // of the failure that raised the affordance, never nothing.
+          lastFailure.value ?? {
+            stage: "launch",
+            kind: "other",
+            message: "",
+            osError: null,
+            helpTopic: null,
+          },
+          headline,
+        );
+      void invoke<boolean>("open_help_url", { topic, locale: locale.value })
+        .then((opened) => {
+          if (!opened) fallback();
+        })
+        .catch((err) => {
+          console.warn(`[shun] opening the official help page for "${topic}" failed:`, err);
+          fallback();
+        });
     }
 
     /** Opens the help window on a topic's article (the embedded mode's

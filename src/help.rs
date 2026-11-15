@@ -81,7 +81,14 @@ pub struct Distro {
 /// Linux (or where the file is absent — container images sometimes skip
 /// it).
 pub fn probe_distro() -> Option<Distro> {
-    probe_distro_from(&std::fs::read_to_string("/etc/os-release").ok()?)
+    for path in ["/etc/os-release", "/usr/lib/os-release"] {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if let Some(distro) = probe_distro_from(&text) {
+                return Some(distro);
+            }
+        }
+    }
+    None
 }
 
 /// Pure [`probe_distro`] for tests and offline resolution.
@@ -93,8 +100,15 @@ pub fn probe_distro_from(os_release: &str) -> Option<Distro> {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        // os-release values may be double-quoted; strip one pair.
-        let value = value.trim().trim_matches('"').to_string();
+        // os-release values may be quoted; strip one pair of either
+        // quote style the spec allows.
+        let value = value.trim();
+        let value = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+            .unwrap_or(value);
+        let value = value.to_string();
         if value.is_empty() {
             continue;
         }
@@ -155,6 +169,9 @@ fn localized(url: &str, locale: &str) -> String {
         // gets them back byte-for-byte (a rewritten `…/en/…` URL would
         // be a redirect the vendor did not publish).
         "en" => return url.to_string(),
+        // An unrecognized locale ALSO keeps the English page — guessing
+        // a vendor segment nobody publishes would 404.
+        "zz" | "" => return url.to_string(),
         "zh-Hans" => "zh-cn",
         "zh-Hant" => "zh-tw",
         // The remaining wizard locales all publish under the doubled
@@ -378,12 +395,11 @@ mod tests {
         assert!(url.contains("support.microsoft.com/pt-pt/"), "{url}");
         let url = help_url_for(TOPIC_DISK_SPACE, "de", "windows", None).unwrap();
         assert!(url.contains("support.microsoft.com/de-de/"), "{url}");
-        // An unknown locale still substitutes its id (the vendor's 404
-        // page is more honest than silently shipping English to a user
-        // who picked a language; the table only carries the ten the
-        // wizard offers, so this arm is defensive).
+        // An unrecognized locale keeps the English page (a guessed
+        // vendor segment nobody publishes would 404); the arm only
+        // fires for surprises — the ten wizard locales all map.
         let url = help_url_for(TOPIC_APP_CONTROL, "zz", "windows", None).unwrap();
-        assert!(url.contains("support.microsoft.com/zz/"), "{url}");
+        assert!(url.contains("/en-us/"), "{url}");
     }
 
     #[test]
@@ -472,6 +488,15 @@ EMPTY=
         assert_eq!(distro.id, "ubuntu");
         assert_eq!(distro.id_like, vec!["debian".to_string()]);
         assert_eq!(distro.home_url.as_deref(), Some("https://www.ubuntu.com/"));
+        // The spec also permits single quotes.
+        let distro = probe_distro_from(
+            "ID='arch'
+HOME_URL='https://archlinux.org/'
+",
+        )
+        .expect("parses");
+        assert_eq!(distro.id, "arch");
+        assert_eq!(distro.home_url.as_deref(), Some("https://archlinux.org/"));
         assert!(probe_distro_from("garbage").is_none());
     }
 }

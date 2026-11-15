@@ -46,17 +46,34 @@ const GUIDE_LOCALES: [&str; 10] = [
 ///   ONLY placeholders — an online product carries no article bytes, its
 ///   faces open `shun::help::help_url` directly.
 ///
-/// The generic preset always materializes placeholders: a stamped shell
-/// never reads product articles from the binary; its stamp container's
-/// config decides the mode at runtime.
+/// The generic preset materializes the real tree too (the articles are
+/// product-neutral); a stamped shell's runtime mode comes from its stamp
+/// container's config, and an `online` stamp simply never opens the
+/// window.
 fn materialize_guides(out_dir: &Path, shell_dir: &Path, mode: GuidesMode) {
     let dst_root = out_dir.join("guide");
     let img_dst = out_dir.join("guide-img");
     // Both trees are regenerated wholesale: stale real articles from an
     // earlier embedded build must never survive into an online one (and
     // vice versa) — the include! paths are identical.
-    let _ = std::fs::remove_dir_all(&dst_root);
-    let _ = std::fs::remove_dir_all(&img_dst);
+    std::fs::remove_dir_all(&dst_root)
+        .or_else(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })
+        .expect("purge the previous guide tree");
+    std::fs::remove_dir_all(&img_dst)
+        .or_else(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })
+        .expect("purge the previous figure tree");
 
     let src_root = shell_dir.join("guide");
     println!("cargo:rerun-if-changed={}", src_root.display());
@@ -201,9 +218,12 @@ fn main() {
             .expect("write placeholder logo kind");
         std::fs::write(out_dir.join("shun-demo-payload.shun"), [])
             .expect("write placeholder payload");
-        // The generic preset carries no article bytes: its runtime mode
-        // comes from the stamp container's config.
-        materialize_guides(out_dir, Path::new(&own_manifest_dir), GuidesMode::Online);
+        // The articles ARE product-neutral (no %PRODUCT% in any locale),
+        // so the generic preset embeds the real tree: a stamped shell in
+        // embedded mode opens the same article its webview twin shows,
+        // and the stamp container's config still picks online at
+        // runtime.
+        materialize_guides(out_dir, Path::new(&own_manifest_dir), GuidesMode::Embedded);
         println!("cargo:rustc-env=SHUN_PRODUCT_LOG_NAME=installer");
         tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(
             tauri_build::WindowsAttributes::new().app_manifest(include_str!("app.manifest")),

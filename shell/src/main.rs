@@ -906,33 +906,7 @@ fn open_help_url(topic: String, locale: String) -> Result<bool, String> {
 /// the same shape `finish_install` rejects with.
 #[tauri::command]
 fn classify_error(message: String) -> shun::failure::FinishFailure {
-    let (kind, os_error) = shun::failure::classify_message(&message);
-    shun::failure::FinishFailure {
-        stage: shun::failure::FinishStage::Install,
-        kind,
-        os_error,
-        help_topic: match kind {
-            shun::failure::FailureKind::AppControlBlocked => {
-                Some(shun::help::TOPIC_APP_CONTROL.to_string())
-            }
-            shun::failure::FailureKind::Permissions => {
-                Some(shun::help::TOPIC_PERMISSIONS.to_string())
-            }
-            shun::failure::FailureKind::DiskFull => Some(shun::help::TOPIC_DISK_SPACE.to_string()),
-            shun::failure::FailureKind::FileInUse => {
-                Some(shun::help::TOPIC_FILE_IN_USE.to_string())
-            }
-            shun::failure::FailureKind::PathTooLong => {
-                Some(shun::help::TOPIC_PATH_TOO_LONG.to_string())
-            }
-            shun::failure::FailureKind::Network => Some(shun::help::TOPIC_NETWORK.to_string()),
-            shun::failure::FailureKind::MissingExecutable => {
-                Some(shun::help::TOPIC_MISSING_FILES.to_string())
-            }
-            shun::failure::FailureKind::Io | shun::failure::FailureKind::Other => None,
-        },
-        message,
-    }
+    shun::failure::FinishFailure::from_message(shun::failure::FinishStage::Install, message)
 }
 
 /// Runs the install flow for the wizard UI: the shared driver on a

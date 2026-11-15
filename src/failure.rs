@@ -130,6 +130,20 @@ impl FinishFailure {
         }
     }
 
+    /// Classifies a flow error that arrives as text under `stage` — the
+    /// string-shaped arm the install lane surfaces through `to_string()`.
+    pub fn from_message(stage: FinishStage, message: impl Into<String>) -> Self {
+        let message = message.into();
+        let (kind, os_error) = classify_message(&message);
+        Self {
+            stage,
+            kind,
+            message,
+            os_error,
+            help_topic: help_topic_for(kind),
+        }
+    }
+
     /// Whether the UI should offer the "what do I do now" guide action.
     pub fn has_help(&self) -> bool {
         self.help_topic.is_some()
@@ -145,7 +159,10 @@ fn classify_error(error: &ShunError) -> (FailureKind, Option<i32>, Option<String
             }
             None => (FailureKind::Io, None, None),
         },
-        ShunError::MissingEntry(_) => (FailureKind::MissingExecutable, None, None),
+        ShunError::MissingEntry(_) => {
+            let kind = FailureKind::MissingExecutable;
+            (kind, None, help_topic_for(kind))
+        }
         _ => (FailureKind::Other, None, None),
     }
 }
@@ -153,34 +170,55 @@ fn classify_error(error: &ShunError) -> (FailureKind, Option<i32>, Option<String
 /// Maps a raw OS error code to the narrow reason. Kept public because the
 /// mapping is the contract between the classifier and the guide topics.
 ///
-/// The table covers BOTH platforms' raw codes in one arm list — the
-/// numbers overlap harmlessly (`ENOSPC` and `ERROR_DISK_FULL` are both
-/// 28 and mean the same thing; the Winsock block is far from the Unix
-/// one), so one match serves every host this crate compiles for.
+/// The Windows and Unix code spaces are kept APART, not merged: their
+/// numbers collide with different meanings (28 is `ERROR_OUT_OF_PAPER`
+/// on Windows but `ENOSPC` on Unix; 13 is `ERROR_INVALID_DATA` on
+/// Windows but `EACCES` on Unix), and a merged table misroutes real
+/// Windows errors onto Unix remedies. The Unix arms are `cfg`-gated so
+/// each platform's classifier only knows its own codes; the Winsock
+/// block is Windows-only by nature, and network failures usually arrive
+/// as strings anyway ([`classify_message`]).
 pub fn classify_os_error(code: i32) -> FailureKind {
     match code {
         ERROR_APPLICATION_CONTROL_POLICY_BLOCKED | ERROR_ACCESS_DISABLED_BY_POLICY => {
             FailureKind::AppControlBlocked
         }
-        // Access denied (Win), privilege not held (Win), EPERM / EACCES /
-        // EROFS (Unix).
-        5 | 1314 | 1 | 13 | 30 => FailureKind::Permissions,
-        // Disk full (Win), handle-disk-full (Win), ENOSPC (Unix).
-        28 | 39 => FailureKind::DiskFull,
-        // Sharing violation + user-mapped file (Win), ETXTBSY (Unix).
-        32 | 1224 | 26 => FailureKind::FileInUse,
-        // Filename-exceeds-range + bad pathname (Win), ENAMETOOLONG (Unix).
-        206 | 161 | 36 => FailureKind::PathTooLong,
-        // The Winsock block: timed out / refused / unreachable /
-        // aborted / reset; the WinINet block: name resolution, cannot
-        // connect, timeout. Network failures usually arrive as strings
-        // (ureq), so these arms serve the rare io-borne path.
+        #[cfg(windows)]
+        // Access denied; privilege not held.
+        5 | 1314 => FailureKind::Permissions,
+        #[cfg(windows)]
+        // ERROR_DISK_FULL; ERROR_HANDLE_DISK_FULL.
+        112 | 39 => FailureKind::DiskFull,
+        #[cfg(windows)]
+        // Sharing violation; user-mapped file.
+        32 | 1224 => FailureKind::FileInUse,
+        #[cfg(windows)]
+        // Filename-exceeds-range; bad pathname.
+        206 | 161 => FailureKind::PathTooLong,
+        #[cfg(windows)]
+        // Winsock: timed out / refused / unreachable / aborted / reset.
+        // WinINet: timeout / name resolution / cannot connect.
         10060 | 10061 | 10051 | 10053 | 10054 | 12002 | 12007 | 12029 => FailureKind::Network,
+        #[cfg(not(windows))]
+        // EPERM / EACCES / EROFS.
+        1 | 13 | 30 => FailureKind::Permissions,
+        #[cfg(not(windows))]
+        // ENOSPC.
+        28 => FailureKind::DiskFull,
+        #[cfg(not(windows))]
+        // ETXTBSY.
+        26 => FailureKind::FileInUse,
+        #[cfg(not(windows))]
+        // ENAMETOOLONG.
+        36 => FailureKind::PathTooLong,
         _ => FailureKind::Io,
     }
 }
 
-fn help_topic_for(kind: FailureKind) -> Option<String> {
+/// The kind → guide-topic table. `pub(crate)` because the shell's
+/// `classify_error` command and the faces re-derive the same pairing —
+/// one table, no drift.
+pub(crate) fn help_topic_for(kind: FailureKind) -> Option<String> {
     match kind {
         FailureKind::AppControlBlocked => Some(crate::help::TOPIC_APP_CONTROL.to_string()),
         FailureKind::Permissions => Some(crate::help::TOPIC_PERMISSIONS.to_string()),
@@ -216,12 +254,23 @@ pub fn classify_message(message: &str) -> (FailureKind, Option<i32>) {
         return (kind, Some(code));
     }
     // Application-control also travels as its hex form (the WoWSP field
-    // report spelled it 0x11C7).
-    if message.contains("0x11C7") {
-        return (
-            FailureKind::AppControlBlocked,
-            Some(ERROR_APPLICATION_CONTROL_POLICY_BLOCKED),
-        );
+    // report spelled it 0x11C7). Token-bounded and case-insensitive: a
+    // longer hex value that merely CONTAINS the digits (a script hook
+    // printing `fault at 0x11C7F00A`) must not classify as the block.
+    let mut at = 0;
+    while let Some(rel) = message[at..].to_lowercase().find("0x11c7") {
+        let start = at + rel;
+        let end = start + 6;
+        let before = message[..start].chars().next_back();
+        let after = message[end..].chars().next();
+        let bounded = |c: Option<char>| c.map(|c| !(c.is_ascii_hexdigit())).unwrap_or(true);
+        if bounded(before) && bounded(after) {
+            return (
+                FailureKind::AppControlBlocked,
+                Some(ERROR_APPLICATION_CONTROL_POLICY_BLOCKED),
+            );
+        }
+        at = end;
     }
     // Download / transport failures (ureq's composed English): the words
     // the transport actually prints, matched lowercase against a
@@ -259,10 +308,15 @@ fn find_os_error(text: &str) -> Option<OsErrorHit> {
             .take_while(|c| c.is_ascii_digit())
             .collect();
         if !digits.is_empty() {
-            return Some(OsErrorHit {
-                code: digits.parse().ok()?,
-                end: start + digits.len(),
-            });
+            if let Ok(code) = digits.parse::<i32>() {
+                return Some(OsErrorHit {
+                    code,
+                    end: start + digits.len(),
+                });
+            }
+            // A value past i32 does not abort the walk: skip this hit
+            // and keep scanning (a message may carry a wider code and a
+            // real one further on).
         }
         search_from = start;
     }
@@ -328,7 +382,13 @@ mod tests {
         let error = ShunError::MissingEntry(std::path::PathBuf::from("bin/app.exe"));
         let failure = FinishFailure::from_error(FinishStage::Launch, &error);
         assert_eq!(failure.kind, FailureKind::MissingExecutable);
-        assert!(failure.help_topic.is_none());
+        // The kind's table row names the missing-files article (an AV
+        // quarantine is the usual cause) — topic and kind agree.
+        assert_eq!(
+            failure.help_topic.as_deref(),
+            Some(crate::help::TOPIC_MISSING_FILES)
+        );
+        assert!(failure.has_help());
     }
 
     #[test]
@@ -359,23 +419,67 @@ mod tests {
     }
 
     #[test]
-    fn os_codes_map_to_the_failure_families_across_platforms() {
-        let cases: [(i32, FailureKind); 12] = [
-            (5, FailureKind::Permissions),   // ERROR_ACCESS_DENIED
-            (13, FailureKind::Permissions),  // EACCES
-            (30, FailureKind::Permissions),  // EROFS
-            (28, FailureKind::DiskFull),     // ERROR_DISK_FULL / ENOSPC
-            (39, FailureKind::DiskFull),     // ERROR_HANDLE_DISK_FULL
-            (32, FailureKind::FileInUse),    // ERROR_SHARING_VIOLATION
-            (26, FailureKind::FileInUse),    // ETXTBSY
-            (1224, FailureKind::FileInUse),  // ERROR_USER_MAPPED_FILE
-            (206, FailureKind::PathTooLong), // ERROR_FILENAME_EXCEDNAV
-            (36, FailureKind::PathTooLong),  // ENAMETOOLONG
-            (10061, FailureKind::Network),   // WSAECONNREFUSED
-            (12029, FailureKind::Network),   // ERROR_INTERNET_CANNOT_CONNECT
-        ];
-        for (code, kind) in cases {
-            assert_eq!(classify_os_error(code), kind, "code {code}");
+    fn os_codes_map_to_the_failure_families_per_platform() {
+        // Windows and Unix code spaces are deliberately separate (28 is
+        // ERROR_OUT_OF_PAPER on Windows but ENOSPC on Unix) — each host
+        // classifies only its OWN codes, and the colliding numbers must
+        // land on the host's meaning (usually plain Io).
+        if cfg!(windows) {
+            let cases: [(i32, FailureKind); 10] = [
+                (5, FailureKind::Permissions),    // ERROR_ACCESS_DENIED
+                (1314, FailureKind::Permissions), // ERROR_PRIVILEGE_NOT_HELD
+                (112, FailureKind::DiskFull),     // ERROR_DISK_FULL
+                (39, FailureKind::DiskFull),      // ERROR_HANDLE_DISK_FULL
+                (32, FailureKind::FileInUse),     // ERROR_SHARING_VIOLATION
+                (1224, FailureKind::FileInUse),   // ERROR_USER_MAPPED_FILE
+                (206, FailureKind::PathTooLong),  // ERROR_FILENAME_EXCEDNAV
+                (161, FailureKind::PathTooLong),  // ERROR_BAD_PATHNAME
+                (10061, FailureKind::Network),    // WSAECONNREFUSED
+                (12029, FailureKind::Network),    // ERROR_INTERNET_CANNOT_CONNECT
+            ];
+            for (code, kind) in cases {
+                assert_eq!(classify_os_error(code), kind, "windows code {code}");
+            }
+            // The Unix-only numbers mean nothing on Windows — plain Io,
+            // never a Unix remedy.
+            for code in [1, 13, 26, 28, 30, 36] {
+                assert_eq!(
+                    classify_os_error(code),
+                    FailureKind::Io,
+                    "unix code {code} on windows"
+                );
+            }
+        } else {
+            let cases: [(i32, FailureKind); 6] = [
+                (1, FailureKind::Permissions),  // EPERM
+                (13, FailureKind::Permissions), // EACCES
+                (30, FailureKind::Permissions), // EROFS
+                (28, FailureKind::DiskFull),    // ENOSPC
+                (26, FailureKind::FileInUse),   // ETXTBSY
+                (36, FailureKind::PathTooLong), // ENAMETOOLONG
+            ];
+            for (code, kind) in cases {
+                assert_eq!(classify_os_error(code), kind, "unix code {code}");
+            }
+            // The Windows-only numbers mean nothing on Unix — plain Io,
+            // never a Windows remedy (28 is ENOSPC here, NOT paper-out).
+            for code in [5, 1314, 112, 39, 32, 1224, 206, 161, 10061, 12029] {
+                assert_eq!(
+                    classify_os_error(code),
+                    FailureKind::Io,
+                    "windows code {code} on unix"
+                );
+            }
+        }
+        for kind in [
+            FailureKind::AppControlBlocked,
+            FailureKind::Permissions,
+            FailureKind::DiskFull,
+            FailureKind::FileInUse,
+            FailureKind::PathTooLong,
+            FailureKind::Network,
+            FailureKind::MissingExecutable,
+        ] {
             let topic = help_topic_for(kind).expect("family carries a topic");
             assert!(
                 crate::help::TOPICS.contains(&topic.as_str()),
@@ -400,15 +504,22 @@ mod tests {
 
     #[test]
     fn flow_messages_classify_through_their_embedded_os_code() {
-        // The shape run_install actually produces on a denied write.
-        let (kind, code) = classify_message("io error: Access is denied. (os error 5)");
-        assert_eq!(kind, FailureKind::Permissions);
-        assert_eq!(code, Some(5));
-        // And the ETXTBSY / in-use arm.
+        // The shape run_install actually produces on a denied write —
+        // the host's own access-denied code (5 = ERROR_ACCESS_DENIED on
+        // Windows, 13 = EACCES on Unix).
+        let denied: i32 = if cfg!(windows) { 5 } else { 13 };
         let (kind, code) =
-            classify_message("io error: Extract of WoWSP.exe failed: Text file busy (os error 26)");
+            classify_message(&format!("io error: Access is denied. (os error {denied})"));
+        assert_eq!(kind, FailureKind::Permissions);
+        assert_eq!(code, Some(denied));
+        // And the in-use arm (32 = sharing violation on Windows,
+        // 26 = ETXTBSY on Unix).
+        let in_use: i32 = if cfg!(windows) { 32 } else { 26 };
+        let (kind, code) = classify_message(&format!(
+            "io error: Extract of WoWSP.exe failed: file is busy (os error {in_use})"
+        ));
         assert_eq!(kind, FailureKind::FileInUse);
-        assert_eq!(code, Some(26));
+        assert_eq!(code, Some(in_use));
     }
 
     #[test]
@@ -440,10 +551,25 @@ mod tests {
     #[test]
     fn multiple_os_codes_walk_forward_and_the_narrower_one_wins() {
         // The first code (2, ENOENT) is plain IO; the classifier keeps
-        // walking and the denied write further on is the informative one.
-        let (kind, code) =
-            classify_message("io error: absent (os error 2) during write to X (os error 5)");
+        // walking and the denied write further on is the informative one
+        // (the host's own access-denied code).
+        let denied: i32 = if cfg!(windows) { 5 } else { 13 };
+        let (kind, code) = classify_message(&format!(
+            "io error: absent (os error 2) during write to X (os error {denied})"
+        ));
         assert_eq!(kind, FailureKind::Permissions);
-        assert_eq!(code, Some(5));
+        assert_eq!(code, Some(denied));
+    }
+
+    #[test]
+    fn the_os_error_walk_survives_an_overflowing_code() {
+        // A value past i32 skips one hit without aborting the walk: the
+        // real code further on still wins.
+        let denied: i32 = if cfg!(windows) { 5 } else { 13 };
+        let (kind, code) = classify_message(&format!(
+            "io error: first (os error 99999999999) then denied (os error {denied})"
+        ));
+        assert_eq!(kind, FailureKind::Permissions);
+        assert_eq!(code, Some(denied));
     }
 }

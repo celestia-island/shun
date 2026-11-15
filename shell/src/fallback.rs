@@ -1003,7 +1003,8 @@ fn preview_failure(value: &str) -> Option<(shun::failure::FailureKind, String)> 
         ),
         "fail-disk-space" => (
             Kind::DiskFull,
-            "io error: There is not enough space on the disk. (os error 28)",
+            // ERROR_DISK_FULL = 112 on Windows (28 is Unix ENOSPC).
+            "io error: There is not enough space on the disk. (os error 112)",
         ),
         "fail-file-in-use" => (
             Kind::FileInUse,
@@ -6653,7 +6654,10 @@ mod strings_tests {
     /// text cannot express.
     #[test]
     fn install_flow_messages_classify_through_the_shared_table() {
-        let failure = InstallFailure::classify("io error: denied (os error 5)".into());
+        // The host's own access-denied code (5 = ERROR_ACCESS_DENIED on
+        // Windows, 13 = EACCES on Unix).
+        let denied: i32 = if cfg!(windows) { 5 } else { 13 };
+        let failure = InstallFailure::classify(format!("io error: denied (os error {denied})"));
         assert_eq!(
             failure.topic.as_deref(),
             Some(shun::help::TOPIC_PERMISSIONS)
