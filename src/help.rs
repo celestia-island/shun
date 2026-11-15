@@ -167,11 +167,10 @@ fn localized(url: &str, locale: &str) -> String {
     let segment = match locale {
         // The table entries ARE the English pages: the English caller
         // gets them back byte-for-byte (a rewritten `…/en/…` URL would
-        // be a redirect the vendor did not publish).
-        "en" => return url.to_string(),
-        // An unrecognized locale ALSO keeps the English page — guessing
-        // a vendor segment nobody publishes would 404.
-        "zz" | "" => return url.to_string(),
+        // be a redirect the vendor did not publish). Any locale the
+        // table does not map — which includes every id outside the
+        // wizard's ten — keeps the English page too: guessing a vendor
+        // segment nobody publishes would 404.
         "zh-Hans" => "zh-cn",
         "zh-Hant" => "zh-tw",
         // The remaining wizard locales all publish under the doubled
@@ -183,7 +182,8 @@ fn localized(url: &str, locale: &str) -> String {
         "ko" => "ko-kr",
         "ru" => "ru-ru",
         "pt" => "pt-pt",
-        other => other,
+        // Unrecognized: keep the English page (see the arm comment).
+        _ => return url.to_string(),
     };
     let Some(host_end) = [
         "support.microsoft.com/",
@@ -395,10 +395,12 @@ mod tests {
         assert!(url.contains("support.microsoft.com/pt-pt/"), "{url}");
         let url = help_url_for(TOPIC_DISK_SPACE, "de", "windows", None).unwrap();
         assert!(url.contains("support.microsoft.com/de-de/"), "{url}");
-        // An unrecognized locale keeps the English page (a guessed
-        // vendor segment nobody publishes would 404); the arm only
-        // fires for surprises — the ten wizard locales all map.
-        let url = help_url_for(TOPIC_APP_CONTROL, "zz", "windows", None).unwrap();
+        // An unrecognized locale (not one of the wizard's ten) keeps the
+        // English page — a guessed vendor segment nobody publishes would
+        // 404.
+        let url = help_url_for(TOPIC_APP_CONTROL, "nl", "windows", None).unwrap();
+        assert!(url.contains("/en-us/"), "{url}");
+        let url = help_url_for(TOPIC_APP_CONTROL, "", "windows", None).unwrap();
         assert!(url.contains("/en-us/"), "{url}");
     }
 

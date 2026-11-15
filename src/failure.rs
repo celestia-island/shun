@@ -257,20 +257,31 @@ pub fn classify_message(message: &str) -> (FailureKind, Option<i32>) {
     // report spelled it 0x11C7). Token-bounded and case-insensitive: a
     // longer hex value that merely CONTAINS the digits (a script hook
     // printing `fault at 0x11C7F00A`) must not classify as the block.
-    let mut at = 0;
-    while let Some(rel) = message[at..].to_lowercase().find("0x11c7") {
-        let start = at + rel;
-        let end = start + 6;
-        let before = message[..start].chars().next_back();
-        let after = message[end..].chars().next();
-        let bounded = |c: Option<char>| c.map(|c| !(c.is_ascii_hexdigit())).unwrap_or(true);
-        if bounded(before) && bounded(after) {
-            return (
-                FailureKind::AppControlBlocked,
-                Some(ERROR_APPLICATION_CONTROL_POLICY_BLOCKED),
-            );
+    //
+    // Scanned over CHARS of the original string — a lowercased COPY
+    // cannot be reused for slicing, because lowercasing changes byte
+    // lengths (İ U+0130 lowers to three bytes) and the offsets would
+    // land out of bounds or mid-char.
+    let pattern: Vec<char> = "0x11c7".chars().collect();
+    let chars: Vec<char> = message.chars().collect();
+    let bounded = |c: Option<char>| c.map(|c| !c.is_ascii_hexdigit()).unwrap_or(true);
+    let mut index = 0usize;
+    while index + pattern.len() <= chars.len() {
+        if chars[index..index + pattern.len()]
+            .iter()
+            .zip(pattern.iter())
+            .all(|(c, p)| c.to_ascii_lowercase() == *p)
+        {
+            let before = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
+            let after = chars.get(index + pattern.len()).copied();
+            if bounded(before) && bounded(after) {
+                return (
+                    FailureKind::AppControlBlocked,
+                    Some(ERROR_APPLICATION_CONTROL_POLICY_BLOCKED),
+                );
+            }
         }
-        at = end;
+        index += 1;
     }
     // Download / transport failures (ureq's composed English): the words
     // the transport actually prints, matched lowercase against a
@@ -546,6 +557,33 @@ mod tests {
         let (kind, code) = classify_message("CreateProcess failed: 0x11C7 before any output");
         assert_eq!(kind, FailureKind::AppControlBlocked);
         assert_eq!(code, Some(ERROR_APPLICATION_CONTROL_POLICY_BLOCKED));
+    }
+
+    #[test]
+    fn the_hex_form_is_token_bounded_and_case_insensitive() {
+        // Standalone, either case: both classify.
+        for message in ["CreateProcess failed: 0x11C7", "blocked: 0x11c7 (?)"] {
+            let (kind, code) = classify_message(message);
+            assert_eq!(kind, FailureKind::AppControlBlocked, "{message}");
+            assert_eq!(code, Some(ERROR_APPLICATION_CONTROL_POLICY_BLOCKED));
+        }
+        // A longer hex value that merely CONTAINS the digits must not —
+        // script-hook errors embed arbitrary script text.
+        let (kind, code) = classify_message("script prepare: fault at 0x11C7F00A in module two");
+        assert_ne!(
+            kind,
+            FailureKind::AppControlBlocked,
+            "0x11C7F00A is not the block"
+        );
+        assert_eq!(code, None);
+        // Bounded by sentence punctuation too.
+        let (kind, code) = classify_message("blocked (see 0x11c7.)");
+        assert_eq!(kind, FailureKind::AppControlBlocked);
+        assert_eq!(code, Some(ERROR_APPLICATION_CONTROL_POLICY_BLOCKED));
+        // And the scan never panics on multi-byte case folding around a
+        // hit (the lowercased length of İ differs from the original).
+        let (kind, _) = classify_message("C:\\Users\\\u{0130}brahim\\app.exe blocked 0x11C7");
+        assert_eq!(kind, FailureKind::AppControlBlocked);
     }
 
     #[test]

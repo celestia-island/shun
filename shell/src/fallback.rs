@@ -990,49 +990,64 @@ impl InstallFailure {
 }
 
 /// The `fail-…` preview values and the synthetic message each one reports.
-/// The OS codes are the REAL ones a host produces (see
-/// `shun::failure::classify_os_error`), so the preview exercises the same
-/// classifier arm the field does.
+/// The OS codes are the REAL ones the RUNNING host produces (see
+/// `shun::failure::classify_os_error` — the tables are platform-split),
+/// so the preview exercises the same classifier arm the field does.
 #[cfg(debug_assertions)]
 fn preview_failure(value: &str) -> Option<(shun::failure::FailureKind, String)> {
     use shun::failure::FailureKind as Kind;
+    // Each family's code is the RUNNING host's (the classifier is
+    // platform-split): access-denied 5 (Win) / 13 (Unix), disk-full 112
+    // (Win ERROR_DISK_FULL) / 28 (Unix ENOSPC), in-use 32 / 26, too-long
+    // 206 / 36.
+    let denied: i32 = if cfg!(windows) { 5 } else { 13 };
+    let disk_full: i32 = if cfg!(windows) { 112 } else { 28 };
+    let in_use: i32 = if cfg!(windows) { 32 } else { 26 };
+    let too_long: i32 = if cfg!(windows) { 206 } else { 36 };
     let (kind, message) = match value {
         "fail-permissions" => (
             Kind::Permissions,
-            "io error: Access is denied. (os error 5)",
+            format!("io error: Access is denied. (os error {denied})"),
         ),
         "fail-disk-space" => (
             Kind::DiskFull,
-            // ERROR_DISK_FULL = 112 on Windows (28 is Unix ENOSPC).
-            "io error: There is not enough space on the disk. (os error 112)",
+            format!("io error: There is not enough space on the disk. (os error {disk_full})"),
         ),
         "fail-file-in-use" => (
             Kind::FileInUse,
-            "io error: The process cannot access the file because it is being \
-             used by another process. (os error 32)",
+            format!(
+                "io error: The process cannot access the file because it is being \
+                 used by another process. (os error {in_use})"
+            ),
         ),
         "fail-path-too-long" => (
             Kind::PathTooLong,
-            "io error: The filename or extension is too long. (os error 206)",
+            format!("io error: The filename or extension is too long. (os error {too_long})"),
         ),
-        "fail-network" => (
-            Kind::Network,
-            "download failed: Connection refused (os error 111)",
-        ),
+        "fail-network" => {
+            // Refused is 10061 (Winsock) / 111 (Unix ECONNREFUSED) —
+            // both carry the wording marker as a second net.
+            let refused: i32 = if cfg!(windows) { 10061 } else { 111 };
+            (
+                Kind::Network,
+                format!("download failed: Connection refused (os error {refused})"),
+            )
+        }
         // No text marker exists for a missing entry point: the kind is
         // stated directly by the caller.
         "fail-missing-files" => (
             Kind::MissingExecutable,
-            "the installed application is missing from the install folder",
+            "the installed application is missing from the install folder".to_string(),
         ),
         "fail-app-control" => (
             Kind::AppControlBlocked,
             "io error: the process creation was blocked by application-control \
-             policy (os error 4551)",
+             policy (os error 4551)"
+                .to_string(),
         ),
         _ => return None,
     };
-    Some((kind, message.to_string()))
+    Some((kind, message))
 }
 
 /// Joins a localized notice lead with the raw failure detail — the hikari
