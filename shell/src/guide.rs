@@ -809,18 +809,49 @@ mod tests {
         );
     }
 
-    /// The official-page jump is per topic: `missing-files` is about this
-    /// product, not the OS, so the table has no page for it on ANY host —
-    /// the footer hides the action (deterministic across platforms).
+    /// The window resolves and caches the topic's official page exactly as
+    /// the core names it (`help_url` for the RUNNING host — so the
+    /// assertion stays host-independent by comparing against the same
+    /// call), and a raw message has no topic to look up.
+    #[test]
+    fn the_window_caches_the_topics_official_page() {
+        let mut window = GuideWindow::new();
+        for topic in shun::help::TOPICS {
+            window.open_topic(topic, "en");
+            assert_eq!(
+                window.official_url,
+                shun::help::help_url(topic, "en"),
+                "{topic}: the window resolves the page the core names"
+            );
+        }
+        window.open_details("x", "y");
+        assert!(
+            window.official_url.is_none(),
+            "a raw message has no topic to look up"
+        );
+        window.close();
+        assert!(window.official_url.is_none(), "closing drops the page");
+    }
+
+    /// The footer action hides where the vendor hosts no page: none of the
+    /// three OS tables has one for a missing install file (that failure is
+    /// about this product, not the OS). The PURE resolver takes the OS and
+    /// distro explicitly, so this holds on every host running the tests.
     #[test]
     fn topics_without_an_official_page_hide_the_footer_action() {
-        let mut window = GuideWindow::new();
-        window.open_topic(shun::help::TOPIC_MISSING_FILES, "en");
-        assert!(window.official_url.is_none());
-        // A topic the host DOES document resolves once, at open.
-        let expected = shun::help::help_url(shun::help::TOPIC_DISK_SPACE, "en");
-        window.open_topic(shun::help::TOPIC_DISK_SPACE, "en");
-        assert_eq!(window.official_url, expected);
+        for os in ["windows", "macos", "linux"] {
+            assert_eq!(
+                shun::help::help_url_for(shun::help::TOPIC_MISSING_FILES, "en", os, None),
+                None,
+                "{os}: no vendor page for a missing install file"
+            );
+        }
+        // A topic the host DOES document still resolves.
+        assert!(
+            shun::help::help_url_for(shun::help::TOPIC_APP_CONTROL, "en", "windows", None)
+                .is_some(),
+            "the app-control remedy is a Microsoft page"
+        );
     }
 
     /// Measures one article's rendered height at the modal's body width
@@ -840,7 +871,7 @@ mod tests {
                 ui.set_max_width(608.0);
                 if pending.take().is_some() {
                     let top = ui.next_widget_position().y;
-                    markdown::render_with_images(ui, &theme, body, 13.5, &mut ImageBank::new());
+                    markdown::render_with_images(ui, &theme, body, 13.5, &ImageBank::new());
                     height = Some(ui.next_widget_position().y - top);
                 }
             });

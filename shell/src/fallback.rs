@@ -917,7 +917,10 @@ struct Texts {
 /// kind → topic mapping): the toast copy is the face's business, the topic
 /// ids are the core's. A kind added there without an arm here degrades to
 /// the details window rather than a blank action.
-fn family_notice(kind: shun::failure::FailureKind) -> Option<(&'static str, fn(&Texts) -> &str)> {
+/// One routing row: the help topic and a borrow of its headline copy.
+type NoticeRoute = (&'static str, fn(&Texts) -> &str);
+
+fn family_notice(kind: shun::failure::FailureKind) -> Option<NoticeRoute> {
     use shun::failure::FailureKind as Kind;
     Some(match kind {
         Kind::AppControlBlocked => (

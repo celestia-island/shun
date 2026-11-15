@@ -343,12 +343,7 @@ impl ImageBank {
     fn lookup(&self, ctx: &egui::Context, reference: &str) -> Figure {
         let reference = reference.trim();
         let reference = reference.strip_prefix("./").unwrap_or(reference);
-        let Some((name, bytes)) = self
-            .figures
-            .iter()
-            .find(|(name, _)| *name == reference)
-            .map(|entry| *entry)
-        else {
+        let Some(&(name, bytes)) = self.figures.iter().find(|(name, _)| *name == reference) else {
             return Figure::Unknown;
         };
         if let Some(cached) = self.textures.borrow().get(name) {
