@@ -991,8 +991,9 @@ impl InstallFailure {
 
 /// The `fail-…` preview values and the synthetic message each one reports.
 /// The OS codes are the REAL ones the RUNNING host produces (see
-/// `shun::failure::classify_os_error` — the tables are platform-split),
-/// so the preview exercises the same classifier arm the field does.
+/// `shun::failure::classify_os_error` — the tables are platform-split per
+/// OS family), so the preview exercises the same classifier arm the field
+/// does.
 #[cfg(debug_assertions)]
 fn preview_failure(value: &str) -> Option<(shun::failure::FailureKind, String)> {
     use shun::failure::FailureKind as Kind;
@@ -1003,7 +1004,13 @@ fn preview_failure(value: &str) -> Option<(shun::failure::FailureKind, String)> 
     let denied: i32 = if cfg!(windows) { 5 } else { 13 };
     let disk_full: i32 = if cfg!(windows) { 112 } else { 28 };
     let in_use: i32 = if cfg!(windows) { 32 } else { 26 };
-    let too_long: i32 = if cfg!(windows) { 206 } else { 36 };
+    let too_long: i32 = if cfg!(windows) {
+        206
+    } else if cfg!(target_os = "macos") {
+        63 // Darwin's ENAMETOOLONG (its 36 is EINPROGRESS).
+    } else {
+        36
+    };
     let (kind, message) = match value {
         "fail-permissions" => (
             Kind::Permissions,
@@ -2542,8 +2549,10 @@ impl FallbackApp {
     ///
     /// Appending `+guide` to any `fail-…` value also opens that topic's
     /// window. The synthetic messages carry the same OS codes the field
-    /// produces (`os error 5` / `28` / `32` / `206`, a refused connection),
-    /// so `classify_message` walks the production path; `missing-files` has
+    /// produces on the RUNNING host (access-denied, disk-full, in-use,
+    /// name-too-long, a refused connection — per
+    /// `shun::failure::classify_os_error`'s platform-split tables), so
+    /// `classify_message` walks the production path; `missing-files` has
     /// no code marker and states its kind directly (the field only reaches
     /// it from a `MissingEntry` error on the launch path).
     ///

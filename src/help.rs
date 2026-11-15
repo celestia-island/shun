@@ -397,11 +397,19 @@ mod tests {
         assert!(url.contains("support.microsoft.com/de-de/"), "{url}");
         // An unrecognized locale (not one of the wizard's ten) keeps the
         // English page — a guessed vendor segment nobody publishes would
-        // 404.
-        let url = help_url_for(TOPIC_APP_CONTROL, "nl", "windows", None).unwrap();
-        assert!(url.contains("/en-us/"), "{url}");
-        let url = help_url_for(TOPIC_APP_CONTROL, "", "windows", None).unwrap();
-        assert!(url.contains("/en-us/"), "{url}");
+        // 404. The identity holds exactly, not just by substring.
+        for unknown in ["nl", "", "zz"] {
+            let url = help_url_for(TOPIC_APP_CONTROL, unknown, "windows", None).unwrap();
+            assert_eq!(
+                url,
+                windows_url(TOPIC_APP_CONTROL, unknown).unwrap(),
+                "unknown locale {unknown:?} keeps the table entry byte-for-byte"
+            );
+            assert_eq!(
+                url,
+                help_url_for(TOPIC_APP_CONTROL, "en", "windows", None).unwrap(),
+            );
+        }
     }
 
     #[test]

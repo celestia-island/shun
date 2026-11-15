@@ -1271,8 +1271,12 @@ export default defineComponent({
       if (!text) return;
       invoke<FinishFailurePayload>("classify_error", { message: text })
         .then((payload) => {
-          const topic = payload?.helpTopic;
-          installHelpTopic.value = isGuideTopic(topic) ? topic : null;
+          // ONE normalization path (the same one finish failures take), so
+          // the seat's topic and the online fallback's payload cannot
+          // drift: the fallback shows THIS failure's raw message.
+          const failure = classifyFinishError(payload);
+          installHelpTopic.value = isGuideTopic(failure.helpTopic) ? failure.helpTopic : null;
+          lastFailure.value = failure;
         })
         .catch(() => {});
     }

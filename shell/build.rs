@@ -43,8 +43,11 @@ const GUIDE_LOCALES: [&str; 10] = [
 ///   the build — a locale the content lane has not authored yet must not
 ///   break every other lane compiling);
 /// - **online** (the manifest's `[shell] guides = "online"`) materializes
-///   ONLY placeholders — an online product carries no article bytes, its
-///   faces open `shun::help::help_url` directly.
+///   ONLY placeholders — a manifest-built online product carries no
+///   article bytes, its faces open `shun::help::help_url` directly. (The
+///   generic preset embeds the real tree regardless: a stamped shell's
+///   online mode gates the WINDOW at runtime, and the articles are
+///   product-neutral.)
 ///
 /// The generic preset materializes the real tree too (the articles are
 /// product-neutral); a stamped shell's runtime mode comes from its stamp
