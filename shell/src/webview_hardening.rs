@@ -111,6 +111,12 @@ mod tests {
 
     /// `tauri.conf.json` as tauri-build reads it.
     const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+
+    /// The sibling demo app's webview face (`demo-app/ui`), which tauri-build
+    /// reads the same way. Kept beside the shell's so a regression in either
+    /// surface fails one `cargo test`.
+    const DEMO_CONF: &str = include_str!("../../demo-app/tauri.conf.json");
+    const DEMO_HTML: &str = include_str!("../../demo-app/ui/index.html");
     /// The shell's Tauri surface (the only module allowed to name it).
     const TAURI_TS: &str = include_str!("../web/src/tauri.ts");
     /// The frontend's dependency list — the imports must be installable.
@@ -243,5 +249,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The demo app's sibling webview face must not regress to the same
+    /// un-pinned posture the installer just left: a null CSP, or script/style
+    /// inlined into the HTML (which forces `'unsafe-inline'` back into the
+    /// policy). It still boots the global object (`withGlobalTauri`) because
+    /// `demo-app/ui` is a bundler-free static page — closing that half needs a
+    /// build step and is tracked in the follow-up, not silently assumed away.
+    #[test]
+    fn the_demo_app_carries_a_pinned_csp_and_no_inline_blocks() {
+        let conf: serde_json::Value =
+            serde_json::from_str(DEMO_CONF).expect("demo tauri.conf.json parses");
+        let csp = conf
+            .get("app")
+            .and_then(|a| a.get("security"))
+            .and_then(|s| s.get("csp"))
+            .and_then(serde_json::Value::as_str)
+            .expect("demo-app must carry a CSP string, not null");
+        for directive in [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self'",
+            "object-src 'none'",
+            "base-uri 'self'",
+        ] {
+            assert!(csp.contains(directive), "demo-app CSP lacks {directive}");
+        }
+        assert!(
+            !csp.contains("unsafe-inline"),
+            "demo-app CSP must not re-open inline script/style: {csp}"
+        );
+        // With no inline allowance, the HTML must not carry inline blocks.
+        for (label, needle) in [("<script>", "<script>"), ("<style>", "<style>")] {
+            assert!(
+                !DEMO_HTML.contains(needle),
+                "demo-app/index.html has an inline {label} block; extract it to a file"
+            );
+        }
+        assert!(
+            DEMO_HTML.contains("src=\"app.js\""),
+            "demo-app/index.html must load its script as an external file"
+        );
     }
 }
