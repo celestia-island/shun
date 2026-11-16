@@ -809,7 +809,7 @@ fn draw_wizard(
                 let rendered = match (ui.caps.images, bytes) {
                     (ImageSupport::None, _) | (_, None) => None,
                     (_, Some(bytes)) => {
-                        let rows = crate::tui_image::suggested_rows(&bytes, cols.max(1))
+                        let rows = crate::tui_image::suggested_rows(bytes, cols.max(1))
                             .unwrap_or(1)
                             .min(pane.height.saturating_sub(4));
                         ui.images
