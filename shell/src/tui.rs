@@ -22,6 +22,7 @@ use std::io;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use crossterm::ExecutableCommand;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
     MouseButton, MouseEventKind,
@@ -29,7 +30,6 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -39,9 +39,9 @@ use shun::flow::FlowEvent;
 use shun::payload::ArchivePayload;
 use shun::wizard::{InstallRequest, Step, UninstallPhase, WizardCore, WizardState};
 
-use crate::tui_caps::{probe, ImageSupport, TerminalCaps};
-use crate::tui_i18n::{normalize_locale, texts_for, LANGUAGES, Texts};
-use crate::tui_image::{image_markers, ImageCache};
+use crate::tui_caps::{ImageSupport, TerminalCaps, probe};
+use crate::tui_i18n::{LANGUAGES, Texts, normalize_locale, texts_for};
+use crate::tui_image::{ImageCache, image_markers};
 use crate::tui_theme::Theme;
 
 /// Which element of the location step holds the cursor.
@@ -146,6 +146,11 @@ pub fn run(
     if ui.caps.mouse {
         let _ = stdout.execute(EnableMouseCapture);
     }
+    // crossterm falls back to the console attribute API on Windows, which
+    // keeps color codes out of the byte stream; the probe above already
+    // enabled VT processing, so ask for ANSI SGR explicitly — real
+    // terminals render the same palette and the e2e harness can assert it.
+    crossterm::style::force_color_output(ui.caps.color != crate::tui_caps::ColorDepth::Mono);
     let backend = ratatui::backend::CrosstermBackend::new(&mut stdout);
     let mut terminal = ratatui::Terminal::new(backend).map_err(|e| e.to_string())?;
 
@@ -218,11 +223,11 @@ pub fn run(
                             dir_fault.as_ref(),
                             relocating,
                             &payload,
+                            finish_failed,
                         );
                     }
                 })
                 .map_err(|e| e.to_string())?;
-
 
             if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
                 let event = event::read().map_err(|e| e.to_string())?;
@@ -275,7 +280,9 @@ pub fn run(
                                         core.go(Step::Location);
                                     }
                                     Hit::Candidate(index) => {
-                                        if let Some(pick) = core.state.candidates.get(index).cloned() {
+                                        if let Some(pick) =
+                                            core.state.candidates.get(index).cloned()
+                                        {
                                             core.set_dir(pick.path.clone());
                                             core.state.dir_writable = Some(pick.writable);
                                             dir_fault = None;
@@ -284,7 +291,8 @@ pub fn run(
                                     Hit::LicenseAgree => core.state.agreed = !core.state.agreed,
                                     Hit::DoneDesktop => {
                                         if core.state.failure.is_none() {
-                                            core.state.desktop_shortcut = !core.state.desktop_shortcut;
+                                            core.state.desktop_shortcut =
+                                                !core.state.desktop_shortcut;
                                         }
                                     }
                                     Hit::DoneLaunch => {
@@ -316,9 +324,7 @@ pub fn run(
                                             }
                                         }
                                     }
-                                    Hit::Rail(_)
-                                    | Hit::LicensePane
-                                    | Hit::UninstallPrimary => {}
+                                    Hit::Rail(_) | Hit::LicensePane | Hit::UninstallPrimary => {}
                                 }
                             }
                             _ => {}
@@ -461,11 +467,16 @@ pub fn run(
                                     relocate_from: relocate_from.clone(),
                                 };
                                 worker = Some(std::thread::spawn(move || {
-                                    shun::wizard::run_install(&install_core, &payload, &request, &mut {
-                                        |event| {
-                                            let _ = tx.send(event.clone());
-                                        }
-                                    })
+                                    shun::wizard::run_install(
+                                        &install_core,
+                                        &payload,
+                                        &request,
+                                        &mut {
+                                            |event| {
+                                                let _ = tx.send(event.clone());
+                                            }
+                                        },
+                                    )
                                 }));
                             }
                             (Step::License, KeyCode::Esc, _) => core.go(Step::Location),
@@ -476,8 +487,10 @@ pub fn run(
                             (Step::Install, _, _) => {}
 
                             (Step::Done, KeyCode::Char(' '), _) => {
-                                // Cycle the done-page toggles in order.
-                                if core.state.failure.is_none() {
+                                // Cycle the done-page toggles in order — a failed
+                                // FINISH keeps them live so the answers can change
+                                // before the retry (an install failure does not).
+                                if core.state.failure.is_none() || finish_failed {
                                     if !core.state.desktop_shortcut {
                                         core.state.desktop_shortcut = true;
                                     } else if !core.state.launch_after {
@@ -537,7 +550,13 @@ pub fn run(
 }
 
 /// The left rail: the same five steps every face shows, themed.
-fn draw_rail(frame: &mut Frame, area: Rect, state: &WizardState, texts: &'static Texts, ui: &mut Ui) {
+fn draw_rail(
+    frame: &mut Frame,
+    area: Rect,
+    state: &WizardState,
+    texts: &'static Texts,
+    ui: &mut Ui,
+) {
     let current = step_index(state.step);
     let mut items: Vec<ListItem> = Vec::new();
     for (index, step) in Step::RAIL.iter().enumerate() {
@@ -585,6 +604,7 @@ fn draw_wizard(
     dir_fault: Option<&shun::wizard::DirCheckFault>,
     relocating: bool,
     payload: &ArchivePayload,
+    finish_failed: bool,
 ) {
     set_product(&core.config.product.name);
     let [rail_area, pane_area] = Layout::default()
@@ -686,12 +706,8 @@ fn draw_wizard(
                 ui.theme.plain
             };
             let writable_span = match core.state.dir_writable {
-                Some(true) => {
-                    Span::styled(format!(" {}", ui.theme.glyphs.ok), ui.theme.ok)
-                }
-                Some(false) => {
-                    Span::styled(format!(" {}", ui.theme.glyphs.bad), ui.theme.error)
-                }
+                Some(true) => Span::styled(format!(" {}", ui.theme.glyphs.ok), ui.theme.ok),
+                Some(false) => Span::styled(format!(" {}", ui.theme.glyphs.bad), ui.theme.error),
                 None => Span::raw(""),
             };
             let path = Paragraph::new(Line::from(vec![
@@ -871,79 +887,76 @@ fn draw_wizard(
                     Line::styled(format!("{} {}", line.time, line.text), style)
                 })
                 .collect();
-            frame.render_widget(
-                Paragraph::new(tail).block(ui.theme.block("")),
-                log,
-            );
+            frame.render_widget(Paragraph::new(tail).block(ui.theme.block("")), log);
         }
         Step::Done => {
+            // A failed FINISH keeps the answers editable (Space cycles, the
+            // checkboxes stay clickable) so the retry can change them; an
+            // install failure keeps the old terminal semantics.
             let mut lines: Vec<Line<'static>> = Vec::new();
+            // (line offset inside the pane's inner area, hit) for the mouse.
+            let mut click_rows: Vec<(u16, Hit)> = Vec::new();
             if let Some(err) = &core.state.failure {
                 lines.push(Line::styled(
                     format!("  {} {}", ui.theme.glyphs.bad, texts.done.1),
                     ui.theme.error,
                 ));
                 lines.push(Line::raw(format!("  {err}")));
+                if finish_failed {
+                    lines.push(Line::raw(""));
+                    click_rows.push((lines.len() as u16, Hit::DoneDesktop));
+                    lines.push(ui.theme.checkbox(core.state.desktop_shortcut, texts.done.2));
+                    click_rows.push((lines.len() as u16, Hit::DoneLaunch));
+                    lines.push(ui.theme.checkbox(core.state.launch_after, texts.done.3));
+                }
                 lines.push(Line::raw(""));
                 lines.push(Line::styled(
                     format!(
-                        "  {} {} / Esc {}",
-                        ui.theme.glyphs.arrow,
-                        texts.nav.0,
-                        texts.nav.1
+                        "  {} Enter {} · q/Esc {}",
+                        ui.theme.glyphs.arrow, texts.retry, texts.nav.1
                     ),
                     ui.theme.muted,
                 ));
+                if finish_failed {
+                    lines.push(Line::raw(""));
+                    click_rows.push((lines.len() as u16, Hit::DonePrimary));
+                    lines.push(Line::styled(
+                        format!("  [ {} ]", texts.retry),
+                        ui.theme.selected,
+                    ));
+                }
             } else {
                 lines.push(Line::styled(
                     format!("  {} {}", ui.theme.glyphs.ok, texts.done.0),
                     ui.theme.ok,
                 ));
-                lines.push(ui.theme.kv("", vec![Span::raw(core.state.dir.trim().to_string())]));
+                lines.push(
+                    ui.theme
+                        .kv("", vec![Span::raw(core.state.dir.trim().to_string())]),
+                );
                 lines.push(Line::raw(""));
+                click_rows.push((lines.len() as u16, Hit::DoneDesktop));
                 lines.push(ui.theme.checkbox(core.state.desktop_shortcut, texts.done.2));
+                click_rows.push((lines.len() as u16, Hit::DoneLaunch));
                 lines.push(ui.theme.checkbox(core.state.launch_after, texts.done.3));
                 lines.push(Line::raw(""));
+                click_rows.push((lines.len() as u16, Hit::DonePrimary));
                 lines.push(Line::styled(
                     format!("  [ {} ]", texts.nav.0),
                     ui.theme.selected,
                 ));
             }
             frame.render_widget(Paragraph::new(lines).block(ui.theme.block("")), pane);
-            // Checkbox rows sit four/five lines down from the pane top
-            // (title, status, dir, blank); the primary button is the
-            // "[ Next ]" row above.
-            if core.state.failure.is_none() {
-                let base = pane.y + 1;
-                ui.clickable(
-                    Rect {
-                        x: pane.x + 1,
-                        y: base + 3,
-                        width: pane.width.saturating_sub(2),
-                        height: 1,
-                    },
-                    Hit::DoneDesktop,
-                );
-                ui.clickable(
-                    Rect {
-                        x: pane.x + 1,
-                        y: base + 4,
-                        width: pane.width.saturating_sub(2),
-                        height: 1,
-                    },
-                    Hit::DoneLaunch,
-                );
-                ui.clickable(
-                    Rect {
-                        x: pane.x + 1,
-                        y: base + 6,
-                        width: pane.width.saturating_sub(2),
-                        height: 1,
-                    },
-                    Hit::DonePrimary,
-                );
-            } else {
-                ui.clickable(pane, Hit::DonePrimary);
+            for (offset, hit) in click_rows {
+                let row = Rect {
+                    x: pane.x + 1,
+                    y: pane.y + 1 + offset,
+                    width: pane.width.saturating_sub(2),
+                    height: 1,
+                };
+                if row.y < pane.y + pane.height {
+                    ui.clickable(row, hit);
+                }
             }
         }
     }
@@ -951,9 +964,10 @@ fn draw_wizard(
     // Footer: the key hints plus what the host terminal offers (the probe's
     // own line — also the e2e assertion hook).
     let footer_line = Line::from(vec![
-        Span::styled(format!(" {} ", ui.theme.glyphs.arrow), ui.theme.accent),
+        Span::styled(format!(" [{}] ", ui.caps.summary()), ui.theme.muted),
+        Span::styled(format!("{} ", ui.theme.glyphs.sep), ui.theme.muted),
+        Span::styled(format!("{} ", ui.theme.glyphs.arrow), ui.theme.accent),
         Span::raw(texts.footer),
-        Span::styled(format!("{} {}", ui.theme.glyphs.sep, ui.caps.summary()), ui.theme.muted),
     ]);
     frame.render_widget(Paragraph::new(footer_line).style(ui.theme.muted), footer);
 }
@@ -971,12 +985,12 @@ fn draw_uninstall(frame: &mut Frame, core: &WizardCore, texts: &'static Texts, u
     let lines: Vec<Line> = match core.state.uninstall_phase {
         UninstallPhase::Idle => vec![
             Line::raw(""),
-            ui.theme.kv("", vec![Span::raw(uninstall_target_dir().unwrap_or_default())]),
-            Line::raw(""),
-            Line::styled(
-                format!("  [ {} ]", texts.uninstall.0),
-                ui.theme.selected,
+            ui.theme.kv(
+                "",
+                vec![Span::raw(uninstall_target_dir().unwrap_or_default())],
             ),
+            Line::raw(""),
+            Line::styled(format!("  [ {} ]", texts.uninstall.0), ui.theme.selected),
             Line::styled(
                 format!("  R: {}   Esc: {}", texts.uninstall.1, texts.nav.1),
                 ui.theme.muted,

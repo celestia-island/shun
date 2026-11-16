@@ -77,8 +77,15 @@ pub struct TerminalCaps {
 impl TerminalCaps {
     /// One-line self-description for the footer (also the e2e assertion hook).
     pub fn summary(&self) -> String {
-        let mut parts = vec![self.kind.label().to_string(), self.color.label().to_string()];
-        parts.push(if self.unicode { "unicode".into() } else { "ascii".into() });
+        let mut parts = vec![
+            self.kind.label().to_string(),
+            self.color.label().to_string(),
+        ];
+        parts.push(if self.unicode {
+            "unicode".into()
+        } else {
+            "ascii".into()
+        });
         if self.mouse {
             parts.push("mouse".into());
         }
@@ -118,8 +125,14 @@ impl ProbeInput {
 /// Pure classifier — the whole decision matrix lives here.
 pub fn classify(input: &ProbeInput) -> TerminalCaps {
     let term = input.var("term").unwrap_or_default().to_ascii_lowercase();
-    let colorterm = input.var("colorterm").unwrap_or_default().to_ascii_lowercase();
-    let term_program = input.var("term_program").unwrap_or_default().to_ascii_lowercase();
+    let colorterm = input
+        .var("colorterm")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let term_program = input
+        .var("term_program")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
 
     let kind = if input.flag("wt_session") {
         TermKind::WindowsTerminal
@@ -275,8 +288,8 @@ pub fn probe() -> TerminalCaps {
 #[cfg(windows)]
 fn windows_console_vt() -> (bool, bool) {
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
-        STD_OUTPUT_HANDLE,
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE,
+        SetConsoleMode,
     };
 
     // SAFETY: plain kernel32 calls on the process's own stdout handle.

@@ -202,9 +202,21 @@ mod tests {
     #[test]
     fn mono_and_empty_areas_render_nothing() {
         let mut cache = ImageCache::default();
-        assert!(cache.render("x", Some(b"not an image"), 8, 4, ColorDepth::Mono).is_none());
-        assert!(cache.render("x", Some(b"not an image"), 8, 4, ColorDepth::TrueColor).is_none());
-        assert!(cache.render("x", None, 0, 4, ColorDepth::TrueColor).is_none());
+        assert!(
+            cache
+                .render("x", Some(b"not an image"), 8, 4, ColorDepth::Mono)
+                .is_none()
+        );
+        assert!(
+            cache
+                .render("x", Some(b"not an image"), 8, 4, ColorDepth::TrueColor)
+                .is_none()
+        );
+        assert!(
+            cache
+                .render("x", None, 0, 4, ColorDepth::TrueColor)
+                .is_none()
+        );
     }
 
     #[test]

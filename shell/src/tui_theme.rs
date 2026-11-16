@@ -242,7 +242,11 @@ mod tests {
     fn kv_lines_pad_the_label_column() {
         let theme = Theme::new(&caps(ColorDepth::TrueColor, true));
         let line = theme.kv("Install to", vec![Span::raw("C:/Apps")]);
-        let text: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
         assert!(text.starts_with("  Install to"));
         let value_at = text.find("C:/Apps").expect("value present");
         assert_eq!(value_at, 2 + LABEL_WIDTH + LABEL_PAD);

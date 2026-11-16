@@ -26,6 +26,8 @@ pub struct Texts {
         &'static str,
     ),
     pub nav: (&'static str, &'static str),
+    /// The done page's retry wording after a failed finish.
+    pub retry: &'static str,
     pub footer: &'static str,
 }
 
@@ -55,6 +57,7 @@ pub const EN: Texts = Texts {
         "Uninstall failed",
     ),
     nav: ("Next", "Back"),
+    retry: "Retry",
     footer: "↑/↓ move · Enter next/confirm · Esc back/exit · Tab switch focus · Space toggle · PgUp/PgDn scroll the license",
 };
 
@@ -71,6 +74,7 @@ pub const ZH_HANS: Texts = Texts {
     done: ("安装完成", "安装失败", "桌面快捷方式", "立即启动"),
     uninstall: ("卸载", "修复安装", "正在卸载", "卸载完成", "卸载失败"),
     nav: ("下一步", "上一步"),
+    retry: "重试",
     footer: "↑/↓ 移动 · Enter 下一步/确认 · Esc 上一步/退出 · Tab 切换焦点 · Space 勾选 · PgUp/PgDn 滚动协议",
 };
 
@@ -85,13 +89,26 @@ pub const ZH_HANT: Texts = Texts {
     license: ("使用者協議", "我已閱讀並接受上述協議"),
     install: "正在安裝",
     done: ("安裝完成", "安裝失敗", "桌面捷徑", "立即啟動"),
-    uninstall: ("解除安裝", "修復安裝", "正在解除安裝", "解除安裝完成", "解除安裝失敗"),
+    uninstall: (
+        "解除安裝",
+        "修復安裝",
+        "正在解除安裝",
+        "解除安裝完成",
+        "解除安裝失敗",
+    ),
     nav: ("下一步", "上一步"),
+    retry: "重試",
     footer: "↑/↓ 移動 · Enter 下一步/確認 · Esc 上一步/結束 · Tab 切換焦點 · Space 勾選 · PgUp/PgDn 捲動協議",
 };
 
 pub const JA: Texts = Texts {
-    rail: ["インストール言語", "インストール先", "使用許諾", "インストール", "完了"],
+    rail: [
+        "インストール言語",
+        "インストール先",
+        "使用許諾",
+        "インストール",
+        "完了",
+    ],
     language: ("言語を選択", "以降の手順はこの言語で表示されます"),
     location: ("インストール先を選択", "インストール先：", "候補："),
     relocate: (
@@ -100,9 +117,21 @@ pub const JA: Texts = Texts {
     ),
     license: ("使用許諾契約", "上記の契約を読み、同意します"),
     install: "インストール中",
-    done: ("インストール完了", "インストール失敗", "デスクトップショートカット", "すぐに起動"),
-    uninstall: ("アンインストール", "修復", "アンインストール中", "アンインストール完了", "アンインストール失敗"),
+    done: (
+        "インストール完了",
+        "インストール失敗",
+        "デスクトップショートカット",
+        "すぐに起動",
+    ),
+    uninstall: (
+        "アンインストール",
+        "修復",
+        "アンインストール中",
+        "アンインストール完了",
+        "アンインストール失敗",
+    ),
     nav: ("次へ", "戻る"),
+    retry: "再試行",
     footer: "↑/↓ 移動 · Enter 次へ/確定 · Esc 戻る/終了 · Tab フォーカス切替 · Space 切替 · PgUp/PgDn スクロール",
 };
 
@@ -119,54 +148,115 @@ pub const KO: Texts = Texts {
     done: ("설치 완료", "설치 실패", "바탕 화면 바로 가기", "지금 실행"),
     uninstall: ("제거", "복구", "제거 중", "제거 완료", "제거 실패"),
     nav: ("다음", "뒤로"),
+    retry: "다시 시도",
     footer: "↑/↓ 이동 · Enter 다음/확인 · Esc 뒤로/종료 · Tab 포커스 전환 · Space 전환 · PgUp/PgDn 스크롤",
 };
 
 pub const RU: Texts = Texts {
     rail: ["Язык", "Папка", "Лицензия", "Установка", "Готово"],
     language: ("Выберите язык", "Последующие шаги будут на этом языке"),
-    location: ("Выберите папку установки", "Куда установить:", "Быстрый выбор:"),
+    location: (
+        "Выберите папку установки",
+        "Куда установить:",
+        "Быстрый выбор:",
+    ),
     relocate: (
         "Требуется новая папка установки",
         "Предыдущая установка находится в папке, которую нельзя использовать совместно — обновление или удаление в ней удалит и остальные файлы папки. Выберите новую пустую папку; из старого расположения будут удалены только файлы этого продукта.",
     ),
-    license: ("Лицензионное соглашение", "Я прочитал(а) и принимаю соглашение"),
+    license: (
+        "Лицензионное соглашение",
+        "Я прочитал(а) и принимаю соглашение",
+    ),
     install: "Установка",
-    done: ("Установлено", "Ошибка установки", "Ярлык на рабочем столе", "Запустить сейчас"),
-    uninstall: ("Удалить", "Восстановить", "Удаление", "Удалено", "Ошибка удаления"),
+    done: (
+        "Установлено",
+        "Ошибка установки",
+        "Ярлык на рабочем столе",
+        "Запустить сейчас",
+    ),
+    uninstall: (
+        "Удалить",
+        "Восстановить",
+        "Удаление",
+        "Удалено",
+        "Ошибка удаления",
+    ),
     nav: ("Далее", "Назад"),
+    retry: "Повторить",
     footer: "↑/↓ перемещение · Enter далее/подтвердить · Esc назад/выход · Tab фокус · Space выбор · PgUp/PgDn прокрутка",
 };
 
 pub const ES: Texts = Texts {
     rail: ["Idioma", "Ubicación", "Licencia", "Instalación", "Listo"],
     language: ("Elija el idioma", "Los pasos siguientes se mostrarán en él"),
-    location: ("Elija la ubicación de instalación", "Instalar en:", "Ubicaciones sugeridas:"),
+    location: (
+        "Elija la ubicación de instalación",
+        "Instalar en:",
+        "Ubicaciones sugeridas:",
+    ),
     relocate: (
         "Se necesita una nueva ubicación",
         "La instalación anterior está en una carpeta que no debe compartir: actualizar o desinstalar allí borraría también el resto del contenido de la carpeta. Elija una carpeta nueva y vacía; solo se quitarán los archivos de este producto de la ubicación anterior.",
     ),
     license: ("Acuerdo de licencia", "He leído y acepto el acuerdo"),
     install: "Instalando",
-    done: ("Instalación completada", "Error de instalación", "Acceso directo en el escritorio", "Iniciar ahora"),
-    uninstall: ("Desinstalar", "Reparar", "Desinstalando", "Desinstalación completada", "Error de desinstalación"),
+    done: (
+        "Instalación completada",
+        "Error de instalación",
+        "Acceso directo en el escritorio",
+        "Iniciar ahora",
+    ),
+    uninstall: (
+        "Desinstalar",
+        "Reparar",
+        "Desinstalando",
+        "Desinstalación completada",
+        "Error de desinstalación",
+    ),
     nav: ("Siguiente", "Atrás"),
+    retry: "Reintentar",
     footer: "↑/↓ mover · Enter siguiente/confirmar · Esc atrás/salir · Tab cambiar foco · Space marcar · PgUp/PgDn desplazar",
 };
 
 pub const FR: Texts = Texts {
-    rail: ["Langue", "Emplacement", "Licence", "Installation", "Terminé"],
-    language: ("Choisissez la langue", "Les étapes suivantes s'afficheront dans cette langue"),
-    location: ("Choisissez l'emplacement d'installation", "Installer dans :", "Emplacements suggérés :"),
+    rail: [
+        "Langue",
+        "Emplacement",
+        "Licence",
+        "Installation",
+        "Terminé",
+    ],
+    language: (
+        "Choisissez la langue",
+        "Les étapes suivantes s'afficheront dans cette langue",
+    ),
+    location: (
+        "Choisissez l'emplacement d'installation",
+        "Installer dans :",
+        "Emplacements suggérés :",
+    ),
     relocate: (
         "Un nouvel emplacement est requis",
         "L'installation précédente se trouve dans un dossier qui ne doit pas être partagé — une mise à jour ou une désinstallation y effacerait aussi le reste du dossier. Choisissez un nouveau dossier vide ; seuls les fichiers de ce produit seront retirés de l'ancien emplacement.",
     ),
     license: ("Contrat de licence", "J'ai lu et j'accepte le contrat"),
     install: "Installation",
-    done: ("Installation terminée", "Échec de l'installation", "Raccourci sur le bureau", "Lancer maintenant"),
-    uninstall: ("Désinstaller", "Réparer", "Désinstallation", "Désinstallé", "Échec de la désinstallation"),
+    done: (
+        "Installation terminée",
+        "Échec de l'installation",
+        "Raccourci sur le bureau",
+        "Lancer maintenant",
+    ),
+    uninstall: (
+        "Désinstaller",
+        "Réparer",
+        "Désinstallation",
+        "Désinstallé",
+        "Échec de la désinstallation",
+    ),
     nav: ("Suivant", "Retour"),
+    retry: "Réessayer",
     footer: "↑/↓ déplacer · Enter suivant/confirmer · Esc retour/quitter · Tab changer le focus · Space cocher · PgUp/PgDn défiler",
 };
 
@@ -190,7 +280,10 @@ pub fn normalize_locale(raw: &str) -> &'static str {
     let language = tag.split(['-', '.', '@']).next().unwrap_or("");
     match language {
         "zh" => {
-            if tag.contains("hant") || tag.contains("tw") || tag.contains("hk") || tag.contains("mo")
+            if tag.contains("hant")
+                || tag.contains("tw")
+                || tag.contains("hk")
+                || tag.contains("mo")
             {
                 "zh-Hant"
             } else {
@@ -232,7 +325,10 @@ mod tests {
             assert!(!texts.install.is_empty(), "{locale}");
             assert!(!texts.footer.is_empty(), "{locale}");
             assert!(texts.rail.iter().all(|label| !label.is_empty()), "{locale}");
-            assert!(!texts.nav.0.is_empty() && !texts.nav.1.is_empty(), "{locale}");
+            assert!(
+                !texts.nav.0.is_empty() && !texts.nav.1.is_empty(),
+                "{locale}"
+            );
         }
     }
 
@@ -250,7 +346,10 @@ mod tests {
     #[test]
     fn the_picker_covers_the_documented_languages() {
         let keys: Vec<&str> = LANGUAGES.iter().map(|(locale, _)| *locale).collect();
-        assert_eq!(keys, vec!["en", "es", "fr", "ja", "ko", "ru", "zh-Hans", "zh-Hant"]);
+        assert_eq!(
+            keys,
+            vec!["en", "es", "fr", "ja", "ko", "ru", "zh-Hans", "zh-Hant"]
+        );
         // Every key resolves to its own table, not the English fallback.
         assert_eq!(texts_for("zh-Hant").rail[0], ZH_HANT.rail[0]);
         assert_ne!(texts_for("ja").install, EN.install);

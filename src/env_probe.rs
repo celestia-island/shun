@@ -249,9 +249,11 @@ pub fn system_locale() -> Option<&'static str> {
     }
     #[cfg(not(windows))]
     {
-        let raw = ["LC_ALL", "LC_CTYPE", "LANG"]
-            .iter()
-            .find_map(|name| std::env::var(name).ok().filter(|value| !value.trim().is_empty()))?;
+        let raw = ["LC_ALL", "LC_CTYPE", "LANG"].iter().find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })?;
         locale_from_tag(&raw)
     }
 }
