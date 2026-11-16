@@ -244,6 +244,7 @@ pub fn run(
                                 let hit = ui
                                     .hits
                                     .iter()
+                                    .rev()
                                     .find(|(rect, _)| {
                                         mouse.column >= rect.x
                                             && mouse.column < rect.x + rect.width
@@ -269,7 +270,12 @@ pub fn run(
                                     // Clicking an earlier rail step goes back there;
                                     // future steps stay inert (the flow gates them).
                                     Hit::Rail(step)
-                                        if step_index(step) <= step_index(core.state.step) =>
+                                        if step_index(step) < step_index(core.state.step)
+                                            && !matches!(
+                                                core.state.step,
+                                                Step::Install | Step::Done
+                                            )
+                                            && worker.is_none() =>
                                     {
                                         core.go(step);
                                     }
@@ -824,12 +830,17 @@ fn draw_wizard(
                     )),
                 }
             }
+            // The pager scrolls the body; the accept row is pinned to the
+            // pane's last interior line (rendering it into the whole pane
+            // would overwrite the title border).
+            let body_area = Rect {
+                height: pane.height.saturating_sub(1),
+                ..pane
+            };
             let paragraph = Paragraph::new(lines)
                 .block(ui.theme.block(&format!("{}{}", texts.license.0, pager)))
                 .scroll((license_scroll, 0));
-            frame.render_widget(paragraph, pane);
-            ui.clickable(pane, Hit::LicensePane);
-            // The accept row anchors on the pane's bottom border interior.
+            frame.render_widget(paragraph, body_area);
             let agree_row = Rect {
                 x: pane.x + 1,
                 y: pane.y + pane.height.saturating_sub(1),
@@ -838,8 +849,11 @@ fn draw_wizard(
             };
             frame.render_widget(
                 Paragraph::new(ui.theme.checkbox(core.state.agreed, texts.license.1)),
-                pane,
+                agree_row,
             );
+            // Registered AFTER the pane so a click on the row resolves to it
+            // (the hit lookup takes the most specific = last region).
+            ui.clickable(pane, Hit::LicensePane);
             ui.clickable(agree_row, Hit::LicenseAgree);
         }
         Step::Install => {
@@ -991,10 +1005,7 @@ fn draw_uninstall(frame: &mut Frame, core: &WizardCore, texts: &'static Texts, u
             ),
             Line::raw(""),
             Line::styled(format!("  [ {} ]", texts.uninstall.0), ui.theme.selected),
-            Line::styled(
-                format!("  R: {}   Esc: {}", texts.uninstall.1, texts.nav.1),
-                ui.theme.muted,
-            ),
+            Line::styled(format!("  Esc: {}", texts.nav.1), ui.theme.muted),
         ],
         UninstallPhase::Running => vec![
             Line::raw(""),
@@ -1024,7 +1035,7 @@ fn draw_uninstall(frame: &mut Frame, core: &WizardCore, texts: &'static Texts, u
     if core.state.uninstall_phase == UninstallPhase::Idle {
         let button = Rect {
             x: inner.x,
-            y: inner.y + 4,
+            y: inner.y + 3,
             width: inner.width,
             height: 1,
         };
