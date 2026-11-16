@@ -191,6 +191,16 @@ impl Theme {
     /// arrow glyphs the localized hints lead with, so it falls back to
     /// the English hints (the precedent for live pane hints) with the
     /// separators and arrows transliterated.
+    /// The capability summary in the host's alphabet — ASCII hosts get the
+    /// U+00B7 separators transcribed like the rest of the footer.
+    pub fn capability_summary(&self) -> String {
+        if self.caps.unicode {
+            self.caps.summary()
+        } else {
+            Self::asciify(&self.caps.summary())
+        }
+    }
+
     pub fn hint(&self, footer: &'static str) -> String {
         if self.caps.unicode {
             footer.to_string()

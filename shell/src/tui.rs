@@ -1028,10 +1028,7 @@ fn draw_wizard(
     // own line — also the e2e assertion hook).
     let footer_line = Line::from(vec![
         Span::styled(
-            format!(
-                " [{}] ",
-                crate::tui_theme::Theme::asciify(&ui.caps.summary())
-            ),
+            format!(" [{}] ", ui.theme.capability_summary()),
             ui.theme.muted,
         ),
         Span::styled(format!("{} ", ui.theme.glyphs.sep), ui.theme.muted),
