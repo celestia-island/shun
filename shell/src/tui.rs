@@ -924,7 +924,7 @@ fn draw_wizard(
                         lines.push(placeholder);
                         continue;
                     };
-                    let Ok(dyn_img) = image::load_from_memory(&bytes) else {
+                    let Ok(dyn_img) = image::load_from_memory(bytes) else {
                         lines.push(placeholder);
                         continue;
                     };
