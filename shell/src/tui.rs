@@ -36,7 +36,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui_image::picker::{Picker, ProtocolType};
-use ratatui_image::{Image as ImageWidget, Resize};
+use ratatui_image::Resize;
 use shun::config::ShunConfig;
 use shun::failure::FinishStage;
 use shun::flow::FlowEvent;
@@ -1293,7 +1293,6 @@ fn set_product(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
 
     /// The native image lane (kitty protocol) draws unicode placeholder
     /// cells referencing the transmitted image - assertable through a
