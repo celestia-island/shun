@@ -28,6 +28,11 @@ pub struct Texts {
     pub nav: (&'static str, &'static str),
     /// The done page's retry wording after a failed finish.
     pub retry: &'static str,
+    /// The word for leaving the program (the failure/uninstall pages' Esc).
+    pub exit: &'static str,
+    /// Finish-stage titles for the done page's failure branch.
+    pub stage_shortcuts: &'static str,
+    pub stage_launch: &'static str,
     pub footer: &'static str,
 }
 
@@ -58,6 +63,9 @@ pub const EN: Texts = Texts {
     ),
     nav: ("Next", "Back"),
     retry: "Retry",
+    exit: "Exit",
+    stage_shortcuts: "Shortcut creation failed",
+    stage_launch: "Launch failed",
     footer: "↑/↓ move · Enter next/confirm · Esc back/exit · Tab switch focus · Space toggle · PgUp/PgDn scroll the license",
 };
 
@@ -75,6 +83,9 @@ pub const ZH_HANS: Texts = Texts {
     uninstall: ("卸载", "修复安装", "正在卸载", "卸载完成", "卸载失败"),
     nav: ("下一步", "上一步"),
     retry: "重试",
+    exit: "退出",
+    stage_shortcuts: "快捷方式创建失败",
+    stage_launch: "启动失败",
     footer: "↑/↓ 移动 · Enter 下一步/确认 · Esc 上一步/退出 · Tab 切换焦点 · Space 勾选 · PgUp/PgDn 滚动协议",
 };
 
@@ -98,6 +109,9 @@ pub const ZH_HANT: Texts = Texts {
     ),
     nav: ("下一步", "上一步"),
     retry: "重試",
+    exit: "結束",
+    stage_shortcuts: "捷徑建立失敗",
+    stage_launch: "啟動失敗",
     footer: "↑/↓ 移動 · Enter 下一步/確認 · Esc 上一步/結束 · Tab 切換焦點 · Space 勾選 · PgUp/PgDn 捲動協議",
 };
 
@@ -132,6 +146,9 @@ pub const JA: Texts = Texts {
     ),
     nav: ("次へ", "戻る"),
     retry: "再試行",
+    exit: "終了",
+    stage_shortcuts: "ショートカットの作成に失敗しました",
+    stage_launch: "起動に失敗しました",
     footer: "↑/↓ 移動 · Enter 次へ/確定 · Esc 戻る/終了 · Tab フォーカス切替 · Space 切替 · PgUp/PgDn スクロール",
 };
 
@@ -149,6 +166,9 @@ pub const KO: Texts = Texts {
     uninstall: ("제거", "복구", "제거 중", "제거 완료", "제거 실패"),
     nav: ("다음", "뒤로"),
     retry: "다시 시도",
+    exit: "종료",
+    stage_shortcuts: "바로 가기 만들기 실패",
+    stage_launch: "실행 실패",
     footer: "↑/↓ 이동 · Enter 다음/확인 · Esc 뒤로/종료 · Tab 포커스 전환 · Space 전환 · PgUp/PgDn 스크롤",
 };
 
@@ -184,6 +204,9 @@ pub const RU: Texts = Texts {
     ),
     nav: ("Далее", "Назад"),
     retry: "Повторить",
+    exit: "Выход",
+    stage_shortcuts: "Не удалось создать ярлыки",
+    stage_launch: "Не удалось запустить приложение",
     footer: "↑/↓ перемещение · Enter далее/подтвердить · Esc назад/выход · Tab фокус · Space выбор · PgUp/PgDn прокрутка",
 };
 
@@ -216,6 +239,9 @@ pub const ES: Texts = Texts {
     ),
     nav: ("Siguiente", "Atrás"),
     retry: "Reintentar",
+    exit: "Salir",
+    stage_shortcuts: "Error al crear los accesos directos",
+    stage_launch: "Error al iniciar la aplicación",
     footer: "↑/↓ mover · Enter siguiente/confirmar · Esc atrás/salir · Tab cambiar foco · Space marcar · PgUp/PgDn desplazar",
 };
 
@@ -257,6 +283,9 @@ pub const FR: Texts = Texts {
     ),
     nav: ("Suivant", "Retour"),
     retry: "Réessayer",
+    exit: "Quitter",
+    stage_shortcuts: "Échec de création des raccourcis",
+    stage_launch: "Échec du lancement de l'application",
     footer: "↑/↓ déplacer · Enter suivant/confirmer · Esc retour/quitter · Tab changer le focus · Space cocher · PgUp/PgDn défiler",
 };
 

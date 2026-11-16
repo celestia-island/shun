@@ -12,6 +12,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders};
+use unicode_width::UnicodeWidthStr;
 
 use crate::tui_caps::{ColorDepth, TerminalCaps};
 
@@ -158,7 +159,9 @@ impl Theme {
     /// column plus the extra pad, then the value.
     pub fn kv(&self, label: &str, value: Vec<Span<'static>>) -> Line<'static> {
         let mut spans = vec![Span::raw("  "), Span::styled(label.to_string(), self.key)];
-        let width = label.chars().count();
+        // Display width, not char count — CJK labels would otherwise
+        // misalign every value column after them.
+        let width = label.width();
         let pad = if width < LABEL_WIDTH {
             LABEL_WIDTH - width + LABEL_PAD
         } else {
@@ -182,6 +185,36 @@ impl Theme {
             Span::styled(format!("{mark} "), style),
             Span::styled(label.to_string(), self.plain),
         ])
+    }
+
+    /// The footer's key hints. A legacy ASCII console cannot draw the
+    /// arrow glyphs the localized hints lead with, so it falls back to
+    /// the English hints (the precedent for live pane hints) with the
+    /// separators and arrows transliterated.
+    pub fn hint(&self, footer: &'static str) -> String {
+        if self.caps.unicode {
+            footer.to_string()
+        } else {
+            Self::asciify(crate::tui_i18n::EN.footer)
+        }
+    }
+
+    /// Transliterates the known unicode hint characters; anything else
+    /// non-ASCII is dropped rather than mojibake'd.
+    pub fn asciify(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars() {
+            match c {
+                '↑' => out.push_str("Up"),
+                '↓' => out.push_str("Dn"),
+                '→' => out.push_str("->"),
+                '·' => out.push('|'),
+                '—' | '–' => out.push('-'),
+                c if c.is_ascii() => out.push(c),
+                _ => {}
+            }
+        }
+        out
     }
 
     fn border_style(&self) -> Style {
