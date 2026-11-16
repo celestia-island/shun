@@ -35,8 +35,8 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Gauge, List, ListItem, ListState, Paragraph, Wrap};
-use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::Resize;
+use ratatui_image::picker::{Picker, ProtocolType};
 use shun::config::ShunConfig;
 use shun::failure::FinishStage;
 use shun::flow::FlowEvent;
@@ -1148,10 +1148,21 @@ fn draw_wizard(
     }
 
     // Footer: the key hints plus what the host terminal offers (the probe's
-    // own line — also the e2e assertion hook).
+    // own line — also the e2e assertion hook). The detected image protocol
+    // is named so users and CI can see what the terminal actually claimed.
+    let proto_label = ui
+        .picker
+        .as_ref()
+        .map(|picker| match picker.protocol_type() {
+            ProtocolType::Kitty => "kitty",
+            ProtocolType::Sixel => "sixel",
+            ProtocolType::Iterm2 => "iterm2",
+            ProtocolType::Halfblocks => "halfblocks",
+        })
+        .unwrap_or("none");
     let footer_line = Line::from(vec![
         Span::styled(
-            format!(" [{}] ", ui.theme.capability_summary()),
+            format!(" [{}|img={}] ", ui.theme.capability_summary(), proto_label),
             ui.theme.muted,
         ),
         Span::styled(format!("{} ", ui.theme.glyphs.sep), ui.theme.muted),
