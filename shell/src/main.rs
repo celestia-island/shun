@@ -742,8 +742,12 @@ fn get_shell_prefs(state: State<'_, AppState>) -> ShellPrefs {
 
 // ── Installer preferences (the wizard's remembered language) ────────────
 //
-// `<data home>/<product>/installer-prefs.json` — per-user, per-product.
-// Portable runs NEVER touch it.
+// `<data home>/shun/<product>/installer-prefs.json` — per-user, per-product,
+// inside the same `shun` state family the setup logs live in (diag.rs).
+// It must NOT live in `<data home>/<product>`: that is the wizard's DEFAULT
+// INSTALL candidate (fs_probe), and the prefs file landing there trips the
+// fresh install's non-empty guard — the exact first-run failure #177 rode
+// on. Portable runs NEVER touch it.
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct InstallerPrefs {
@@ -755,14 +759,27 @@ fn local_appdata() -> PathBuf {
     shun::wizard::local_appdata()
 }
 
+/// Where the prefs live now — inside the `shun` state family, never inside
+/// the payload's default install home (see the section note above).
 fn prefs_path(root: &Path, product: &str) -> PathBuf {
+    root.join("shun").join(product).join("installer-prefs.json")
+}
+
+/// The pre-#177 spelling (`<root>/<product>/installer-prefs.json`), kept
+/// READ-ONLY: a run that upgraded from an older shell still finds its
+/// remembered language once, and the next save sweeps the file away.
+fn legacy_prefs_path(root: &Path, product: &str) -> PathBuf {
     root.join(product).join("installer-prefs.json")
 }
 
 pub(crate) fn load_prefs(root: &Path, product: &str) -> InstallerPrefs {
-    std::fs::read(prefs_path(root, product))
-        .ok()
-        .and_then(|raw| serde_json::from_slice(&raw).ok())
+    let read = |path: PathBuf| {
+        std::fs::read(path)
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+    };
+    read(prefs_path(root, product))
+        .or_else(|| read(legacy_prefs_path(root, product)))
         .unwrap_or_default()
 }
 
@@ -772,7 +789,12 @@ pub(crate) fn save_prefs(root: &Path, product: &str, prefs: &InstallerPrefs) -> 
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_vec_pretty(prefs).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    // Migrate off the legacy spelling: the file a pre-#177 shell left in
+    // the default install home is exactly the litter that faulted a fresh
+    // default-path install, so the first save removes it.
+    let _ = std::fs::remove_file(legacy_prefs_path(root, product));
+    Ok(())
 }
 
 /// Remembers the wizard language for the next run; a portable run keeps
@@ -2829,6 +2851,35 @@ mod tests {
 
         assert!(remember_language(&root, product, "en".into(), false).is_ok());
         assert_eq!(load_prefs(&root, product).language.as_deref(), Some("en"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The pre-#177 spelling still answers (an upgraded shell keeps its
+    /// remembered language once) and the next save sweeps it — a lone
+    /// legacy file must never fault a fresh default-path install (#177).
+    #[test]
+    fn legacy_prefs_are_read_once_and_swept_by_the_next_save() {
+        let root = scratch_root("legacy-prefs");
+        let product = "ShunDemo";
+        let legacy = legacy_prefs_path(&root, product);
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, r#"{ "language": "ja" }"#).unwrap();
+
+        assert_eq!(load_prefs(&root, product).language.as_deref(), Some("ja"));
+        remember_language(&root, product, "en".into(), false).expect("prefs saved");
+        assert!(!legacy.exists(), "the save sweeps the legacy spelling");
+        assert_eq!(
+            load_prefs(&root, product).language.as_deref(),
+            Some("en"),
+            "the new spelling carries the choice after the sweep"
+        );
+        // The new home is the shun state family, never the default
+        // install candidate itself.
+        assert_eq!(
+            prefs_path(&root, product),
+            root.join("shun").join(product).join("installer-prefs.json")
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
