@@ -36,6 +36,10 @@ mod stamp_loader;
 mod terminal;
 mod toast;
 mod tui;
+mod tui_caps;
+mod tui_i18n;
+mod tui_image;
+mod tui_theme;
 mod webview_hardening;
 #[cfg(windows)]
 mod window_frame;
