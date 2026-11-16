@@ -989,6 +989,11 @@ pub fn foreign_files_beyond_manifest(
         MANIFEST_PATH.to_lowercase(),
         portable_marker.to_lowercase(),
         UNINSTALLER_NAME.to_lowercase(),
+        // A pre-#177 shell could leave its prefs file inside the install
+        // dir (the wizard once wrote it into the default install home).
+        // It is shun's own litter, never foreign content — an upgrade
+        // must not veto on it (the new shell sweeps it on first save).
+        "installer-prefs.json".to_string(),
     ]);
     for junk in allowlist {
         owned.insert(junk.to_lowercase());
@@ -1704,17 +1709,19 @@ impl Registration for WindowsRegistration {
     }
 }
 
-/// Deletes `exe` after a short delay when it is the currently running
-/// process (a running binary cannot delete itself outright): a detached
-/// `cmd` waits ~1s then removes the file. Non-running files delete
+/// Deletes `exe` once the running process exits (a running image cannot
+/// delete itself outright): a detached PowerShell RETRIES the delete for
+/// up to ~5 minutes — the uninstall window can wait for the user's close
+/// click for as long as it likes, and the old one-shot ~1s `cmd` delay
+/// lost that race on every uninstall (#178). Non-running files delete
 /// directly.
 #[cfg(windows)]
 fn schedule_self_delete(exe: &Path) {
     // CREATE_NO_WINDOW — NOT DETACHED_PROCESS: for a console-subsystem
     // child, DETACHED means "don't inherit the parent console", and
-    // Windows then allocates a fresh VISIBLE console for cmd.exe — the
-    // ping flash users report after every uninstall. NO_WINDOW keeps the
-    // child console-less entirely.
+    // Windows then allocates a fresh VISIBLE console — the flash users
+    // report after every uninstall. NO_WINDOW keeps the child
+    // console-less entirely.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     use std::os::windows::process::CommandExt;
 
@@ -1728,49 +1735,50 @@ fn schedule_self_delete(exe: &Path) {
         .and_then(|current| std::fs::canonicalize(current).ok());
     let scheduled = std::fs::canonicalize(exe).ok();
     if scheduled.is_some() && scheduled == running {
-        // The uninstaller cannot remove its own image before exiting, and
-        // the synchronous rmdir in `uninstall` already ran while the file
-        // was still there — so the delayed sweep deletes the file and
-        // then the directory too (plain rmdir: a non-empty directory
-        // simply fails and stays).
-        let dir = exe
-            .parent()
-            .map(|d| d.display().to_string())
-            .unwrap_or_default();
-        let script = format!(
-            "ping -n 2 127.0.0.1 > nul & del /q \"{}\" & rmdir \"{}\"",
-            exe.display(),
-            dir,
-        );
-        // Audit shun-R1-6: cmd.exe metacharacters in the installation
-        // path (quotes, percent-variables) escape the surrounding quotes
-        // and execute arbitrary commands at the installation privilege
-        // (machine scope = elevated). Refuse to schedule when the path
-        // contains them — the delayed delete silently no-ops instead.
-        let path_str = exe.display().to_string();
-        // `dir` is already the resolved String form (the same value the
-        // schedule call above consumes) — the Windows-only compile caught
-        // the stray to_string_lossy on a String that the ubuntu job's
-        // cfg never type-checks (2026-10-15 master red).
-        if path_str.contains('"')
-            || path_str.contains('%')
-            || dir.contains('"')
-            || dir.contains('%')
-        {
-            eprintln!(
-                "shun: refusing cmd-based self-delete: installation path \
-                 contains cmd metacharacters (quote or percent); delete manually"
-            );
+        let Some(dir) = exe.parent() else { return };
+        let Some(script) = self_delete_script(exe, dir) else {
             return;
-        }
-        let _ = std::process::Command::new("cmd")
-            .arg("/C")
-            .raw_arg(script)
+        };
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     } else {
         let _ = std::fs::remove_file(exe);
     }
+}
+
+/// The retrying sweeper [`schedule_self_delete`] hands to a detached
+/// PowerShell: try the file delete every 500 ms until it lands (the
+/// uninstaller exits → the image unlocks) or ~5 minutes pass, then prune
+/// the directory exactly like a plain `rmdir` — a non-empty directory
+/// (foreign content) stays. Single-quote literals with `''` doubling make
+/// the script injection-safe by construction; the shun-R1-6 posture stays
+/// fail-closed on the metacharacters the audit called out anyway, so a
+/// weird path refuses the sweep loudly instead of gambling on it.
+#[cfg(windows)]
+fn self_delete_script(exe: &Path, dir: &Path) -> Option<String> {
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "''"));
+    let exe = exe.display().to_string();
+    let dir = dir.display().to_string();
+    if exe.contains('"') || exe.contains('%') || dir.contains('"') || dir.contains('%') {
+        eprintln!(
+            "shun: refusing the self-delete sweeper: installation path \
+             contains metacharacters (quote or percent); delete manually"
+        );
+        return None;
+    }
+    Some(format!(
+        "$e = {exe}; $d = {dir}; \
+         for ($i = 0; $i -lt 600; $i++) {{ \
+           if (-not (Test-Path -LiteralPath $e)) {{ break }}; \
+           try {{ Remove-Item -LiteralPath $e -Force -ErrorAction Stop; break }} \
+           catch {{ Start-Sleep -Milliseconds 500 }} \
+         }}; \
+         if (Test-Path -LiteralPath $d) {{ Remove-Item -LiteralPath $d -ErrorAction SilentlyContinue }}",
+        exe = quote(&exe),
+        dir = quote(&dir),
+    ))
 }
 
 #[cfg(not(windows))]
@@ -2795,6 +2803,61 @@ mod tests {
         assert_eq!(
             native_command(Path::new("C:/Apps/Demo/bin/shun-demo.exe"), "  "),
             r#""C:\Apps\Demo\bin\shun-demo.exe""#
+        );
+    }
+
+    /// The sweeper the uninstaller leaves behind: it RETRIES (the
+    /// uninstall window can outlive any fixed delay — #178 was exactly
+    /// the one-shot ~1s `cmd` losing that race) and prunes the directory
+    /// like a plain rmdir, never recursively.
+    #[cfg(windows)]
+    #[test]
+    fn self_delete_script_retries_until_the_image_unlocks() {
+        let script = self_delete_script(
+            Path::new(r"C:\Apps\Demo\uninstall.exe"),
+            Path::new(r"C:\Apps\Demo"),
+        )
+        .expect("a plain path schedules the sweeper");
+        assert!(
+            script.contains("for ($i = 0; $i -lt 600; $i++)"),
+            "the retry cap rides along: {script}"
+        );
+        assert!(
+            script.contains("'C:\\Apps\\Demo\\uninstall.exe'"),
+            "the image path rides as a single-quoted literal: {script}"
+        );
+        assert!(
+            script.contains("Start-Sleep -Milliseconds 500"),
+            "a failed attempt waits before retrying: {script}"
+        );
+        assert!(
+            script.contains("Remove-Item -LiteralPath $d -ErrorAction SilentlyContinue"),
+            "the directory prune is present: {script}"
+        );
+        assert!(
+            !script.contains("-Recurse"),
+            "foreign content sharing the directory survives: {script}"
+        );
+    }
+
+    /// Single quotes survive as doubled PowerShell literals; the
+    /// shun-R1-6 metacharacter refusal stays fail-closed.
+    #[cfg(windows)]
+    #[test]
+    fn self_delete_script_doubles_quotes_and_refuses_metacharacters() {
+        let script = self_delete_script(
+            Path::new(r"C:\Users\O'Brien\Demo\uninstall.exe"),
+            Path::new(r"C:\Users\O'Brien\Demo"),
+        )
+        .expect("single quotes are escapable");
+        assert!(
+            script.contains(r"'C:\Users\O''Brien\Demo\uninstall.exe'"),
+            "the literal doubles the embedded quote: {script}"
+        );
+        assert_eq!(
+            self_delete_script(Path::new(r"C:\A%B\uninstall.exe"), Path::new(r"C:\A%B")),
+            None,
+            "percent metacharacters refuse the sweep"
         );
     }
 }
