@@ -275,13 +275,50 @@ mod tests {
     fn kv_lines_pad_the_label_column() {
         let theme = Theme::new(&caps(ColorDepth::TrueColor, true));
         let line = theme.kv("Install to", vec![Span::raw("C:/Apps")]);
+        let value_col = display_column(&line, 'C');
+        assert_eq!(value_col, 2 + LABEL_WIDTH + LABEL_PAD);
+    }
+
+    /// The CJK label is three CHARS but six display columns — the value
+    /// column must land in the same place as an equally WIDE ascii label,
+    /// which a chars()-count padding would get wrong.
+    #[test]
+    fn kv_padding_counts_display_width_not_chars() {
+        let theme = Theme::new(&caps(ColorDepth::TrueColor, true));
+        let line = theme.kv("安装到", vec![Span::raw("C:/Apps")]);
+        let value_col = display_column(&line, 'C');
+        assert_eq!(value_col, 2 + LABEL_WIDTH + LABEL_PAD);
+    }
+
+    #[test]
+    fn ascii_hosts_get_a_pure_ascii_hint() {
+        let ascii_theme = Theme::new(&caps(ColorDepth::Mono, false));
+        let hint = ascii_theme.hint(crate::tui_i18n::EN.footer);
+        assert!(
+            hint.chars().all(|c| c.is_ascii()),
+            "non-ascii survived: {hint}",
+        );
+        assert!(hint.contains("Up/Dn move"), "{hint}");
+        assert!(hint.contains("| Enter"), "{hint}");
+        // The unicode path returns the caller's footer untouched.
+        let unicode_theme = Theme::new(&caps(ColorDepth::TrueColor, true));
+        assert_eq!(
+            unicode_theme.hint(crate::tui_i18n::EN.footer),
+            crate::tui_i18n::EN.footer
+        );
+    }
+
+    /// The display column the value starts at (cells, not chars).
+    fn display_column(line: &Line<'static>, value_first: char) -> usize {
         let text: String = line
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
-        assert!(text.starts_with("  Install to"));
-        let value_at = text.find("C:/Apps").expect("value present");
-        assert_eq!(value_at, 2 + LABEL_WIDTH + LABEL_PAD);
+        let prefix: String = text.chars().take_while(|c| *c != value_first).collect();
+        prefix
+            .chars()
+            .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0))
+            .sum()
     }
 }

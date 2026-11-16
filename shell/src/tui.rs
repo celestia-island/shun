@@ -1027,7 +1027,13 @@ fn draw_wizard(
     // Footer: the key hints plus what the host terminal offers (the probe's
     // own line — also the e2e assertion hook).
     let footer_line = Line::from(vec![
-        Span::styled(format!(" [{}] ", ui.caps.summary()), ui.theme.muted),
+        Span::styled(
+            format!(
+                " [{}] ",
+                crate::tui_theme::Theme::asciify(&ui.caps.summary())
+            ),
+            ui.theme.muted,
+        ),
         Span::styled(format!("{} ", ui.theme.glyphs.sep), ui.theme.muted),
         Span::styled(format!("{} ", ui.theme.glyphs.arrow), ui.theme.accent),
         Span::raw(ui.theme.hint(texts.footer)),
