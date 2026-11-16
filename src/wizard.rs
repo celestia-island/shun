@@ -763,6 +763,13 @@ fn dir_has_content_beyond(path: &Path, install: Option<&crate::config::InstallCo
     read_dir.flatten().any(|entry| {
         let name = entry.file_name();
         let name = name.to_string_lossy().to_lowercase();
+        // The installer's own prefs litter never faults a fresh pick:
+        // pre-#177 shells wrote it into the default install home, shun
+        // put it there, and the new shell sweeps it on its first save —
+        // a lone legacy file must not strand the default path (#177).
+        if name == "installer-prefs.json" {
+            return false;
+        }
         !allowlist.iter().any(|junk| junk.to_lowercase() == name)
     })
 }
@@ -1904,6 +1911,48 @@ mod tests {
         assert_eq!(
             check_install_dir(&config, &payload, root, None, false),
             Some(DirCheckFault::DriveRoot)
+        );
+    }
+
+    /// The installer's own prefs litter never faults a fresh pick:
+    /// pre-#177 shells wrote `installer-prefs.json` into the default
+    /// install home, so a machine that once ran one must still take the
+    /// default path on the first run of the fixed shell (#177).
+    #[test]
+    fn a_lone_installer_prefs_file_never_faults_a_fresh_pick() {
+        let _guard = guard_env_lock();
+        let (config, payload) = guard_config("noop", true);
+
+        // Only the legacy prefs file: the default path stays clear.
+        let legacy = tempfile::tempdir().unwrap();
+        std::fs::write(
+            legacy.path().join("installer-prefs.json"),
+            "{ \"language\": \"zh-Hans\" }",
+        )
+        .unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &legacy.path().to_string_lossy(),
+                None,
+                false
+            ),
+            None,
+            "shun's own litter is not content the sweep would endanger"
+        );
+
+        // Any foreign file beside it still refuses.
+        std::fs::write(legacy.path().join("readme.txt"), b"not ours").unwrap();
+        assert_eq!(
+            check_install_dir(
+                &config,
+                &payload,
+                &legacy.path().to_string_lossy(),
+                None,
+                false
+            ),
+            Some(DirCheckFault::NonEmpty)
         );
     }
 

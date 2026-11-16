@@ -377,9 +377,20 @@ mod tests {
             SHELL_CARGO.contains("tauri-plugin-opener"),
             "shell/Cargo.toml must depend on tauri-plugin-opener"
         );
+        // Least privilege: open-url plus the default URL scope — NOT
+        // opener:default, which also grants reveal-item-in-dir (no
+        // surface here reveals a path).
         assert!(
-            CAPABILITIES.contains("\"opener:default\""),
-            "shell/capabilities/default.json must grant opener:default to the windows"
+            CAPABILITIES.contains("\"opener:allow-open-url\""),
+            "shell/capabilities/default.json must grant opener:allow-open-url"
+        );
+        assert!(
+            CAPABILITIES.contains("\"opener:allow-default-urls\""),
+            "shell/capabilities/default.json must grant opener:allow-default-urls"
+        );
+        assert!(
+            !CAPABILITIES.contains("\"opener:default\""),
+            "opener:default would re-grant reveal-item-in-dir, which nothing here uses"
         );
         assert!(
             SHELL_MAIN.contains("tauri_plugin_opener::init()"),
