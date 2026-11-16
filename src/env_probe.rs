@@ -232,3 +232,117 @@ pub fn webview2_available() -> bool {
 pub fn webview2_available() -> bool {
     std::env::var_os("SHUN_FORCE_FALLBACK").is_none()
 }
+
+/// The host's UI language as one of the fleet's locale spellings
+/// (`en` / `es` / `fr` / `ja` / `ko` / `ru` / `zh-Hans` / `zh-Hant`).
+///
+/// The terminal face starts on this language instead of a hardcoded
+/// `en`: Windows reads the user's default UI language (LANGID), other
+/// hosts normalize `LC_ALL` / `LC_CTYPE` / `LANG`. `None` means the
+/// host says nothing usable — callers fall back to `en`.
+pub fn system_locale() -> Option<&'static str> {
+    #[cfg(windows)]
+    {
+        // SAFETY: a plain per-user preference query (no handles).
+        let langid = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+        Some(map_langid(langid))
+    }
+    #[cfg(not(windows))]
+    {
+        let raw = ["LC_ALL", "LC_CTYPE", "LANG"]
+            .iter()
+            .find_map(|name| std::env::var(name).ok().filter(|value| !value.trim().is_empty()))?;
+        locale_from_tag(&raw)
+    }
+}
+
+/// Maps a Windows LANGID (`0x0SSLL`, primary language in the low ten bits,
+/// sublanguage above) to the fleet spelling. Anything outside the eight
+/// documented languages resolves to `en`.
+#[cfg(windows)]
+fn map_langid(langid: u16) -> &'static str {
+    let primary = langid & 0x03FF;
+    let sub = (langid >> 10) & 0x3F;
+    match primary {
+        0x04 => match sub {
+            // Traditional / Hong Kong / Macau.
+            0x01 | 0x03 | 0x05 => "zh-Hant",
+            // Simplified / Singapore.
+            _ => "zh-Hans",
+        },
+        0x0A => "es",
+        0x0C => "fr",
+        0x11 => "ja",
+        0x12 => "ko",
+        0x19 => "ru",
+        _ => "en",
+    }
+}
+
+/// Normalizes an environment locale (`zh_CN.UTF-8`, `zh-TW`, `fr_FR@euro`)
+/// to the fleet spelling; unknown languages yield `None`.
+#[cfg(not(windows))]
+fn locale_from_tag(raw: &str) -> Option<&'static str> {
+    let tag = raw.trim().to_ascii_lowercase();
+    if tag.is_empty() || tag == "c" || tag == "posix" {
+        return None;
+    }
+    let language = tag.split(['_', '-', '.', '@']).next().unwrap_or("");
+    let traditional =
+        tag.contains("tw") || tag.contains("hk") || tag.contains("mo") || tag.contains("hant");
+    Some(match language {
+        "zh" => {
+            if traditional {
+                "zh-Hant"
+            } else {
+                "zh-Hans"
+            }
+        }
+        "es" => "es",
+        "fr" => "fr",
+        "ja" => "ja",
+        "ko" => "ko",
+        "ru" => "ru",
+        "en" => "en",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn langids_map_to_the_fleet_spellings() {
+        assert_eq!(map_langid(0x0804), "zh-Hans", "PRC simplified");
+        assert_eq!(map_langid(0x0404), "zh-Hant", "Taiwan traditional");
+        assert_eq!(map_langid(0x0C04), "zh-Hant", "Hong Kong");
+        assert_eq!(map_langid(0x1004), "zh-Hans", "Singapore");
+        assert_eq!(map_langid(0x0411), "ja");
+        assert_eq!(map_langid(0x0412), "ko");
+        assert_eq!(map_langid(0x0419), "ru");
+        assert_eq!(map_langid(0x040A), "es");
+        assert_eq!(map_langid(0x040C), "fr");
+        assert_eq!(map_langid(0x0409), "en");
+        assert_eq!(map_langid(0x0415), "en", "unknown languages fall back");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn environment_tags_normalize() {
+        assert_eq!(locale_from_tag("zh_CN.UTF-8"), Some("zh-Hans"));
+        assert_eq!(locale_from_tag("zh_TW.UTF-8"), Some("zh-Hant"));
+        assert_eq!(locale_from_tag("zh-HK"), Some("zh-Hant"));
+        assert_eq!(locale_from_tag("ja_JP.UTF-8"), Some("ja"));
+        assert_eq!(locale_from_tag("ko_KR"), Some("ko"));
+        assert_eq!(locale_from_tag("ru_RU.UTF-8"), Some("ru"));
+        assert_eq!(locale_from_tag("es_ES.UTF-8"), Some("es"));
+        assert_eq!(locale_from_tag("fr_FR@euro"), Some("fr"));
+        assert_eq!(locale_from_tag("en_US.UTF-8"), Some("en"));
+        assert_eq!(locale_from_tag("C"), None);
+        assert_eq!(locale_from_tag("POSIX"), None);
+        assert_eq!(locale_from_tag(""), None);
+        assert_eq!(locale_from_tag("de_DE.UTF-8"), None);
+    }
+}
