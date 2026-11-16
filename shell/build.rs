@@ -419,45 +419,33 @@ fn main() {
         windows_attributes = windows_attributes.window_icon_path(&ico_path);
     }
 
-    // 4. Carry the product identity into tauri-build: the version
-    //    resource it stamps (FileDescription/ProductName — what Explorer,
-    //    the taskbar and the UAC prompt show) and the webview face's
-    //    window title otherwise read this shell's generic "shun
-    //    installer" defaults from tauri.conf.json, so every product's
-    //    setup.exe introduced itself as the packager. TAURI_CONFIG is a
-    //    JSON merge-patch tauri-build applies over that file; arrays are
-    //    replaced wholesale (RFC 7396), so the windows entry is mirrored
-    //    in full with only the title swapped. (For stamped generic
-    //    shells the identity rides the container + the OS resource
-    //    editor instead — see shun::stamp.)
+    // 4. Carry the product identity into the build — BOTH halves:
+    //    - tauri-build reads TAURI_CONFIG in THIS process (the build
+    //      script) for the version resource it stamps
+    //      (FileDescription/ProductName — what Explorer, the taskbar
+    //      and the UAC prompt show);
+    //    - tauri-codegen re-reads it in the COMPILER process when
+    //      generate_context! expands, so the same overlay must ride a
+    //      cargo:rustc-env line — until issue #179's fix the identifier
+    //      never reached the runtime config, and every source-built
+    //      shell silently shared one WebView2 user-data directory.
+    //    The overlay deliberately carries NO app.windows: windows are
+    //    built per-lane in setup() (wizard / passive / uninstall), and
+    //    a config-declared window would make tauri auto-create an
+    //    "installer" window that collides with setup()'s own.
+    //    (For stamped generic shells the identity rides the container
+    //    + the OS resource editor instead — see shun::stamp.)
     let slug = config.product.name.to_lowercase().replace(' ', "-");
     let identity_overlay = serde_json::json!({
         "productName": config.product.name,
         "version": config.product.version,
         "identifier": format!("world.celestia.{slug}.installer"),
-        "app": {
-            "windows": [{
-                "label": "installer",
-                "title": config.product.name,
-                "width": 800,
-                "height": 600,
-                "resizable": false,
-                "fullscreen": false,
-                "center": true,
-                "visible": true,
-                "decorations": false,
-                "transparent": false,
-                "shadow": true,
-                "minimizable": true,
-                "maximizable": false,
-                "closable": true
-            }]
-        }
     });
     // SAFETY: build scripts are single-threaded; the variable is set
     // after all parallel file stages and immediately consumed by
     // try_build in this same process.
     unsafe { std::env::set_var("TAURI_CONFIG", identity_overlay.to_string()) };
+    println!("cargo:rustc-env=TAURI_CONFIG={identity_overlay}");
 
     // 5. Embed the application manifest (comctl32 v6 + per-monitor DPI).
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows_attributes))
