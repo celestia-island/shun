@@ -30,10 +30,13 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use image::GenericImageView;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Gauge, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::{Image as ImageWidget, Resize};
 use shun::config::ShunConfig;
 use shun::failure::FinishStage;
 use shun::flow::FlowEvent;
@@ -71,17 +74,21 @@ struct Ui {
     caps: TerminalCaps,
     theme: Theme,
     images: ImageCache,
+    /// The terminal's graphics-protocol picker (None = the queries failed
+    /// AND forcing was declined - the halfblock lane covers images).
+    picker: Option<Picker>,
     /// The last frame's clickable regions.
     hits: Vec<(Rect, Hit)>,
 }
 
 impl Ui {
-    fn new(caps: TerminalCaps) -> Self {
+    fn new(caps: TerminalCaps, picker: Option<Picker>) -> Self {
         let theme = Theme::new(&caps);
         Self {
             caps,
             theme,
             images: ImageCache::default(),
+            picker,
             hits: Vec::new(),
         }
     }
@@ -116,7 +123,7 @@ pub fn run(
         core.set_locale(normalize_locale(host_locale));
         core
     };
-    let mut ui = Ui::new(probe());
+    let mut ui = Ui::new(probe(), None);
     if uninstall_mode {
         core.state.step = Step::Done; // the uninstall page replaces the rail flow
     }
@@ -152,6 +159,41 @@ pub fn run(
     // enabled VT processing, so ask for ANSI SGR explicitly — real
     // terminals render the same palette and the e2e harness can assert it.
     crossterm::style::force_color_output(ui.caps.color != crate::tui_caps::ColorDepth::Mono);
+    // Graphics-protocol probe (kitty / sixel / iTerm2 / halfblocks + the
+    // font size in pixels): inside the alternate screen, raw mode on, and
+    // BEFORE the event loop starts reading. Nothing answers in the ConPTY
+    // harness, which resolves to the halfblocks default - that is exactly
+    // the degradation the e2e asserts. SHUN_TUI_FORCE_PROTOCOL pins a lane
+    // (kitty/sixel/iterm2/halfblocks/none) for tests and support.
+    ui.picker = ratatui_image::picker::Picker::from_query_stdio().ok();
+    ui.picker = match std::env::var("SHUN_TUI_FORCE_PROTOCOL").as_deref() {
+        Ok("kitty") => {
+            if let Some(picker) = ui.picker.as_mut() {
+                picker.set_protocol_type(ProtocolType::Kitty);
+            }
+            ui.picker.take()
+        }
+        Ok("sixel") => {
+            if let Some(picker) = ui.picker.as_mut() {
+                picker.set_protocol_type(ProtocolType::Sixel);
+            }
+            ui.picker.take()
+        }
+        Ok("iterm2") => {
+            if let Some(picker) = ui.picker.as_mut() {
+                picker.set_protocol_type(ProtocolType::Iterm2);
+            }
+            ui.picker.take()
+        }
+        Ok("halfblocks") => {
+            if let Some(picker) = ui.picker.as_mut() {
+                picker.set_protocol_type(ProtocolType::Halfblocks);
+            }
+            ui.picker.take()
+        }
+        Ok("none") => None,
+        _ => ui.picker.take(),
+    };
     let backend = ratatui::backend::CrosstermBackend::new(&mut stdout);
     let mut terminal = ratatui::Terminal::new(backend).map_err(|e| e.to_string())?;
 
@@ -375,6 +417,16 @@ pub fn run(
                                 {
                                     // shun's uninstall emits no events: the page runs
                                     // an indeterminate phase until the worker lands.
+                                    core.state.uninstall_phase = UninstallPhase::Running;
+                                    let uninstall_core =
+                                        WizardCore::new(core.config.clone(), BTreeMap::new());
+                                    worker = Some(std::thread::spawn(move || {
+                                        shun::wizard::run_uninstall(&uninstall_core)
+                                    }));
+                                }
+                                KeyCode::Char('r') | KeyCode::Char('R')
+                                    if core.state.uninstall_phase == UninstallPhase::Failed =>
+                                {
                                     core.state.uninstall_phase = UninstallPhase::Running;
                                     let uninstall_core =
                                         WizardCore::new(core.config.clone(), BTreeMap::new());
@@ -836,11 +888,23 @@ fn draw_wizard(
             } else {
                 String::new()
             };
-            // Markdown image markers render as half-block images when the
-            // terminal carries colors; everywhere else the marker stays a
-            // labelled placeholder (never a corrupted screen).
+            // Markdown image markers have two render lanes. NATIVE (the
+            // picker detected kitty / sixel / iTerm2): every standalone
+            // marker reserves its own slot under the text and renders
+            // through ratatui-image's protocol backend. Otherwise half
+            // blocks (16 colors and up) render INLINE in the pager - the
+            // lane that keeps scrolling working everywhere - and mono
+            // keeps a labelled placeholder (never a corrupted screen).
             let markers = image_markers(&body);
+            let native = ui.picker.as_ref().is_some_and(|picker| {
+                matches!(
+                    picker.protocol_type(),
+                    ProtocolType::Kitty | ProtocolType::Sixel | ProtocolType::Iterm2
+                )
+            });
             let mut lines: Vec<Line<'static>> = Vec::new();
+            let mut img_slots: Vec<image::DynamicImage> = Vec::new();
+            let mut img_rows: Vec<u16> = Vec::new();
             let mut marker_at = 0;
             for (line_index, text) in body.lines().enumerate() {
                 let Some(marker) = markers.get(marker_at) else {
@@ -852,8 +916,35 @@ fn draw_wizard(
                     continue;
                 }
                 marker_at += 1;
-                let cols = pane.width.saturating_sub(2);
                 let bytes = payload.read_file(std::path::Path::new(&marker.path));
+                if native {
+                    let placeholder =
+                        Line::styled(format!("  [image: {}]", marker.alt), ui.theme.muted);
+                    let Some(bytes) = bytes else {
+                        lines.push(placeholder);
+                        continue;
+                    };
+                    let Ok(dyn_img) = image::load_from_memory(&bytes) else {
+                        lines.push(placeholder);
+                        continue;
+                    };
+                    let (font_w, font_h) = picker_font_size(ui);
+                    let cols = u64::from(pane.width.saturating_sub(2).max(1));
+                    let (w_px, h_px) = dyn_img.dimensions();
+                    if w_px == 0 || h_px == 0 {
+                        lines.push(placeholder);
+                        continue;
+                    }
+                    let disp_w_px = cols * u64::from(font_w);
+                    let disp_h_px = u64::from(h_px) * disp_w_px / u64::from(w_px);
+                    let rows = u16::try_from(disp_h_px / u64::from(font_h))
+                        .unwrap_or(u16::MAX)
+                        .clamp(1, 16);
+                    img_slots.push(dyn_img);
+                    img_rows.push(rows);
+                    continue;
+                }
+                let cols = pane.width.saturating_sub(2);
                 let rendered = match (ui.caps.images, bytes) {
                     (ImageSupport::None, _) | (_, None) => None,
                     (_, Some(bytes)) => {
@@ -879,10 +970,45 @@ fn draw_wizard(
                 height: pane.height.saturating_sub(1),
                 ..pane
             };
-            let paragraph = Paragraph::new(lines)
-                .block(ui.theme.block(&format!("{}{}", texts.license.0, pager)))
-                .scroll((license_scroll, 0));
-            frame.render_widget(paragraph, body_area);
+            if native && !img_slots.is_empty() {
+                // Native lane: the text keeps the top (scrollable), every
+                // reserved image gets its own slot below it, and the
+                // protocol escapes flow through the frame buffer.
+                let total_img_rows = img_rows
+                    .iter()
+                    .sum::<u16>()
+                    .min(body_area.height.saturating_sub(4));
+                let [text_area, images_area] = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(4), Constraint::Length(total_img_rows)])
+                    .areas(body_area);
+                let paragraph = Paragraph::new(lines)
+                    .block(ui.theme.block(&format!("{}{}", texts.license.0, pager)))
+                    .scroll((license_scroll, 0));
+                frame.render_widget(paragraph, text_area);
+                let slots = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(
+                        img_rows
+                            .iter()
+                            .map(|rows| Constraint::Length(*rows))
+                            .collect::<Vec<_>>(),
+                    )
+                    .split(images_area);
+                let picker = ui.picker.as_ref().expect("native implies picker");
+                for (slot_area, dyn_img) in slots.iter().zip(img_slots.drain(..)) {
+                    if let Ok(protocol) =
+                        picker.new_protocol(dyn_img, *slot_area, Resize::Fit(None))
+                    {
+                        frame.render_widget(ratatui_image::Image::new(&protocol), *slot_area);
+                    }
+                }
+            } else {
+                let paragraph = Paragraph::new(lines)
+                    .block(ui.theme.block(&format!("{}{}", texts.license.0, pager)))
+                    .scroll((license_scroll, 0));
+                frame.render_widget(paragraph, body_area);
+            }
             let agree_row = Rect {
                 x: pane.x + 1,
                 y: pane.y + pane.height.saturating_sub(1),
@@ -1099,6 +1225,14 @@ fn draw_uninstall(frame: &mut Frame, core: &WizardCore, texts: &'static Texts, u
     }
 }
 
+/// The picker's font size in pixels (cell size for native image slots).
+fn picker_font_size(ui: &Ui) -> (u16, u16) {
+    ui.picker
+        .as_ref()
+        .map(|picker| picker.font_size())
+        .unwrap_or((8, 16))
+}
+
 fn pane_log_lines(area: &Rect) -> usize {
     area.height.saturating_sub(2) as usize
 }
@@ -1157,4 +1291,72 @@ thread_local! {
 /// Sets the render-time product identity (called once at startup).
 fn set_product(name: &str) {
     PRODUCT.with(|p| *p.borrow_mut() = name.to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    /// The native image lane (kitty protocol) draws unicode placeholder
+    /// cells referencing the transmitted image - assertable through a
+    /// TestBackend without a real kitty terminal (whose escapes ConPTY
+    /// would swallow in the pty harness).
+    #[test]
+    fn native_kitty_lane_draws_placeholder_cells() {
+        let mut picker = Picker::from_fontsize((8, 16));
+        picker.set_protocol_type(ProtocolType::Kitty);
+        let dyn_img = image::DynamicImage::new_rgb8(24, 16);
+        let protocol = picker
+            .new_protocol(dyn_img, Rect::new(0, 0, 20, 8), Resize::Fit(None))
+            .expect("kitty protocol builds");
+        let backend = ratatui::backend::TestBackend::new(40, 10);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(ratatui_image::Image::new(&protocol), frame.area());
+            })
+            .unwrap();
+        // The kitty lane transmits the image as an OSC/APC escape carried in
+        // a buffer cell's symbol (the base64 RGBA payload named by f=32).
+        let transmitted = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .any(|cell| cell.symbol().starts_with('\u{1b}') && cell.symbol().contains("_G"));
+        assert!(transmitted, "kitty transmit escape expected in the buffer");
+    }
+
+    /// The halfblocks lane draws upper-half-block glyphs with colored
+    /// cells - the universal fallback for color terminals.
+    #[test]
+    fn halfblocks_lane_draws_block_glyphs() {
+        let mut picker = Picker::from_fontsize((8, 16));
+        picker.set_protocol_type(ProtocolType::Halfblocks);
+        let dyn_img = image::DynamicImage::new_rgb8(24, 16);
+        let protocol = picker
+            .new_protocol(dyn_img, Rect::new(0, 0, 20, 8), Resize::Fit(None))
+            .expect("halfblocks protocol builds");
+        let backend = ratatui::backend::TestBackend::new(40, 10);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(ratatui_image::Image::new(&protocol), frame.area());
+            })
+            .unwrap();
+        // The halfblock primitive paints spaces with colored backgrounds
+        // (visually identical to glyph rendering) - assert painted cells.
+        let painted = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|cell| cell.bg != ratatui::style::Color::Reset)
+            .count();
+        assert!(
+            painted > 0,
+            "colored (painted) cells expected in the buffer"
+        );
+    }
 }

@@ -1,0 +1,47 @@
+warning: missing `[lints]` to inherit `[workspace.lints]`
+   --> demo-app\Cargo.toml
+    = note: `cargo::missing_lints_inheritance` is set to `warn` by default
+help: to inherit `workspace.lints, add:
+    |
+163 ~ type = "skip"
+164 + [lints]
+165 + workspace = true
+    |
+help: to clarify your intent to not inherit, add:
+    |
+163 ~ type = "skip"
+164 + [lints]
+    |
+warning: `shun_demo_app` (manifest) generated 1 warning
+warning: missing `[lints]` to inherit `[workspace.lints]`
+   --> shell\Cargo.toml
+    = note: `cargo::missing_lints_inheritance` is set to `warn` by default
+help: to inherit `workspace.lints, add:
+    |
+109 ~ # manifest.
+110 + [lints]
+111 + workspace = true
+    |
+help: to clarify your intent to not inherit, add:
+    |
+109 ~ # manifest.
+110 + [lints]
+    |
+warning: `shun_installer` (manifest) generated 1 warning
+    Checking shun_installer v0.6.34 (D:\源代码\工程项目\celestia\_worktree\shun\tui-image-protocols\shell)
+error: this file contains an unclosed delimiter
+    --> shell\src\tui.rs:1138:3
+     |
+ 695 | ) {
+     |   - unclosed delimiter
+...
+ 709 |     match core.state.step {
+     |                           - unclosed delimiter
+...
+1067 |         Step::Done => {
+     |                       - unclosed delimiter
+...
+1138 | }
+     |  ^
+
+error: could not compile `shun_installer` (bin "shun-installer") due to 1 previous error

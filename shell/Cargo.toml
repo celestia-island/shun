@@ -28,6 +28,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 clap = { version = "^4", features = ["derive"] }
 ratatui = "^0.29"
 crossterm = "^0.28"
+# Protocol-aware inline images (kitty / sixel / iTerm2 / half blocks) for
+# the terminal face's license and content panes.
+ratatui-image = { version = "^8", default-features = false, features = ["crossterm", "image-defaults"] }
 # Display-width-aware label padding for the terminal face (CJK labels).
 unicode-width = "^0.2"
 eframe = "0.32"
