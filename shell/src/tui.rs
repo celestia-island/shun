@@ -195,10 +195,25 @@ pub fn run(
                     let handle = worker.take().unwrap();
                     events = None;
                     match handle.join().unwrap_or_else(|_| Err("panic".into())) {
-                        Ok(()) => core.state.step = Step::Done,
+                        // The uninstall page has its own phase machine —
+                        // leaving it on Running made a finished uninstall
+                        // look hung (the wizard's Done step is meaningless
+                        // in that mode).
+                        Ok(()) => {
+                            if uninstall_mode {
+                                core.state.uninstall_phase = UninstallPhase::Done;
+                            } else {
+                                core.state.step = Step::Done;
+                            }
+                        }
                         Err(err) => {
-                            core.state.failure = Some(err);
-                            core.state.step = Step::Done;
+                            if uninstall_mode {
+                                core.state.uninstall_phase = UninstallPhase::Failed;
+                                core.state.uninstall_error = err;
+                            } else {
+                                core.state.failure = Some(err);
+                                core.state.step = Step::Done;
+                            }
                         }
                     }
                 }
