@@ -304,10 +304,7 @@ mod tests {
     fn ascii_hosts_get_a_pure_ascii_hint() {
         let ascii_theme = Theme::new(&caps(ColorDepth::Mono, false));
         let hint = ascii_theme.hint(crate::tui_i18n::EN.footer);
-        assert!(
-            hint.chars().all(|c| c.is_ascii()),
-            "non-ascii survived: {hint}",
-        );
+        assert!(hint.is_ascii(), "non-ascii survived: {hint}");
         assert!(hint.contains("Up/Dn move"), "{hint}");
         assert!(hint.contains("| Enter"), "{hint}");
         // The unicode path returns the caller's footer untouched.
