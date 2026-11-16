@@ -36,3 +36,50 @@ pub fn ctx(product: &str, install_dir: PathBuf, portable: bool) -> InstallContex
     ctx.main_exe = Some(PathBuf::from("bin/shun-demo.exe"));
     ctx
 }
+
+/// Serializes the registration tests ACROSS test-binaries: two suites
+/// running concurrently (a second checkout, a reviewer's harness) share
+/// the same HKCU ARP keys and Start Menu directory for identically named
+/// products, and one suite's uninstall sweeps the other's state mid-test.
+/// std has no file locks, so a lock directory with PID stamping and stale
+/// reclamation (older than 10 minutes) does the job.
+#[allow(dead_code)]
+pub struct RegistrationLock {
+    path: std::path::PathBuf,
+}
+
+#[allow(dead_code)]
+impl RegistrationLock {
+    pub fn acquire() -> Self {
+        let dir = std::env::temp_dir().join("shun-registration-tests.lock");
+        let stamp = dir.join("owner.txt");
+        loop {
+            match std::fs::create_dir(&dir) {
+                Ok(()) => {
+                    let _ = std::fs::write(&stamp, format!("pid={}", std::process::id()));
+                    return Self { path: dir };
+                }
+                Err(_) => {
+                    // Reclaim a stale lock (older than 10 minutes).
+                    if let Ok(meta) = std::fs::metadata(&dir) {
+                        if let Ok(age) =
+                            meta.created().unwrap_or(meta.modified().unwrap()).elapsed()
+                        {
+                            if age > std::time::Duration::from_secs(600) {
+                                let _ = std::fs::remove_dir_all(&dir);
+                                continue;
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for RegistrationLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}

@@ -32,6 +32,9 @@ mod registration {
     /// behind.
     struct Installed {
         ctx: InstallContext,
+        /// Serializes against concurrent test-binaries sharing HKCU and the
+        /// Start Menu directory.
+        _lock: crate::common::RegistrationLock,
     }
 
     impl Installed {
@@ -55,6 +58,7 @@ mod registration {
             let mut context = ctx(product, install_dir.clone(), false);
             tweak(&mut context);
 
+            let lock = crate::common::RegistrationLock::acquire();
             let payload = demo_payload();
             let flow = InstallFlow {
                 payload: &payload,
@@ -62,7 +66,13 @@ mod registration {
                 ctx: context.clone(),
             };
             flow.run(&mut |_| {}).unwrap();
-            (Self { ctx: context }, install_dir)
+            (
+                Self {
+                    ctx: context,
+                    _lock: lock,
+                },
+                install_dir,
+            )
         }
     }
 

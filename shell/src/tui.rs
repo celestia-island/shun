@@ -436,9 +436,12 @@ pub fn run(
                                 }
                                 KeyCode::Esc | KeyCode::Char('q') => {
                                     match core.state.uninstall_phase {
-                                        UninstallPhase::Idle
-                                        | UninstallPhase::Done
-                                        | UninstallPhase::Failed => return Ok(()),
+                                        UninstallPhase::Idle | UninstallPhase::Done => {
+                                            return Ok(());
+                                        }
+                                        UninstallPhase::Failed => {
+                                            return Err(core.state.uninstall_error.clone());
+                                        }
                                         UninstallPhase::Running => {}
                                     }
                                 }
@@ -616,6 +619,11 @@ pub fn run(
                                 }
                             }
                             (Step::Done, KeyCode::Esc, _) | (Step::Done, KeyCode::Char('q'), _) => {
+                                // Quitting with an unresolved failure is not a
+                                // success for whoever launched us: propagate it.
+                                if core.state.failure.is_some() {
+                                    return Err(core.state.failure.clone().unwrap_or_default());
+                                }
                                 return Ok(());
                             }
                             _ => {}

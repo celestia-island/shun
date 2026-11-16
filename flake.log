@@ -1,0 +1,528 @@
+warning: missing `[lints]` to inherit `[workspace.lints]`
+   --> demo-app\Cargo.toml
+    = note: `cargo::missing_lints_inheritance` is set to `warn` by default
+help: to inherit `workspace.lints, add:
+    |
+163 ~ type = "skip"
+164 + [lints]
+165 + workspace = true
+    |
+help: to clarify your intent to not inherit, add:
+    |
+163 ~ type = "skip"
+164 + [lints]
+    |
+warning: `shun_demo_app` (manifest) generated 1 warning
+warning: missing `[lints]` to inherit `[workspace.lints]`
+   --> shell\Cargo.toml
+    = note: `cargo::missing_lints_inheritance` is set to `warn` by default
+help: to inherit `workspace.lints, add:
+    |
+109 ~ # manifest.
+110 + [lints]
+111 + workspace = true
+    |
+help: to clarify your intent to not inherit, add:
+    |
+109 ~ # manifest.
+110 + [lints]
+    |
+warning: `shun_installer` (manifest) generated 1 warning
+    Updating crates.io index
+     Locking 849 packages to highest compatible versions
+      Adding base64 v0.22.1 (available: v0.23.1)
+      Adding crossterm v0.28.1 (available: v0.29.0)
+      Adding eframe v0.32.3 (available: v0.37.0)
+      Adding egui v0.32.3 (available: v0.37.0)
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding pyo3 v0.23.5 (available: v0.30.1)
+      Adding ratatui v0.29.0 (available: v0.30.2)
+      Adding ratatui-image v8.1.1 (available: v11.1.0)
+      Adding resvg v0.45.1 (available: v0.50.0)
+      Adding rfd v0.17.2 (available: v0.18.0)
+      Adding sha2 v0.10.9 (available: v0.11.1)
+      Adding toml v0.8.2 (available: v0.8.23)
+      Adding toml v0.9.12+spec-1.1.0 (available: v1.2.1+spec-1.1.0)
+      Adding toml_datetime v0.6.3 (available: v0.6.11)
+      Adding toml_edit v0.20.2 (available: v0.20.7)
+      Adding unicode-width v0.2.0 (available: v0.2.3)
+      Adding ureq v2.12.1 (available: v3.5.2)
+      Adding windows v0.61.3 (available: v0.62.2)
+      Adding windows-sys v0.59.0 (available: v0.61.2)
+      Adding zstd v0.13.5 (available: v0.14.4)
+   Compiling shun v0.6.34 (D:\源代码\工程项目\celestia\_worktree\shun\tui-robustness)
+   Compiling shun_demo_app v0.6.34 (D:\源代码\工程项目\celestia\_worktree\shun\tui-robustness\demo-app)
+   Compiling shun_installer v0.6.34 (D:\源代码\工程项目\celestia\_worktree\shun\tui-robustness\shell)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 14s
+     Running unittests src\lib.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/7a3481ed9f935e52\out\shun-7a3481ed9f935e52.exe)
+
+running 145 tests
+test config::tests::install_modes_default_to_enabled ... ok
+test config::tests::download_url_only_answers_for_evergreen ... ok
+test config::tests::download_sha256_parses_kebab_case_and_ignores_strangers ... ok
+test config::tests::install_scope_policy_parses ... ok
+test config::tests::install_registration_knobs_parse_from_the_manifest ... ok
+test config::tests::attachments_parse_from_the_manifest ... ok
+test config::tests::resolved_license_step_serializes_back_compat ... ok
+test config::tests::licenses_parse_kebab_case_from_the_manifest ... ok
+test config::tests::licenses_alone_trigger_the_license_step ... ok
+test config::tests::loads_from_cargo_manifest_metadata ... ok
+test config::tests::targets_use_kebab_case_kinds ... ok
+test config::tests::loads_shell_ui_and_source_tables ... ok
+test config::tests::the_retired_pairing_step_kind_is_rejected_and_the_vocabulary_is_pinned ... ok
+test config::tests::declared_pipeline_orders_and_inlines_freely ... ok
+test config::tests::default_pipeline_is_mode_license_install ... ok
+test config::tests::webview2_policy_defaults_on_for_skip_and_evergreen ... ok
+test config::tests::webview2_policy_defaults_roundtrip_without_extra_keys ... ok
+test config::tests::webview2_strategy_uses_kebab_case_tags ... ok
+test config::tests::webview2_policy_knobs_parse_kebab_case ... ok
+test config::tests::license_body_concatenation_semantics ... ok
+test config::theme_variant_tests::faces_variants_and_backgrounds_parse ... ok
+test config::theme_variant_tests::silent_progress_parses_and_defaults_off ... ok
+test config::theme_variant_tests::guides_mode_defaults_to_embedded_and_parses_online ... ok
+test config::tests::license_documents_resolve_locale_aware_and_sugar_first ... ok
+test env_probe::locale_tests::langids_map_to_the_fleet_spellings ... ok
+test failure::tests::app_control_codes_are_blocked_with_the_guide_topic ... ok
+test failure::tests::install_stage_is_a_first_class_wire_value ... ok
+test failure::tests::every_family_names_a_known_topic ... ok
+test failure::tests::flow_messages_classify_through_their_embedded_os_code ... ok
+test config::tests::manifest_without_shun_metadata_defaults_to_install ... ok
+test failure::tests::missing_entry_is_its_own_kind ... ok
+test failure::tests::other_io_codes_stay_plain_io_without_a_topic ... ok
+test failure::tests::plain_errors_stay_unclassified ... ok
+test failure::tests::multiple_os_codes_walk_forward_and_the_narrower_one_wins ... ok
+test config::tests::standalone_toml_carries_product_version_and_policies ... ok
+test failure::tests::the_hex_form_is_token_bounded_and_case_insensitive ... ok
+test failure::tests::io_errors_classify_through_the_os_code ... ok
+test failure::tests::the_hex_form_of_the_block_code_classifies ... ok
+test failure::tests::the_os_error_walk_survives_an_overflowing_code ... ok
+test failure::tests::the_other_constructor_carries_no_help ... ok
+test config::tests::update_watch_parses_from_the_manifest ... ok
+test failure::tests::the_wire_shape_is_camel_case_with_kebab_kinds ... ok
+test config::tests::title_locales_localize_the_document_headings ... ok
+test failure::tests::transport_wording_classifies_as_network ... ok
+test fs_probe::tests::candidates_reject_an_empty_product ... ok
+test failure::tests::windows_os_codes_map_to_their_families ... ok
+test fs_probe::tests::candidates_treat_empty_env_like_unset ... ok
+test config::tests::dir_rules_parse_with_their_actions_and_locale_messages ... ok
+test config::tests::step_alignment_overrides_and_log_level_parse ... ok
+test config::tests::inherits_workspace_version_from_a_nested_member ... ok
+test help::tests::an_unknown_distribution_falls_back_to_its_own_home_url ... ok
+test help::tests::every_topic_resolves_on_windows_and_names_its_table_entry ... ok
+test help::tests::linux_pages_follow_the_running_distribution ... ok
+test help::tests::macos_pages_are_apple_and_localized ... ok
+test config::tests::pipeline_validation_rejects_bad_declarations ... ok
+test fs_probe::tests::probe_terminates_on_the_filesystem_root ... ok
+test help::tests::os_release_parsing_survives_quotes_and_noise ... ok
+test help::tests::windows_pages_localize_across_the_installer_locales ... ok
+test config::tests::root_dir_folder_parses_from_the_manifest ... ok
+test fs_probe::tests::candidates_cover_the_conventional_windows_roots ... ok
+test fs_probe::tests::candidates_carry_the_product_segment_verbatim ... ok
+test stamp::stamp_win::tests::group_directory_mirrors_images ... ok
+test stamp::stamp_win::tests::ico_parses_into_images_with_directory_fields ... ok
+test stamp::stamp_win::tests::int_and_string_names_classify ... ok
+test fs_probe::tests::probe_rejects_paths_under_a_file ... ok
+test stamp::stamp_win::tests::truncated_ico_is_an_error ... ok
+test config::tests::workspace_version_is_inherited ... ok
+test payload::traversal_guard_tests::extract_refuses_absolute_entry ... ok
+test stamp::tests::generic_trailer_roundtrips_through_parse ... ok
+test stamp::tests::meta_json_roundtrips ... ok
+test stamp::tests::parse_rejects_non_shell ... ok
+test stamp::tests::parse_rejects_unknown_rev ... ok
+test stamp::tests::parse_rejects_container_not_abutting_trailer ... ok
+test targets::freedesktop::tests::action_ids_are_sanitized_and_capitalized ... ok
+test stamp::tests::stamped_image_roundtrips ... ok
+test targets::freedesktop::tests::desktop_entry_declares_launcher_identity_and_actions ... ok
+test stamp::tests::version_info_builds_and_parses_back ... ok
+test targets::freedesktop::tests::desktop_entry_without_extras_stays_minimal ... ok
+test payload::traversal_guard_tests::extract_refuses_parent_dir_escape ... ok
+test targets::freedesktop::tests::no_entry_point_renders_nothing ... ok
+test fs_probe::tests::first_writable_picks_in_order ... ok
+test targets::install::tests::apply_config_pads_a_root_install_dir ... ok
+test fs_probe::tests::list_drives_contains_a_fixed_mounted_drive ... ok
+test targets::install::tests::apply_config_resolves_the_registration_knobs ... ok
+test targets::install::tests::arp_keys_use_the_sanitized_stem ... ok
+test targets::install::tests::aumids_are_identifier_segments ... ok
+test targets::install::tests::drive_roots_nest_under_the_folder ... ok
+test targets::install::tests::native_command_quotes_the_native_exe_path ... ok
+test targets::install::tests::native_path_normalizes_every_separator_form ... ok
+test targets::install::tests::non_roots_pass_through_untouched ... ok
+test targets::install::tests::script_env_exports_the_wizard_language ... ok
+test targets::install::tests::self_delete_script_doubles_quotes_and_refuses_metacharacters ... ok
+test targets::install::tests::self_delete_script_retries_until_the_image_unlocks ... ok
+test fs_probe::tests::list_drives_is_populated ... ok
+test targets::install::tests::stems_replace_filename_illegal_characters ... ok
+test fs_probe::tests::probe_accepts_existing_and_not_yet_existing_dirs ... ok
+test targets::install::tests::url_schemes_normalize_to_lowercase_identifiers ... ok
+test targets::instance::tests::display_name_reads_through_utf16 ... ok
+test targets::macos::tests::app_bundle_is_found_through_ancestors ... ok
+test targets::plist::tests::identifier_segments_are_sanitized ... ok
+test targets::plist::tests::plist_declares_launch_identity ... ok
+test targets::plist::tests::plist_without_deep_links_omits_url_types ... ok
+test update::tests::host_of_extracts_the_host_label ... ok
+test webview2::tests::a_download_must_match_its_pinned_sha256 ... ok
+test webview2::tests::an_empty_or_malformed_pin_refuses_instead_of_passing ... ok
+test fs_probe::tests::probe_leaves_no_leftover_files ... ok
+test payload::replace_file_tests::replace_file_writes_a_missing_target_directly ... ok
+test targets::install::tests::install_manifest_roundtrips_and_reads_the_legacy_shape ... ok
+test webview2::tests::download_source_needs_url_and_the_silent_knob ... ok
+test payload::replace_file_tests::replace_file_sweeps_parked_copies_from_earlier_upgrades ... ok
+test webview2::tests::evergreen_match_is_case_insensitive_but_name_gated ... ok
+test webview2::tests::permalink_pins_cover_the_documented_fwlinks ... ok
+test payload::replace_file_tests::replace_file_overwrites_a_differing_target_and_cleans_up ... ok
+test webview2::tests::carried_runtime_wins_over_the_download_url ... ok
+test webview2::tests::evergreen_is_found_under_the_payload_prefix ... ok
+test targets::install::tests::relocate_cleanup_sweeps_manifest_files_and_spares_foreign_ones ... ok
+test config::tests::dir_rules_match_stubs_one_level_below_the_target_too ... ok
+test webview2::tests::the_staged_file_gate_matches_the_in_memory_one ... ok
+test targets::install::tests::foreign_accounting_forgives_only_what_shun_delivered ... ok
+test targets::install::tests::unlocked_swap_replaces_the_tree_atomically ... ok
+test wizard::tests::apply_event_folds_percent_label_and_log ... ok
+test webview2::tests::staging_without_a_carried_installer_is_none ... ok
+test webview2::tests::evergreen_outside_the_prefix_is_ignored ... ok
+test wizard::tests::env_vars_expand_in_both_spellings ... ok
+test wizard::tests::entering_install_resets_the_run_state ... ok
+test webview2::tests::evergreen_staging_extracts_the_installer ... ok
+test targets::install::tests::the_swap_refuses_foreign_content_and_spares_the_tree ... ok
+test wizard::tests::a_lone_installer_prefs_file_never_faults_a_fresh_pick ... ok
+test wizard::tests::pad_root_dir_follows_the_forbid_knob ... ok
+test wizard::tests::launch_without_main_exe_surfaces_the_convention_target ... ok
+test wizard::tests::main_exe_falls_back_to_the_product_name ... ok
+test wizard::tests::default_dir_leads_the_location_candidates ... ok
+test wizard::tests::stale_sweep_reads_wrapped_manifests_and_spares_current_files ... ok
+test wizard::tests::rail_order_is_stable ... ok
+test targets::install::tests::a_foreign_backup_is_preserved_not_deleted ... ok
+test wizard::tests::foreign_share_reason_covers_the_rule_less_shapes ... ok
+test targets::install::tests::a_stale_foreign_backup_frees_its_slot_by_rename ... ok
+test wizard::tests::check_dir_hooks_veto_through_the_blocked_env ... ok
+test wizard::tests::the_registered_install_leads_the_location_candidates ... ok
+test wizard::tests::dir_guards_refuse_a_bare_root_by_default ... ok
+test wizard::tests::dir_guards_refuse_empty_and_unwritable_dirs ... ok
+test wizard::tests::dir_guards_skip_fresh_checks_for_an_existing_install ... ok
+test wizard::tests::dir_rules_block_fresh_picks_and_relocate_flags_existing_installs ... ok
+test wizard::tests::non_empty_guard_refuses_foreign_content_but_not_junk_or_upgrades ... ok
+test targets::install::tests::held_directory_degrades_then_recovers ... ok
+
+test result: ok. 145 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.46s
+
+     Running unittests src\bin\shun.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/d8e553f03b5679ee\out\shun-d8e553f03b5679ee.exe)
+
+running 3 tests
+test static_crt_tests::pin_targets_only_msvc ... ok
+test static_crt_tests::merges_preserve_flags_and_stay_single_token ... ok
+test icons::tests::ico_layers_stay_within_the_format_ceiling ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
+
+     Running tests\config_roundtrip.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/8dfcb271ce3a9b64\out\config_roundtrip-8dfcb271ce3a9b64.exe)
+
+running 10 tests
+test drive_roots_are_refused_by_default_and_opt_out_survives ... ok
+test install_modes_default_to_enabled ... ok
+test targets_use_kebab_case_kinds ... ok
+test webview2_strategy_uses_kebab_case_tags ... ok
+test fixed_version_carries_path ... ok
+test licenses_survive_the_roundtrip ... ok
+test launch_after_install_survives_the_roundtrip ... ok
+test update_watch_table_survives_the_roundtrip ... ok
+test config_roundtrips_through_json ... ok
+test cargo_manifest_top_level_main_exe_feeds_the_install_target ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\finish_failure.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/5d1c0f636e94a0f1\out\finish_failure-5d1c0f636e94a0f1.exe)
+
+running 2 tests
+test a_missing_entry_point_is_its_own_kind_naming_the_missing_files_topic ... ok
+test a_present_but_unlaunchable_entry_point_is_never_app_control ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\install_local.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/e7cb231e2245f6a8\out\install_local-e7cb231e2245f6a8.exe)
+
+running 1 test
+test local_install_registers_arp_and_uninstall_cleans ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests\install_portable.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/4b9b82e73a77e982\out\install_portable-4b9b82e73a77e982.exe)
+
+running 3 tests
+test uninstall_is_tolerant_of_missing_install ... ok
+test manifest_carries_the_wizard_language_through_the_flow ... ok
+test portable_install_and_uninstall_roundtrip ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests\instance_path_discrimination.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/0588dfcafbacc11e\out\instance_path_discrimination-0588dfcafbacc11e.exe)
+
+running 1 test
+test a_same_named_process_at_another_path_is_not_matched ... ignored, the windows-latest runner kills this test binary at startup (exit 1, no failure report) — it passes on dev hosts; re-enable once the runner interaction is understood
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\instance_smoke.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/8d4fd544df8b278c\out\instance_smoke-8d4fd544df8b278c.exe)
+
+running 1 test
+test a_query_over_an_idle_path_survives_everywhere ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\launch_after_install.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/e79a8cbce8a8dcdf\out\launch_after_install-e79a8cbce8a8dcdf.exe)
+
+running 6 tests
+test wizard_defaults_check_the_launch_box ... ok
+test ask_consults_the_wizard_answer ... ok
+test a_hand_built_context_launches_nothing ... ok
+test launch_is_a_no_op_without_the_flag_or_an_entry_point ... ok
+test always_and_never_pin_the_policy ... ok
+test launch_reports_the_missing_entry_point ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\msix_pack.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/cc272cd7f29877eb\out\msix_pack-cc272cd7f29877eb.exe)
+
+running 2 tests
+test appxmanifest_declares_identity_entry_and_escaping ... ok
+Microsoft (R) MakeAppx Tool
+
+Version 10.0.26100.8249
+
+Copyright (C) Microsoft. All rights reserved.
+
+
+
+The path (/p) parameter is: "\\?\C:\Users\langy\AppData\Local\Temp\.tmp0NBRTl\ShunDemo-Test.msix"
+
+The content directory (/d) parameter is: "\\?\C:\Users\langy\AppData\Local\Temp\.tmp0NBRTl\ShunDemo-Test.msix-staging"
+
+Enumerating files from directory "\\?\C:\Users\langy\AppData\Local\Temp\.tmp0NBRTl\ShunDemo-Test.msix-staging"
+
+Packing 3 file(s) in "\\?\C:\Users\langy\AppData\Local\Temp\.tmp0NBRTl\ShunDemo-Test.msix-staging" (content directory) to "\\?\C:\Users\langy\AppData\Local\Temp\.tmp0NBRTl\ShunDemo-Test.msix" (output file name).
+
+Memory limit defaulting to 16910053376 bytes.
+
+Using "\\?\C:\Users\langy\AppData\Local\Temp\.tmp0NBRTl\ShunDemo-Test.msix-staging\AppxManifest.xml" as the manifest for the package.
+
+Processing "\\?\C:\Users\langy\AppData\Local\Temp\.tmp0NBRTl\ShunDemo-Test.msix-staging\bin\shun-demo.exe" as a payload file.  Its path in the package will be "bin\shun-demo.exe".
+
+Processing "\\?\C:\Users\langy\AppData\Local\Temp\.tmp0NBRTl\ShunDemo-Test.msix-staging\assets\logo.png" as a payload file.  Its path in the package will be "assets\logo.png".
+
+Package creation succeeded.
+
+test makeappx_packs_a_real_package ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests\payload.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/26e1b89d9cd9f357\out\payload-26e1b89d9cd9f357.exe)
+
+running 6 tests
+test garbage_bytes_are_rejected ... ok
+test manifest_paths_are_relative ... ok
+test from_bytes_with_progress_is_monotonic_and_identical ... ok
+test extract_prefix_stages_only_the_subtree ... ok
+test extraction_reuses_identical_files_and_rewrites_drifted_ones ... ok
+test pack_extract_roundtrip_verifies_and_reports_progress ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests\payload_online.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/e7a0e74eae588ea2\out\payload_online-e7a0e74eae588ea2.exe)
+
+running 2 tests
+test online_payload_rejects_wrong_content ... ok
+test online_payload_streams_into_target ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\registration_shortcuts.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/fccd02e6528c5ac0\out\registration_shortcuts-fccd02e6528c5ac0.exe)
+
+running 18 tests
+test registration::machine_scope_writes_hklm_and_all_users_start_menu ... ok
+test registered_location::ignores_a_dead_registered_location ... ok
+test registered_location::round_trips_the_custom_install_dir ... ok
+test registration::presence_helpers_follow_the_done_page_application ... ok
+test registration::registration_normalizes_a_forward_slash_install_dir ... ok
+test registration::explorer_verbs_register_and_clean ... ok
+test registration::lnk_bytes_match_the_ms_shllink_header ... ok
+test registration::deep_links_register_and_clean ... ok
+test registration::degradations_stream_warning_records ... ok
+test registration::arp_entry_carries_the_full_nsis_field_set ... ok
+test registration::unconfigured_extras_stay_absent ... ok
+test registration::shortcut_accept_refreshes_an_existing_link_in_place ... ok
+test registration::desktop_shortcut_lands_resolves_and_uninstalls ... ok
+test registration::done_page_application_names_by_product_and_sweeps_legacy_links ... ok
+test registration::aumid_is_stamped_on_the_start_menu_shortcut ... ok
+test registration::illegal_product_names_are_stem_sanitized ... ok
+test registration::start_menu_shortcut_resolves_through_the_shell ... ok
+test registration::shortcut_survives_a_non_ascii_install_path ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.52s
+
+     Running tests\relocate.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/dc6dee5de82c7681\out\relocate-dc6dee5de82c7681.exe)
+
+running 1 test
+test a_relocation_moves_the_install_and_sweeps_only_its_own_files ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests\scripting_duckscript.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/720c9a36052c18b9\out\scripting_duckscript-720c9a36052c18b9.exe)
+
+running 2 tests
+test script_env_reaches_a_duckscript_run ... ok
+test duckscript_embeds_as_a_dependency ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\scripting_python.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/f4415958c60f8814\out\scripting_python-f4415958c60f8814.exe)
+
+running 1 test
+test cpython_embeds_via_pyo3 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+     Running tests\stop_running_instance.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/db86f1276342309a\out\stop_running_instance-db86f1276342309a.exe)
+
+running 1 test
+test detects_and_stops_a_running_instance_by_exact_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\swap_lock.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/612ffd84fa73f408\out\swap_lock-612ffd84fa73f408.exe)
+
+running 1 test
+test install_flow_completes_over_a_held_directory ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.46s
+
+     Running tests\update_watch.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/4fff23e5c6799dfe\out\update_watch-4fff23e5c6799dfe.exe)
+
+running 6 tests
+test resolve_needs_both_sources_and_files ... ok
+test fetch_text_rejects_non_200 ... ok
+test resolve_normalizes_bases_and_skips_empty_entries ... ok
+test fetch_text_trims_the_version_marker ... ok
+test resolve_skips_non_200_answers ... ok
+test resolve_falls_through_to_the_first_reachable_source ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\web_log_pane_row_identity.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun/537e159e47dbfcf6\out\web_log_pane_row_identity-537e159e47dbfcf6.exe)
+
+running 2 tests
+test log_pane_rows_are_keyed_by_identity ... ok
+test the_log_producer_assigns_a_monotonic_row_identity ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun_demo_app/27609101bcb478d8\out\shun_demo-27609101bcb478d8.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (D:\源代码\工程项目\celestia\shun\target\debug\build\shun_installer/d1586ca963a42470\out\shun_installer-d1586ca963a42470.exe)
+
+running 94 tests
+test fallback::glow_tests::glow_falloff_matches_box_shadow_semantics ... ok
+test fallback::strings_tests::install_flow_messages_classify_through_the_shared_table ... ok
+test fallback::strings_tests::the_notice_join_keeps_the_raw_detail ... ok
+test guide::tests::a_missing_heading_degrades_to_body_only ... ok
+test guide::tests::app_control_keeps_its_titled_article_and_figures ... ok
+test fallback::icon_tests::small_logos_pass_through_and_none_ships_no_icon ... ok
+test guide::tests::every_topic_locale_resolves_to_a_document ... ok
+test guide::tests::the_title_split_tolerates_a_bom_and_crlf ... ok
+test fallback::strings_tests::every_locale_authors_the_relocation_copy ... ok
+test fallback::strings_tests::every_locale_authors_the_finish_notices ... ok
+test fallback::strings_tests::every_locale_authors_the_banner_variants ... ok
+test fallback::strings_tests::every_classified_family_routes_to_a_known_help_topic ... ok
+test guide::tests::the_window_tracks_its_document ... ok
+test guide::tests::the_window_caches_the_topics_official_page ... ok
+test guide::tests::topics_without_an_official_page_hide_the_footer_action ... ok
+test guide::tests::unknown_topics_still_render_the_english_guide ... ok
+test markdown::tests::image_lines_parse_relative_references_only ... ok
+test fallback::path_fit_tests::short_paths_pass_through_untouched ... ok
+test markdown::tests::bare_urls_stop_at_punctuation ... ok
+test markdown::tests::inline_runs_split_links_bold_and_plain ... ok
+test markdown::tests::markdown_links_win_over_bare_detection ... ok
+test markdown::tests::plain_prose_is_one_run ... ok
+test callout::tests::title_and_link_rows_change_the_block ... ok
+test callout::tests::every_level_renders_in_the_flow_after_the_previous_item ... ok
+test passive::tests::the_webview_lane_is_the_default_when_the_runtime_answers ... ok
+test passive::tests::a_missing_runtime_falls_to_the_egui_lane ... ok
+test passive::tests::a_disabled_webview_face_pins_the_egui_lane ... ok
+test solar::tests::altitudes_match_the_hikari_reference_vectors ... ok
+test solar::tests::solstice_noon_peaks_near_the_latitude_minus_declination ... ok
+test solar::tests::the_verdict_follows_the_six_degree_band ... ok
+test passive::tests::forced_egui_flags_keep_their_promise_on_the_passive_window ... ok
+test solar::tests::the_offset_probe_lands_on_a_plausible_longitude ... ok
+test callout::tests::long_copy_wraps_and_the_level_inks_match_hikari ... ok
+test tests::bare_uninstaller_launch_defaults_to_uninstall ... ok
+test markdown::tests::the_old_entry_point_renders_figureless_documents ... ok
+test tests::classify_error_names_the_family_and_topic ... ok
+test stamp_loader::tests::a_signed_exe_reads_the_trailer_ahead_of_its_certificate ... ok
+test stamp_loader::tests::no_trailer_falls_back_to_none ... ok
+test tests::default_prefers_tauri_then_egui ... ok
+test stamp_loader::tests::stamped_file_loads_back_through_the_container ... ok
+test fallback::path_fit_tests::a_single_giant_segment_clips_characters ... ok
+test stamp_loader::tests::a_corrupt_container_is_fatal_not_a_silent_fallback ... ok
+test stamp_loader::tests::a_broken_trailer_after_magic_is_fatal_too ... ok
+test tests::disabled_faces_are_never_selected ... ok
+test tests::download_name_comes_from_the_url_tail ... ok
+test fallback::path_fit_tests::long_paths_keep_the_tail_behind_an_ellipsis ... ok
+test tests::headless_shortcut_answers_resolve_by_policy_and_presence ... ok
+test tests::legacy_switch_spellings_map_onto_flags ... ok
+test tests::headless_shortcut_answers_parse ... ok
+test tests::path_flags_anchor_against_the_pre_park_cwd ... ok
+test tests::no_gui_without_a_tty_resolves_to_help ... ok
+test tests::uninstaller_name_match_ignores_windows_case ... ok
+test tests::window_titles_interpolate_the_product ... ok
+test tests::silent_wins_over_everything ... ok
+test toast::tests::an_identical_repeat_refreshes_instead_of_stacking ... ok
+test toast::tests::cards_append_and_overflow_drops_the_oldest ... ok
+test toast::tests::expiry_follows_the_per_tone_lifetime ... ok
+test toast::tests::the_action_less_push_clears_the_newest_cards_pill ... ok
+test toast::tests::the_stack_clears_the_caption_bar ... ok
+test tui::tests::halfblocks_lane_draws_block_glyphs ... ok
+test toast::tests::the_lifetime_table_matches_hikari ... ok
+test tui::tests::native_kitty_lane_draws_placeholder_cells ... ok
+test tui_caps::tests::legacy_console_without_vt_degrades_to_mono_ascii ... ok
+test tui_caps::tests::no_color_and_dumb_term_force_mono ... ok
+test tui_caps::tests::overrides_win_only_where_they_apply ... ok
+test tests::corrupt_prefs_file_degrades_to_defaults ... ok
+test tui_caps::tests::vs_code_and_conemu_are_recognized ... ok
+test tui_caps::tests::windows_terminal_gets_truecolor_unicode_mouse_and_images ... ok
+test tui_caps::tests::xterm_256_and_truecolor_follow_the_environment ... ok
+test tests::installer_prefs_roundtrip_and_portable_skip ... ok
+test tui_i18n::tests::every_language_has_a_non_empty_table ... ok
+test tui_i18n::tests::locale_spellings_normalize ... ok
+test tui_i18n::tests::the_picker_covers_the_documented_languages ... ok
+test tests::legacy_prefs_are_read_once_and_swept_by_the_next_save ... ok
+test tui_image::tests::ansi256_cube_stays_in_the_palette ... ok
+test tui_image::tests::markers_extract_only_standalone_local_images ... ok
+test tui_theme::tests::truecolor_uses_the_rgb_palette_and_unicode_glyphs ... ok
+test markdown::tests::empty_figure_bytes_skip_the_row_instead_of_leaking_markdown ... ok
+test tui_theme::tests::ascii_hosts_get_a_pure_ascii_hint ... ok
+test tui_image::tests::mono_and_empty_areas_render_nothing ... ok
+test tui_theme::tests::kv_lines_pad_the_label_column ... ok
+test tui_theme::tests::kv_padding_counts_display_width_not_chars ... ok
+test tui_theme::tests::mono_drops_colors_keeps_weight_and_switches_to_ascii ... ok
+test webview_hardening::tests::the_demo_app_carries_the_pinned_posture_too ... ok
+test webview_hardening::tests::the_global_tauri_object_stays_off ... ok
+test webview_hardening::tests::the_guide_links_can_reach_the_system_browser ... ok
+test webview_hardening::tests::the_csp_covers_what_the_bundle_loads_and_nothing_wider ... ok
+test toast::tests::close_and_action_hit_regions_dismiss ... ok
+test webview_hardening::tests::the_committed_bundle_has_no_global_tauri_object ... ok
+test toast::tests::the_card_lays_out_clamped_and_interactive ... ok
+test toast::tests::the_card_sits_in_the_top_right_seat ... ok
+test markdown::tests::figures_resolve_and_unknown_references_stay_prose ... ok
+test fallback::icon_tests::oversized_logos_are_clamped_before_the_window_manager ... ok
+test guide::tests::every_topic_article_renders_and_the_longest_scrolls ... ok
+
+test result: ok. 94 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.04s
+
+   Doc-tests shun
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
