@@ -1027,18 +1027,9 @@ pub fn run_uninstall_with_events(
 
 /// Applies the done-page answers: creates or removes the shortcuts and
 /// optionally launches the installed app. A shortcut failure never
-/// invalidates the completed install (errors combine and return).
-pub fn apply_finish(
-    core: &WizardCore,
-    dir: &str,
-    desktop: Option<bool>,
-    menu: Option<bool>,
-    launch: bool,
-) -> Result<(), String> {
-    apply_finish_checked(core, dir, desktop, menu, launch).map_err(|failure| failure.message)
-}
-
-/// [`apply_finish`] with the failure classified for the UI faces.
+/// invalidates the completed install (errors combine and return). The
+/// failure comes back CLASSIFIED — every face now reports it (the TUI
+/// was the last `let _ =` caller; issue #168).
 ///
 /// The faces need more than the message: a launch refused by Windows
 /// application-control policy is not an installer failure, and both the
@@ -1148,7 +1139,13 @@ fn launch_installed_error(core: &WizardCore, dir: &str) -> Result<(), crate::err
         dir,
         false,
     );
-    ctx.main_exe = install.main_exe.clone();
+    // The launch resolves the SAME target the shortcut pass and the
+    // running-instance check use — the manifest's main-exe, else the
+    // product-name convention. Feeding the raw Option here meant a
+    // manifest without main-exe launched NOTHING while the done page
+    // reported success (issue #168); with the fallback a missing
+    // convention file surfaces as a classified MissingEntry instead.
+    ctx.main_exe = Some(std::path::PathBuf::from(core.main_exe()));
     ctx.launch_after_install = true;
     crate::targets::install::launch(&ctx)
 }
@@ -1830,6 +1827,24 @@ mod tests {
     fn main_exe_falls_back_to_the_product_name() {
         let core = core_with(BASIC);
         assert_eq!(core.main_exe(), "app.exe");
+    }
+
+    /// Issue #168: a manifest without main-exe used to launch NOTHING
+    /// while every face reported success — the launch context copied the
+    /// raw Option and `launch` early-returned. The launch now resolves
+    /// the same product-name convention the shortcut pass uses, so a
+    /// missing convention file surfaces as an error naming the target
+    /// instead of a silent Ok.
+    #[test]
+    fn launch_without_main_exe_surfaces_the_convention_target() {
+        let core = core_with(BASIC);
+        let tmp = tempfile::tempdir().unwrap();
+        let err = launch_installed(&core, tmp.path().to_string_lossy().as_ref())
+            .expect_err("the missing convention file must surface");
+        assert!(
+            err.contains("app.exe"),
+            "the error names the product-name target: {err}"
+        );
     }
 
     const BASIC: &str =

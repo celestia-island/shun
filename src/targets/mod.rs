@@ -28,7 +28,7 @@ pub mod shortcuts;
 /// exists only on Windows (`mslnk`/`windows-sys` are
 /// `cfg(windows)`-scoped dependencies), so on any other host a shortcut
 /// choice simply applies nothing. Keep the signature in lockstep with the
-/// real module: the wizard (`crate::wizard::apply_finish`) and the shells
+/// real module: the wizard (`crate::wizard::apply_finish_checked`) and the shells
 /// call it unconditionally.
 #[cfg(not(windows))]
 pub mod shortcuts {
