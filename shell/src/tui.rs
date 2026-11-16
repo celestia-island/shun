@@ -434,16 +434,6 @@ pub fn run(
                                         shun::wizard::run_uninstall(&uninstall_core)
                                     }));
                                 }
-                                KeyCode::Char('r') | KeyCode::Char('R')
-                                    if core.state.uninstall_phase == UninstallPhase::Failed =>
-                                {
-                                    core.state.uninstall_phase = UninstallPhase::Running;
-                                    let uninstall_core =
-                                        WizardCore::new(core.config.clone(), BTreeMap::new());
-                                    worker = Some(std::thread::spawn(move || {
-                                        shun::wizard::run_uninstall(&uninstall_core)
-                                    }));
-                                }
                                 KeyCode::Esc | KeyCode::Char('q') => {
                                     match core.state.uninstall_phase {
                                         UninstallPhase::Idle
@@ -929,6 +919,13 @@ fn draw_wizard(
                         continue;
                     };
                     let (font_w, font_h) = picker_font_size(ui);
+                    if font_h == 0 {
+                        lines.push(Line::styled(
+                            format!("  [image: {}]", marker.alt),
+                            ui.theme.muted,
+                        ));
+                        continue;
+                    }
                     let cols = u64::from(pane.width.saturating_sub(2).max(1));
                     let (w_px, h_px) = dyn_img.dimensions();
                     if w_px == 0 || h_px == 0 {
