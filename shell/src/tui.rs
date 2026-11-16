@@ -35,6 +35,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use shun::config::ShunConfig;
+use shun::failure::FinishStage;
 use shun::flow::FlowEvent;
 use shun::payload::ArchivePayload;
 use shun::wizard::{InstallRequest, Step, UninstallPhase, WizardCore, WizardState};
@@ -180,6 +181,9 @@ pub fn run(
     // retries a failed finish, while an install failure stays terminal
     // (nothing was delivered to finish).
     let mut finish_failed = false;
+    // Which half of the finish failed (drives the done page's failure
+    // title); None while the failure is the install's own.
+    let mut finish_stage: Option<FinishStage> = None;
 
     let result = (|| -> Result<(), String> {
         loop {
@@ -239,6 +243,7 @@ pub fn run(
                             relocating,
                             &payload,
                             finish_failed,
+                            finish_stage,
                         );
                     }
                 })
@@ -270,7 +275,10 @@ pub fn run(
                                 let Some(hit) = hit else { continue };
                                 if uninstall_mode {
                                     if matches!(hit, Hit::UninstallPrimary)
-                                        && core.state.uninstall_phase == UninstallPhase::Idle
+                                        && matches!(
+                                            core.state.uninstall_phase,
+                                            UninstallPhase::Idle | UninstallPhase::Failed
+                                        )
                                     {
                                         core.state.uninstall_phase = UninstallPhase::Running;
                                         let uninstall_core =
@@ -340,6 +348,7 @@ pub fn run(
                                                 Ok(()) => return Ok(()),
                                                 Err(failure) => {
                                                     finish_failed = true;
+                                                    finish_stage = Some(failure.stage);
                                                     core.state.failure = Some(failure.message);
                                                 }
                                             }
@@ -359,10 +368,23 @@ pub fn run(
                         if uninstall_mode {
                             match key.code {
                                 KeyCode::Enter
-                                    if core.state.uninstall_phase == UninstallPhase::Idle =>
+                                    if matches!(
+                                        core.state.uninstall_phase,
+                                        UninstallPhase::Idle | UninstallPhase::Failed
+                                    ) =>
                                 {
                                     // shun's uninstall emits no events: the page runs
                                     // an indeterminate phase until the worker lands.
+                                    core.state.uninstall_phase = UninstallPhase::Running;
+                                    let uninstall_core =
+                                        WizardCore::new(core.config.clone(), BTreeMap::new());
+                                    worker = Some(std::thread::spawn(move || {
+                                        shun::wizard::run_uninstall(&uninstall_core)
+                                    }));
+                                }
+                                KeyCode::Char('r') | KeyCode::Char('R')
+                                    if core.state.uninstall_phase == UninstallPhase::Failed =>
+                                {
                                     core.state.uninstall_phase = UninstallPhase::Running;
                                     let uninstall_core =
                                         WizardCore::new(core.config.clone(), BTreeMap::new());
@@ -545,6 +567,7 @@ pub fn run(
                                         Ok(()) => return Ok(()),
                                         Err(failure) => {
                                             finish_failed = true;
+                                            finish_stage = Some(failure.stage);
                                             core.state.failure = Some(failure.message);
                                         }
                                     }
@@ -626,6 +649,7 @@ fn draw_wizard(
     relocating: bool,
     payload: &ArchivePayload,
     finish_failed: bool,
+    finish_stage: Option<FinishStage>,
 ) {
     set_product(&core.config.product.name);
     let [rail_area, pane_area] = Layout::default()
@@ -657,26 +681,29 @@ fn draw_wizard(
                     ]))
                 })
                 .collect();
-            let list = List::new(items)
-                .block(ui.theme.block(texts.language.0))
-                .highlight_style(ui.theme.selected);
-            frame.render_stateful_widget(list, pane, locale_choice);
-            for index in 0..LANGUAGES.len() {
-                let row = Rect {
-                    x: pane.x + 1,
-                    y: pane.y + 1 + index as u16,
-                    width: pane.width.saturating_sub(2),
-                    height: 1,
-                };
-                ui.clickable(row, Hit::Locale(index));
-            }
-            let hint = Paragraph::new(texts.language.1)
-                .style(ui.theme.muted)
-                .wrap(Wrap { trim: true });
-            let [_, hint_area] = Layout::default()
+            // The hint gets its own row under the list instead of painting
+            // over the list block's bottom border (master's layout did).
+            let [list_area, hint_area] = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(3), Constraint::Length(1)])
                 .areas(pane);
+            let list = List::new(items)
+                .block(ui.theme.block(texts.language.0))
+                .highlight_style(ui.theme.selected);
+            frame.render_stateful_widget(list, list_area, locale_choice);
+            for index in 0..LANGUAGES.len() {
+                let row = Rect {
+                    x: list_area.x + 1,
+                    y: list_area.y + 1 + index as u16,
+                    width: list_area.width.saturating_sub(2),
+                    height: 1,
+                };
+                if row.y < list_area.y + list_area.height {
+                    ui.clickable(row, Hit::Locale(index));
+                }
+            }
+            let hint = Paragraph::new(Span::styled(texts.language.1, ui.theme.muted))
+                .wrap(Wrap { trim: true });
             frame.render_widget(hint, hint_area);
         }
         Step::Location => {
@@ -926,8 +953,15 @@ fn draw_wizard(
             // (line offset inside the pane's inner area, hit) for the mouse.
             let mut click_rows: Vec<(u16, Hit)> = Vec::new();
             if let Some(err) = &core.state.failure {
+                // A FINISH failure gets the stage's own title — the install
+                // itself completed, so a bare `install failed` would lie.
+                let title = match finish_stage {
+                    Some(FinishStage::Shortcuts) => texts.stage_shortcuts,
+                    Some(FinishStage::Launch) => texts.stage_launch,
+                    _ => texts.done.1,
+                };
                 lines.push(Line::styled(
-                    format!("  {} {}", ui.theme.glyphs.bad, texts.done.1),
+                    format!("  {} {}", ui.theme.glyphs.bad, title),
                     ui.theme.error,
                 ));
                 lines.push(Line::raw(format!("  {err}")));
@@ -942,7 +976,7 @@ fn draw_wizard(
                 lines.push(Line::styled(
                     format!(
                         "  {} Enter {} · q/Esc {}",
-                        ui.theme.glyphs.arrow, texts.retry, texts.nav.1
+                        ui.theme.glyphs.arrow, texts.retry, texts.exit
                     ),
                     ui.theme.muted,
                 ));
@@ -993,10 +1027,13 @@ fn draw_wizard(
     // Footer: the key hints plus what the host terminal offers (the probe's
     // own line — also the e2e assertion hook).
     let footer_line = Line::from(vec![
-        Span::styled(format!(" [{}] ", ui.caps.summary()), ui.theme.muted),
+        Span::styled(
+            format!(" [{}] ", ui.theme.capability_summary()),
+            ui.theme.muted,
+        ),
         Span::styled(format!("{} ", ui.theme.glyphs.sep), ui.theme.muted),
         Span::styled(format!("{} ", ui.theme.glyphs.arrow), ui.theme.accent),
-        Span::raw(texts.footer),
+        Span::raw(ui.theme.hint(texts.footer)),
     ]);
     frame.render_widget(Paragraph::new(footer_line).style(ui.theme.muted), footer);
 }
@@ -1020,7 +1057,7 @@ fn draw_uninstall(frame: &mut Frame, core: &WizardCore, texts: &'static Texts, u
             ),
             Line::raw(""),
             Line::styled(format!("  [ {} ]", texts.uninstall.0), ui.theme.selected),
-            Line::styled(format!("  Esc: {}", texts.nav.1), ui.theme.muted),
+            Line::styled(format!("  Esc: {}", texts.exit), ui.theme.muted),
         ],
         UninstallPhase::Running => vec![
             Line::raw(""),
@@ -1033,7 +1070,7 @@ fn draw_uninstall(frame: &mut Frame, core: &WizardCore, texts: &'static Texts, u
                 ui.theme.ok,
             ),
             Line::raw(""),
-            Line::styled(format!("  Esc: {}", texts.nav.1), ui.theme.muted),
+            Line::styled(format!("  Esc: {}", texts.exit), ui.theme.muted),
         ],
         UninstallPhase::Failed => vec![
             Line::raw(""),
@@ -1043,11 +1080,15 @@ fn draw_uninstall(frame: &mut Frame, core: &WizardCore, texts: &'static Texts, u
             ),
             Line::raw(core.state.uninstall_error.clone()),
             Line::raw(""),
-            Line::styled(format!("  Esc: {}", texts.nav.1), ui.theme.muted),
+            Line::styled(format!("  [ {} ]", texts.retry), ui.theme.selected),
+            Line::styled(format!("  Esc: {}", texts.exit), ui.theme.muted),
         ],
     };
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
-    if core.state.uninstall_phase == UninstallPhase::Idle {
+    if matches!(
+        core.state.uninstall_phase,
+        UninstallPhase::Idle | UninstallPhase::Failed
+    ) {
         let button = Rect {
             x: inner.x,
             y: inner.y + 3,

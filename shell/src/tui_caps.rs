@@ -205,7 +205,9 @@ pub fn classify(input: &ProbeInput) -> TerminalCaps {
     };
 
     let mut mouse = (input.windows && input.console) || (!input.windows && term != "dumb");
-    let mut images = if color == ColorDepth::TrueColor {
+    // Half blocks only need foreground/background colors, so every color
+    // depth from 16 up can carry images (the 16-color mapping quantizes).
+    let mut images = if color >= ColorDepth::Basic16 {
         ImageSupport::HalfBlocks
     } else {
         ImageSupport::None
@@ -220,7 +222,7 @@ pub fn classify(input: &ProbeInput) -> TerminalCaps {
             "true" | "truecolor" | "24" => ColorDepth::TrueColor,
             _ => color,
         };
-        images = if color == ColorDepth::TrueColor {
+        images = if color >= ColorDepth::Basic16 {
             ImageSupport::HalfBlocks
         } else {
             ImageSupport::None
@@ -243,7 +245,7 @@ pub fn classify(input: &ProbeInput) -> TerminalCaps {
             force.trim().to_ascii_lowercase().as_str(),
             "0" | "off" | "false" | "no"
         );
-        images = if wants && color >= ColorDepth::Ansi256 {
+        images = if wants && color >= ColorDepth::Basic16 {
             ImageSupport::HalfBlocks
         } else {
             ImageSupport::None
@@ -371,8 +373,20 @@ mod tests {
         assert_eq!(c256.kind, TermKind::Xterm);
         assert_eq!(c256.color, ColorDepth::Ansi256);
         assert!(c256.mouse);
-        assert_eq!(c256.images, ImageSupport::None);
+        assert_eq!(
+            c256.images,
+            ImageSupport::HalfBlocks,
+            "256 colors carry half-block images"
+        );
         assert!(c256.unicode, "xterm carries box drawing");
+
+        let c16 = classify(&input(&[("TERM", "xterm")], false, false, false));
+        assert_eq!(c16.color, ColorDepth::Basic16);
+        assert_eq!(
+            c16.images,
+            ImageSupport::HalfBlocks,
+            "16 colors reach the quantized lane"
+        );
 
         let true_color = classify(&input(
             &[("TERM", "xterm-256color"), ("COLORTERM", "truecolor")],

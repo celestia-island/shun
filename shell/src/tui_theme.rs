@@ -12,6 +12,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders};
+use unicode_width::UnicodeWidthStr;
 
 use crate::tui_caps::{ColorDepth, TerminalCaps};
 
@@ -158,7 +159,9 @@ impl Theme {
     /// column plus the extra pad, then the value.
     pub fn kv(&self, label: &str, value: Vec<Span<'static>>) -> Line<'static> {
         let mut spans = vec![Span::raw("  "), Span::styled(label.to_string(), self.key)];
-        let width = label.chars().count();
+        // Display width, not char count — CJK labels would otherwise
+        // misalign every value column after them.
+        let width = label.width();
         let pad = if width < LABEL_WIDTH {
             LABEL_WIDTH - width + LABEL_PAD
         } else {
@@ -182,6 +185,46 @@ impl Theme {
             Span::styled(format!("{mark} "), style),
             Span::styled(label.to_string(), self.plain),
         ])
+    }
+
+    /// The footer's key hints. A legacy ASCII console cannot draw the
+    /// arrow glyphs the localized hints lead with, so it falls back to
+    /// the English hints (the precedent for live pane hints) with the
+    /// separators and arrows transliterated.
+    /// The capability summary in the host's alphabet — ASCII hosts get the
+    /// U+00B7 separators transcribed like the rest of the footer.
+    pub fn capability_summary(&self) -> String {
+        if self.caps.unicode {
+            self.caps.summary()
+        } else {
+            Self::asciify(&self.caps.summary())
+        }
+    }
+
+    pub fn hint(&self, footer: &'static str) -> String {
+        if self.caps.unicode {
+            footer.to_string()
+        } else {
+            Self::asciify(crate::tui_i18n::EN.footer)
+        }
+    }
+
+    /// Transliterates the known unicode hint characters; anything else
+    /// non-ASCII is dropped rather than mojibake'd.
+    pub fn asciify(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars() {
+            match c {
+                '↑' => out.push_str("Up"),
+                '↓' => out.push_str("Dn"),
+                '→' => out.push_str("->"),
+                '·' => out.push('|'),
+                '—' | '–' => out.push('-'),
+                c if c.is_ascii() => out.push(c),
+                _ => {}
+            }
+        }
+        out
     }
 
     fn border_style(&self) -> Style {
@@ -242,13 +285,47 @@ mod tests {
     fn kv_lines_pad_the_label_column() {
         let theme = Theme::new(&caps(ColorDepth::TrueColor, true));
         let line = theme.kv("Install to", vec![Span::raw("C:/Apps")]);
+        let value_col = display_column(&line, 'C');
+        assert_eq!(value_col, 2 + LABEL_WIDTH + LABEL_PAD);
+    }
+
+    /// The CJK label is three CHARS but six display columns — the value
+    /// column must land in the same place as an equally WIDE ascii label,
+    /// which a chars()-count padding would get wrong.
+    #[test]
+    fn kv_padding_counts_display_width_not_chars() {
+        let theme = Theme::new(&caps(ColorDepth::TrueColor, true));
+        let line = theme.kv("安装到", vec![Span::raw("C:/Apps")]);
+        let value_col = display_column(&line, 'C');
+        assert_eq!(value_col, 2 + LABEL_WIDTH + LABEL_PAD);
+    }
+
+    #[test]
+    fn ascii_hosts_get_a_pure_ascii_hint() {
+        let ascii_theme = Theme::new(&caps(ColorDepth::Mono, false));
+        let hint = ascii_theme.hint(crate::tui_i18n::EN.footer);
+        assert!(hint.is_ascii(), "non-ascii survived: {hint}");
+        assert!(hint.contains("Up/Dn move"), "{hint}");
+        assert!(hint.contains("| Enter"), "{hint}");
+        // The unicode path returns the caller's footer untouched.
+        let unicode_theme = Theme::new(&caps(ColorDepth::TrueColor, true));
+        assert_eq!(
+            unicode_theme.hint(crate::tui_i18n::EN.footer),
+            crate::tui_i18n::EN.footer
+        );
+    }
+
+    /// The display column the value starts at (cells, not chars).
+    fn display_column(line: &Line<'static>, value_first: char) -> usize {
         let text: String = line
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
-        assert!(text.starts_with("  Install to"));
-        let value_at = text.find("C:/Apps").expect("value present");
-        assert_eq!(value_at, 2 + LABEL_WIDTH + LABEL_PAD);
+        let prefix: String = text.chars().take_while(|c| *c != value_first).collect();
+        prefix
+            .chars()
+            .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0))
+            .sum()
     }
 }

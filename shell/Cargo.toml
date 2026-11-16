@@ -28,6 +28,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 clap = { version = "^4", features = ["derive"] }
 ratatui = "^0.29"
 crossterm = "^0.28"
+# Display-width-aware label padding for the terminal face (CJK labels).
+unicode-width = "^0.2"
 eframe = "0.32"
 egui = "0.32"
 # HWND access for the DWM corner/shadow hint (the frame's own handle).
