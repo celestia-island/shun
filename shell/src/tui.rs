@@ -166,6 +166,11 @@ pub fn run(
     // (install worker join, event channel) while Step::Install runs.
     let mut worker: Option<std::thread::JoinHandle<Result<(), String>>> = None;
     let mut events: Option<mpsc::Receiver<FlowEvent>> = None;
+    // Whether the done page's failure line came from the FINISH answers
+    // (shortcuts / the launch) rather than the install itself: Enter
+    // retries a failed finish, while an install failure stays terminal
+    // (nothing was delivered to finish).
+    let mut finish_failed = false;
 
     let result = (|| -> Result<(), String> {
         loop {
@@ -372,19 +377,33 @@ pub fn run(
                             }
                         }
                     }
-                    (Step::Done, KeyCode::Enter, _) if core.state.failure.is_none() => {
-                        let dir = core.state.dir.trim().to_string();
-                        let desktop = core.state.desktop_shortcut;
-                        let launch = core.state.launch_after;
-                        let finish_core = WizardCore::new(core.config.clone(), BTreeMap::new());
-                        let _ = shun::wizard::apply_finish(
-                            &finish_core,
-                            &dir,
-                            Some(desktop),
-                            Some(true),
-                            launch,
-                        );
-                        return Ok(());
+                    // The done page's answers: apply them and leave. A
+                    // failure is NOT swallowed — the pane keeps the
+                    // classified line (the red branch below) and Enter
+                    // retries while q/Esc quits (issue #168: this used
+                    // to `let _ =` the result and exit as if the launch
+                    // had worked). An INSTALL failure keeps its old,
+                    // terminal meaning: Enter is inert there.
+                    (Step::Done, KeyCode::Enter, _) => {
+                        if core.state.failure.is_none() || finish_failed {
+                            let dir = core.state.dir.trim().to_string();
+                            let desktop = core.state.desktop_shortcut;
+                            let launch = core.state.launch_after;
+                            let finish_core = WizardCore::new(core.config.clone(), BTreeMap::new());
+                            match shun::wizard::apply_finish_checked(
+                                &finish_core,
+                                &dir,
+                                Some(desktop),
+                                Some(true),
+                                launch,
+                            ) {
+                                Ok(()) => return Ok(()),
+                                Err(failure) => {
+                                    finish_failed = true;
+                                    core.state.failure = Some(failure.message);
+                                }
+                            }
+                        }
                     }
                     (Step::Done, KeyCode::Esc, _) | (Step::Done, KeyCode::Char('q'), _) => {
                         return Ok(());
