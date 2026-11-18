@@ -221,12 +221,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)] // retired with the inline banners; the callout mixes its own
-    /// Warning banner fill (warning at ~12% over the background).
-    fn warning_tint(&self) -> Color32 {
-        mix(self.background, self.warning, 0.12)
-    }
-
     /// Error alert fill.
     fn error_tint(&self) -> Color32 {
         mix(self.background, self.error, 0.12)
