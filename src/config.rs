@@ -230,6 +230,11 @@ impl ShunConfig {
         locale: Option<&str>,
     ) -> Result<Vec<ResolvedStep>, crate::error::ShunError> {
         let config_error = |message: &str| crate::error::ShunError::Config(message.to_string());
+        // Load-time validation of the post-install companion: every face
+        // resolves the pipeline before it can install anything, so a
+        // declaration reaching outside the payload fails HERE instead of
+        // surfacing on the done page after a successful delivery.
+        self.post_install_launch().map_err(|e| config_error(&e))?;
         let read_markdown = |path: &str, what: &str| -> Result<String, crate::error::ShunError> {
             std::fs::read_to_string(base.join(path)).map_err(|e| {
                 crate::error::ShunError::Config(format!("{what} document `{path}`: {e}"))
@@ -564,9 +569,13 @@ impl ShunConfig {
     /// The declared post-install companion launch
     /// (`install.post-install-launch`), validated: `None` when the
     /// manifest declares none, an error when the declaration could
-    /// escape the payload or carries nothing to launch. The delivery
-    /// lanes validate before the install runs, so a broken declaration
-    /// fails loud instead of silently skipping the bootstrap.
+    /// escape the payload or carries nothing to launch.
+    ///
+    /// Every resolution point runs this check ([`Self::resolve_steps`]
+    /// calls it once at load — any face that walks the wizard pipeline
+    /// fails there, before the install — and the delivery lanes call it
+    /// again right before the launch), so a broken declaration fails
+    /// loud instead of silently skipping the bootstrap.
     pub fn post_install_launch(&self) -> Result<Option<&PostInstallLaunchConfig>, String> {
         let declared = self.targets.iter().find_map(|target| match target {
             TargetConfig::Install(install) => install.post_install_launch.as_ref(),

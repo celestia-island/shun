@@ -63,50 +63,101 @@ fn pairer_args() -> Vec<&'static str> {
     vec!["pair", "--gateway", "https://gateway.example.world"]
 }
 
-/// The launch answer × policy matrix: nothing launches without a
-/// declaration, `never` stays off, `always` ignores the answer, and
-/// `ask` follows it.
+/// The app launch answer × companion policy matrix: the two are
+/// INDEPENDENT. `always` starts the companion even when the app box was
+/// cleared, `never` stays off even when it was ticked, `ask` follows its
+/// own answer, and the app starts only when its box was ticked.
 #[test]
-fn the_done_page_answer_and_policy_decide_both_launches() {
-    // No declaration: the app launch keeps its premise, the companion
+fn the_app_answer_and_the_companion_policy_are_independent() {
+    // No declaration: the app launch keeps its answer, the companion
     // stays off whatever the answer.
-    for answer in [false, true] {
-        let targets = finish_launch_targets(&config_with(None), answer).unwrap();
-        assert_eq!(targets.app, answer);
-        assert!(!targets.companion, "no declaration launches nothing");
+    for launch in [false, true] {
+        for companion in [false, true] {
+            let targets = finish_launch_targets(&config_with(None), launch, companion).unwrap();
+            assert_eq!(targets.app, launch);
+            assert!(!targets.companion, "no declaration launches nothing");
+        }
     }
 
+    // (policy, app box, companion answer) → (app launch, companion launch)
     let cases = [
-        (PostInstallLaunchPolicy::Never, false, false),
-        (PostInstallLaunchPolicy::Never, true, false),
-        (PostInstallLaunchPolicy::Always, false, true),
-        (PostInstallLaunchPolicy::Always, true, true),
-        (PostInstallLaunchPolicy::Ask, false, false),
-        (PostInstallLaunchPolicy::Ask, true, true),
+        (PostInstallLaunchPolicy::Always, false, false, false, true),
+        (PostInstallLaunchPolicy::Always, false, true, false, true),
+        (PostInstallLaunchPolicy::Always, true, false, true, true),
+        (PostInstallLaunchPolicy::Always, true, true, true, true),
+        (PostInstallLaunchPolicy::Never, false, true, false, false),
+        (PostInstallLaunchPolicy::Never, true, true, true, false),
+        (PostInstallLaunchPolicy::Ask, false, false, false, false),
+        (PostInstallLaunchPolicy::Ask, false, true, false, true),
+        (PostInstallLaunchPolicy::Ask, true, false, true, false),
+        (PostInstallLaunchPolicy::Ask, true, true, true, true),
     ];
-    for (policy, answer, expected) in cases {
+    for (policy, app_box, answer, app, companion) in cases {
         let config = config_with(Some(declared("bin/evernight.exe", &pairer_args(), policy)));
-        let targets = finish_launch_targets(&config, answer).unwrap();
+        let targets = finish_launch_targets(&config, app_box, answer).unwrap();
         assert_eq!(
-            targets.companion, expected,
-            "policy {policy:?} with the answer {answer} launches {expected}"
+            (targets.app, targets.companion),
+            (app, companion),
+            "policy {policy:?}, app box {app_box}, companion answer {answer}"
         );
-        assert_eq!(targets.app, answer, "the app launch keeps its own policy");
     }
+}
 
-    // A declaration that escapes the payload fails the resolution before
-    // any process starts, whatever the answer. The absolute path is
-    // spelled host-independently (a temp-dir join), so the case is the
-    // same on the Windows runner.
-    let absolute = std::env::temp_dir().join("pairer");
-    let poisoned = config_with(Some(declared(
-        &absolute.to_string_lossy(),
-        &[],
+/// The regression this matrix exists for: a user who CLEARS the app box
+/// must still get a `policy = "always"` companion (the bootstrap is not
+/// the app), and a `never` companion must not ride a ticked box.
+#[test]
+fn an_always_companion_survives_a_cleared_app_box() {
+    let always = config_with(Some(declared(
+        "bin/evernight.exe",
+        &pairer_args(),
         PostInstallLaunchPolicy::Always,
     )));
-    let err = finish_launch_targets(&poisoned, true)
-        .expect_err("an absolute executable is a configuration error");
-    assert!(err.contains("relative to the payload"), "{err}");
+    let targets = finish_launch_targets(&always, false, false).unwrap();
+    assert!(!targets.app, "the cleared box keeps the app closed");
+    assert!(targets.companion, "the companion is always-pinned");
+
+    let never = config_with(Some(declared(
+        "bin/evernight.exe",
+        &pairer_args(),
+        PostInstallLaunchPolicy::Never,
+    )));
+    let targets = finish_launch_targets(&never, true, true).unwrap();
+    assert!(targets.app);
+    assert!(!targets.companion, "never wins over every answer");
+}
+
+/// An escaping declaration fails the CONFIG LOAD — `resolve_steps`, the
+/// pipeline every face resolves before it can install anything — not
+/// only the launch step on the done page. The declaration is read back
+/// through the same accessor the delivery lanes use, so the load check
+/// and the launch check cannot drift apart.
+#[test]
+fn an_escaping_companion_fails_the_config_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path().join("shun.toml");
+    std::fs::write(
+        &manifest,
+        "product = \"Escaping\"\n\n[install]\npost-install-launch = { exe = \"../../pairer\" }\n",
+    )
+    .unwrap();
+    let config = ShunConfig::from_path(&manifest).unwrap();
+    let err = config
+        .resolve_steps(dir.path(), None)
+        .expect_err("the load-time validation refuses the declaration");
+    assert!(err.to_string().contains("escapes"), "{err}");
+
+    // A well-formed declaration loads exactly as before.
+    let clean = dir.path().join("clean.toml");
+    std::fs::write(
+        &clean,
+        "product = \"Clean\"\n\n[install]\npost-install-launch = { exe = \"bin/pairer.exe\", args = [\"pair\"] }\n",
+    )
+    .unwrap();
+    let config = ShunConfig::from_path(&clean).unwrap();
+    config
+        .resolve_steps(dir.path(), None)
+        .expect("a payload-relative declaration loads");
 }
 
 /// The companion runs with EXACTLY the declared argv — no shell in
@@ -283,9 +334,68 @@ policy = "ask"
         declared.args,
         vec!["pair", "--gateway", "https://gateway.example.world"]
     );
-    let targets = finish_launch_targets(&config, true).unwrap();
+    // Load-time validation passes for the shipping shape...
+    let dir = tempfile::tempdir().unwrap();
+    config
+        .resolve_steps(dir.path(), None)
+        .expect("the pairer declaration loads");
+    // ...and the done page launches both off the same answer.
+    let targets = finish_launch_targets(&config, true, true).unwrap();
     assert!(targets.app && targets.companion, "both ride the answer");
     let core = WizardCore::new(config, Default::default());
     // The done page resolves the same companion off the core's config.
     assert!(core.config.post_install_launch().unwrap().is_some());
+}
+
+/// The missing companion classifies like the missing app executable:
+/// `FinishStage::Launch` + `FailureKind::MissingExecutable` + the
+/// missing-files help topic. The error is observed through the REAL
+/// classification entry point — `apply_finish_checked`, the done-page
+/// chain both faces call — rather than a hand-built `ShunError`, so a
+/// regression in the wizard's error shape turns this red.
+#[test]
+fn a_missing_companion_classifies_as_missing_executable() {
+    use shun::failure::{FailureKind, FinishFailure, FinishStage};
+    use shun::help::TOPIC_MISSING_FILES;
+
+    let dir = tempfile::tempdir().unwrap();
+    let install_dir = dir.path().join("app");
+    std::fs::create_dir_all(&install_dir).unwrap();
+    // The app entry point EXISTS (the app launch succeeds and stays out
+    // of the way); the companion was never delivered.
+    std::fs::create_dir_all(install_dir.join("bin")).unwrap();
+    std::fs::write(install_dir.join("bin").join("shun-demo.exe"), b"MZ").unwrap();
+
+    let config = config_with(Some(declared(
+        "bin/evernight.exe",
+        &pairer_args(),
+        PostInstallLaunchPolicy::Always,
+    )));
+    let core = WizardCore::new(config, Default::default());
+    let failure: FinishFailure = shun::wizard::apply_finish_checked(
+        &core,
+        &install_dir.to_string_lossy(),
+        Some(false),
+        Some(false),
+        false,
+    )
+    .expect_err("the declared companion was never delivered");
+
+    assert_eq!(failure.stage, FinishStage::Launch);
+    assert_eq!(failure.kind, FailureKind::MissingExecutable);
+    assert_eq!(failure.help_topic.as_deref(), Some(TOPIC_MISSING_FILES));
+    assert!(failure.has_help(), "the user gets the missing-files guide");
+    assert!(
+        failure.message.contains("evernight.exe"),
+        "the message names the undelivered file: {}",
+        failure.message
+    );
+
+    // The app launch's own missing entry lands on the same kind/topic.
+    let app = FinishFailure::from_error(
+        FinishStage::Launch,
+        &shun::ShunError::MissingEntry(install_dir.join("bin/shun-demo.exe")),
+    );
+    assert_eq!(app.kind, failure.kind);
+    assert_eq!(app.help_topic, failure.help_topic);
 }

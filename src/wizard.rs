@@ -1054,14 +1054,12 @@ pub fn apply_finish_checked(
     .map_err(|message| {
         crate::failure::FinishFailure::other(crate::failure::FinishStage::Shortcuts, message)
     })?;
-    if launch {
-        // Resolve the companion policy first: a broken declaration must
-        // fail before any process starts, not half-way through a launch.
-        let targets = finish_launch_targets(&core.config, true).map_err(|message| {
-            crate::failure::FinishFailure::other(crate::failure::FinishStage::Launch, message)
-        })?;
-        launch_finish_targets_checked(core, dir, targets)?;
-    }
+    // Resolve both launches first: a broken declaration must fail before
+    // any process starts, not half-way through a launch.
+    let targets = finish_launch_targets(&core.config, launch, launch).map_err(|message| {
+        crate::failure::FinishFailure::other(crate::failure::FinishStage::Launch, message)
+    })?;
+    launch_finish_targets_checked(core, dir, targets)?;
     Ok(())
 }
 
@@ -1161,19 +1159,27 @@ fn launch_installed_error(core: &WizardCore, dir: &str) -> Result<(), crate::err
     crate::targets::install::launch(&ctx)
 }
 
-/// What the done page must start for the launch answer `answer`:
-/// whether the installed app launches (unchanged policy) and whether the
-/// manifest's post-install companion
-/// (`install.post-install-launch`) launches with it. Pure, so the
-/// answer × policy matrix stays unit-testable.
+/// What the done page must start for the buttons the user pressed:
+/// `launch` is the app-launch checkbox (its own `launch-after-install`
+/// policy already resolved into it by the face or the headless lane) and
+/// `companion` the post-install answer.
+///
+/// The two are INDEPENDENT, both ways. The companion's `policy` decides
+/// alone — `always` starts it even when the app box was cleared, `never`
+/// stays off even when the box was ticked, `ask` follows
+/// `companion_answer`. The app starts only under `launch`, so a product
+/// that declares a companion but no `main-exe` still hands the user
+/// exactly the box they ticked. Pure, so the two-by-two matrix stays
+/// unit-testable.
 pub fn finish_launch_targets(
     config: &ShunConfig,
-    answer: bool,
+    launch: bool,
+    companion_answer: bool,
 ) -> Result<FinishLaunchTargets, String> {
     let companion = config.post_install_launch()?;
     Ok(FinishLaunchTargets {
-        app: answer,
-        companion: companion.is_some_and(|declared| declared.launches(answer)),
+        app: launch,
+        companion: companion.is_some_and(|declared| declared.launches(companion_answer)),
     })
 }
 
@@ -1187,11 +1193,12 @@ pub struct FinishLaunchTargets {
     pub companion: bool,
 }
 
-/// [`launch_installed_checked`] plus the companion: the done page's
-/// single launch answer covers both, so a product shipping a gateway
-/// pairer gets the app AND its bootstrap without a second checkbox. A
-/// companion failure is classified exactly like the app launch (an
-/// application-control refusal is an OS remedy, not an install retry).
+/// [`launch_installed_checked`] plus the companion, each gated by its
+/// OWN resolved answer ([`finish_launch_targets`]): the app under the
+/// done-page box, the companion under its manifest policy. A companion
+/// failure is classified exactly like the app launch (an
+/// application-control refusal is an OS remedy, an undelivered file is
+/// the missing-files article — not an install retry).
 pub fn launch_finish_targets_checked(
     core: &WizardCore,
     dir: &str,
@@ -1244,6 +1251,18 @@ fn launch_post_install_error(core: &WizardCore, dir: &str) -> Result<(), crate::
         dir,
         false,
     );
+    let relative = declared
+        .relative_exe()
+        .map_err(crate::error::ShunError::Config)?;
+    let exe = ctx.install_dir.join(relative);
+    if !exe.is_file() {
+        // A companion that is not on disk is the SAME failure the app
+        // launch reports for a missing `main-exe`: `MissingEntry` (a
+        // declared payload file the install did not deliver — an AV
+        // quarantine is the usual cause), so both steer to the
+        // missing-files guide instead of an unclassified "other".
+        return Err(crate::error::ShunError::MissingEntry(exe));
+    }
     crate::targets::install::launch_post_install(&ctx, declared)
 }
 
@@ -1946,6 +1965,93 @@ mod tests {
 
     const BASIC: &str =
         r#"{"product":{"name":"app","version":"1.0"},"targets":[{"kind":"install","local":true}]}"#;
+    /// The done-page finish chain itself: with the app box CLEARED, an
+    /// `always` companion still launches (the regression), while an `ask`
+    /// one stays off and the app stays off. The companion records its
+    /// own argv, so the spawn is observed, not inferred.
+    #[cfg(unix)]
+    #[test]
+    fn the_finish_chain_independently_launches_the_companion() {
+        use crate::config::{PostInstallLaunchConfig, PostInstallLaunchPolicy};
+
+        let record =
+            std::env::temp_dir().join(format!("shun-finish-companion-{}.txt", std::process::id()));
+        let stage = tempfile::tempdir().unwrap();
+        let install_dir = stage.path().join("app");
+        std::fs::create_dir_all(install_dir.join("bin")).unwrap();
+        std::fs::write(install_dir.join("bin").join("shun-demo.exe"), b"MZ").unwrap();
+        let script = format!(
+            "#!/bin/sh\n{{ echo \"$0\"; for a in \"$@\"; do echo \"$a\"; done; }} > '{}'\n",
+            record.display()
+        );
+        let companion = install_dir.join("bin").join("companion");
+        std::fs::write(&companion, script.as_bytes()).unwrap();
+        // The spawn runs the file directly: it must be executable.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&companion, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let config_with = |policy: PostInstallLaunchPolicy| {
+            let mut config = core_with(BASIC).config;
+            if let Some(TargetConfig::Install(install)) = config.targets.first_mut() {
+                install.post_install_launch = Some(PostInstallLaunchConfig {
+                    exe: std::path::PathBuf::from("bin/companion"),
+                    args: vec!["pair".into()],
+                    policy,
+                });
+            }
+            config
+        };
+        let dir = install_dir.to_string_lossy().into_owned();
+
+        // box cleared + policy=always → the companion launches anyway.
+        let _ = std::fs::remove_file(&record);
+        let core = WizardCore::new(
+            config_with(PostInstallLaunchPolicy::Always),
+            BTreeMap::new(),
+        );
+        apply_finish_checked(&core, &dir, Some(false), Some(false), false)
+            .expect("the finish chain runs");
+        assert_eq!(
+            finish_record_wait(&record, install_dir.join("bin").join("companion")),
+            vec![
+                install_dir
+                    .join("bin")
+                    .join("companion")
+                    .to_string_lossy()
+                    .into_owned(),
+                // The fixed argv rides along — the app box being clear
+                // changes WHO launches, never WHAT the companion receives.
+                "pair".to_string(),
+            ],
+            "an always companion survives a cleared app box"
+        );
+
+        // box cleared + policy=ask → nothing launches, either way.
+        let _ = std::fs::remove_file(&record);
+        let core = WizardCore::new(config_with(PostInstallLaunchPolicy::Ask), BTreeMap::new());
+        apply_finish_checked(&core, &dir, Some(false), Some(false), false)
+            .expect("the finish chain runs");
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert!(
+            !record.exists(),
+            "ask without a ticked box launches nothing"
+        );
+        let _ = std::fs::remove_file(&record);
+    }
+
+    /// Polls for the companion's record file (it writes `$0` + argv).
+    #[cfg(unix)]
+    fn finish_record_wait(path: &Path, exe: std::path::PathBuf) -> Vec<String> {
+        for _ in 0..200 {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                if !text.is_empty() {
+                    return text.lines().map(str::to_string).collect();
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("the companion never ran ({} never appeared)", exe.display());
+    }
 
     // ── Install-directory guards (check_install_dir) ──────────────────
 

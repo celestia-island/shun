@@ -156,14 +156,16 @@ policy = "ask"
 ```
 
 - **`exe`** — ejecutable relativo al payload, resuelto dentro del
-  directorio de instalación. La declaración se valida antes de lanzar
-  nada: las rutas absolutas, los prefijos de unidad de Windows (`C:…`) y
-  los prefijos UNC (`\\\\servidor\\recurso`, `//servidor/recurso`) se
-  rechazan en cualquier host, y los componentes `..` se rechazan como
-  traversal. Un manifiesto solo puede nombrar algo que la propia entrega
-  puso ahí —nunca un intérprete ni un binario del sistema— y una
-  declaración que se sale falla en voz alta en lugar de omitirse en
-  silencio.
+  directorio de instalación. La declaración se comprueba al CARGAR la
+  configuración —la canalización que toda cara resuelve antes de instalar
+  nada (`resolve_steps`), así que una declaración que se sale falla antes
+  de escribir un solo archivo, no en la página de fin tras una entrega
+  correcta— y otra vez justo antes de lanzar: las rutas absolutas, los
+  prefijos de unidad de Windows (`C:…`) y los prefijos UNC
+  (`\\\\servidor\\recurso`, `//servidor/recurso`) se rechazan en cualquier
+  host, y los componentes `..` se rechazan como traversal. Un manifiesto
+  solo puede nombrar algo que la propia entrega puso ahí —nunca un
+  intérprete ni un binario del sistema.
 - **`args`** — el **vector de argumentos fijo**, un elemento por
   argumento. Se pasa al proceso tal cual: sin shell, sin cadena de
   comandos, sin división de palabras, sin expansión de variables y sin
@@ -177,8 +179,14 @@ policy = "ask"
 
 El compañero se ejecuta **una vez por entrega correcta**, al confirmar la
 página de fin: primero la aplicación y después el compañero, ambos
-desprendidos. Un compañero ausente falla nombrando su ruta en el payload.
-La reparación y la desinstalación nunca lo disparan.
+desprendidos. Las dos respuestas son **independientes**: `always` inicia
+el compañero aunque el usuario desmarque la casilla de inicio (el arranque
+no es la aplicación), `never` queda apagado aunque la casilla esté
+marcada, y `ask` sigue esa casilla. Un compañero ausente falla nombrando
+su ruta en el payload y se clasifica como ejecutable ausente —la misma
+familia `MissingExecutable` y la misma guía de archivos ausentes que el
+lanzamiento de la aplicación—. La reparación y la desinstalación nunca lo
+disparan.
 
 Lo que hace el programa es asunto del payload: un emparejador abre el
 navegador del sistema y completa su propio flujo OAuth por loopback; shun

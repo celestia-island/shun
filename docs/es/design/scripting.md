@@ -63,6 +63,18 @@ barra invertida de Windows son caracteres de escape en los argumentos de
 duckscript (pase rutas con barra diagonal), y la asignación es sintaxis
 de captura de salida (`x = cmd args`).
 
+El scripting sigue siendo la **vía de escape**, nunca el camino por
+defecto para «ejecutar el asistente del propio payload». El caso estrecho
+y frecuente —iniciar una vez un programa del payload con un vector de
+argumentos fijo tras una instalación correcta— es declarativo y no
+necesita ningún script: `install.post-install-launch` (ver
+configuration.md, «Ejecución posterior a la instalación») lanza un
+ejecutable relativo al payload con un argv que nunca pasa por un shell.
+Prefiérelo a un hook `post-install` que invoque un shell: la declaración
+se valida contra escapes de ruta, es visible en el manifiesto y lleva el
+mismo consentimiento de la página de fin que el lanzamiento de la
+aplicación.
+
 ## Python incrustado — medido (sonda ejecutada 2026-09)
 
 Todo lo que sigue se ejecutó de verdad, dos veces: sobre un CPython

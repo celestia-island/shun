@@ -1279,21 +1279,43 @@ fn run_headless_with_tap(
         }
     }
     // The post-install companion (`install.post-install-launch`) rides
-    // the same unattended contract: a delivery pinning it `always`
-    // starts its bootstrap (a gateway pairer, say) on the silent lane
-    // too — the `ask` default stays a done-page question, which this
-    // lane does not have.
-    match config.post_install_launch() {
-        Ok(Some(declared)) if declared.policy == shun::config::PostInstallLaunchPolicy::Always => {
+    // the same unattended contract, resolved through the shared policy
+    // helper: a delivery pinning it `always` starts its bootstrap (a
+    // gateway pairer, say) on the silent lane too, while the `ask`
+    // default stays a done-page question — which this lane does not
+    // have, so `ask` launches nothing here.
+    match headless_companion_launch(config) {
+        Ok(true) => {
             if let Err(err) = shun::wizard::launch_post_install(&core, &request.dir) {
                 println!("shun: post-install launch failed: {err}");
             }
         }
-        Ok(_) => {}
+        Ok(false) => {}
         Err(err) => println!("shun: post-install launch refused: {err}"),
     }
     println!("shun: install complete");
     Ok(())
+}
+
+/// Whether the silent lane starts the manifest's post-install companion
+/// (`install.post-install-launch`) — the unattended half of the policy
+/// matrix, kept pure so the entry point and its tests agree by
+/// construction:
+///
+/// - `always` launches it (the product asked for a bootstrap that must
+///   run after every delivery, updates included);
+/// - `ask` does NOT: the question lives on the done page, and this lane
+///   has no done page — inventing a consent here would pop a browser at
+///   an unattended update;
+/// - `never` never launches;
+/// - no declaration launches nothing;
+/// - a declaration that escapes the payload is an ERROR (the caller
+///   reports it and carries on — the install already succeeded).
+fn headless_companion_launch(config: &ShunConfig) -> Result<bool, String> {
+    Ok(match config.post_install_launch()? {
+        Some(declared) => declared.policy == shun::config::PostInstallLaunchPolicy::Always,
+        None => false,
+    })
 }
 
 /// Resolves the headless desktop-shortcut answer. Priority: the explicit
@@ -2754,6 +2776,135 @@ mod tests {
         assert!(!resolve_headless_menu_answer(None, P::Ask, false));
         assert!(resolve_headless_desktop_answer(None, false, P::Ask, true));
         assert!(!resolve_headless_desktop_answer(None, false, P::Ask, false));
+    }
+
+    /// The silent lane's companion decision, driven through the REAL
+    /// entry point. The payload carries the app entry point the sweep
+    /// looks for plus a companion that records its own argv; the
+    /// pinned-policy matrix then decides whether that record appears.
+    /// `ask` launches nothing (the silent lane has no done page to ask
+    /// on), `never` nothing, `always` something — and the lane reports
+    /// success in every case.
+    ///
+    /// Only the companion is declared: the instance sweep and the
+    /// shortcut pass still resolve `main-exe` (the payload's
+    /// `bin/shun-demo.exe`), while the app launch keeps its own
+    /// `launch-after-install` default (`ask` = no launch on this lane)
+    /// and so never competes for the record.
+    fn headless_companion_config(dir: &Path, policy: Option<&str>) -> ShunConfig {
+        let mut manifest = String::from(
+            "product = \"ShunDemo-Test-Headless\"\npayload = \"payload\"\n\n[install]\nlocal = true\nportable = false\n",
+        );
+        if let Some(policy) = policy {
+            manifest.push_str(&format!(
+                "\n[install.post-install-launch]\nexe = \"bin/companion\"\nargs = [\"pair\", \"--gateway\", \"https://gateway.example.world\"]\npolicy = \"{policy}\"\n"
+            ));
+        }
+        let path = dir.join("installer.toml");
+        std::fs::write(&path, manifest).unwrap();
+        let mut config = ShunConfig::from_path(&path).unwrap();
+        config.payload = Some(dir.join("payload"));
+        config
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn headless_companion_launch_follows_the_pinned_policy() {
+        let record = std::env::temp_dir().join(format!(
+            "shun-headless-companion-{}.txt",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&record);
+
+        let stage = tempfile::tempdir().unwrap();
+        let payload_dir = stage.path().join("payload");
+        std::fs::create_dir_all(payload_dir.join("bin")).unwrap();
+        std::fs::write(payload_dir.join("bin").join("shun-demo.exe"), b"MZ").unwrap();
+        let script = format!(
+            "#!/bin/sh\n{{ echo \"$0\"; for a in \"$@\"; do echo \"$a\"; done; }} > '{}'\n",
+            record.display()
+        );
+        let companion = payload_dir.join("bin").join("companion");
+        std::fs::write(&companion, script.as_bytes()).unwrap();
+        // Only the source tree's mode reaches the extracted copy.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&companion, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let archive = shun::payload::pack_directory(&payload_dir).unwrap();
+        let payload = shun::payload::ArchivePayload::from_bytes(&archive).unwrap();
+
+        let install_dir = stage.path().join("installed");
+        for policy in [Some("ask"), Some("never"), Some("always")] {
+            let _ = std::fs::remove_file(&record);
+            let _ = std::fs::remove_dir_all(&install_dir);
+            let config = headless_companion_config(stage.path(), policy);
+
+            // The decision the entry point makes, resolved by the same
+            // call it uses.
+            assert_eq!(
+                headless_companion_launch(&config).unwrap(),
+                policy == Some("always"),
+                "policy {policy:?} on the silent lane"
+            );
+
+            // The real lane: `--silent` in PORTABLE mode into a fresh
+            // directory (no registry, so the run is host-agnostic — the
+            // Windows ARP backend is the only local-mode one), then the
+            // same prints the updater reads.
+            let parsed = cli(&[
+                "--silent",
+                "--mode",
+                "portable",
+                "--dir",
+                install_dir.to_str().unwrap(),
+            ]);
+            let result = run_headless(&parsed, &config, &payload);
+            assert!(
+                result.is_ok(),
+                "headless install for {policy:?}: {result:?}"
+            );
+
+            if policy == Some("always") {
+                assert_eq!(
+                    headless_record_wait(&record),
+                    vec![
+                        install_dir
+                            .join("bin")
+                            .join("companion")
+                            .to_string_lossy()
+                            .into_owned(),
+                        "pair".to_string(),
+                        "--gateway".to_string(),
+                        "https://gateway.example.world".to_string(),
+                    ],
+                    "the always-pinned companion runs with its argv"
+                );
+            } else {
+                // A generous window before the negative: `ask` / `never`
+                // must stay silent.
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                assert!(
+                    !record.exists(),
+                    "policy {policy:?} must not launch the companion on the silent lane"
+                );
+            }
+        }
+        let _ = std::fs::remove_file(&record);
+    }
+
+    /// Polls the companion's record file for a bounded window.
+    #[cfg(unix)]
+    fn headless_record_wait(path: &Path) -> Vec<String> {
+        for _ in 0..200 {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                if text.lines().count() >= 4 {
+                    return text.lines().map(str::to_string).collect();
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        std::fs::read_to_string(path)
+            .map(|text| text.lines().map(str::to_string).collect())
+            .unwrap_or_default()
     }
 
     #[test]

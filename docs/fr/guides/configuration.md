@@ -155,14 +155,16 @@ policy = "ask"
 ```
 
 - **`exe`** — un exécutable relatif au payload, résolu dans le dossier
-  d'installation. La déclaration est validée avant tout lancement : les
-  chemins absolus, les préfixes de lecteur Windows (`C:…`) et les
-  préfixes UNC (`\\\\serveur\\partage`, `//serveur/partage`) sont
-  refusés sur tout hôte, et les composants `..` sont refusés comme
+  d'installation. La déclaration est vérifiée au CHARGEMENT de la
+  configuration — le pipeline que toute face résout avant de pouvoir
+  installer quoi que ce soit (`resolve_steps`), donc une déclaration qui
+  s'échappe échoue avant l'écriture du premier fichier, pas sur la page
+  de fin après une livraison réussie — puis de nouveau juste avant le
+  lancement : les chemins absolus, les préfixes de lecteur Windows
+  (`C:…`) et les préfixes UNC (`\\\\serveur\\partage`, `//serveur/partage`)
+  sont refusés sur tout hôte, et les composants `..` sont refusés comme
   traversée. Un manifeste ne peut nommer que ce que la livraison
-  elle-même a déposé — jamais un interpréteur ni un binaire système — et
-  une déclaration qui s'échappe échoue bruyamment au lieu d'être ignorée
-  en silence.
+  elle-même a déposé — jamais un interpréteur ni un binaire système.
 - **`args`** — le **vecteur d'arguments fixe**, un élément par argument.
   Il est transmis au processus tel quel : sans shell, sans ligne de
   commande, sans découpage, sans expansion de variables ni interpolation
@@ -176,9 +178,14 @@ policy = "ask"
 
 Le compagnon s'exécute **une fois par livraison réussie**, à la
 confirmation de la page de fin : l'application d'abord, le compagnon
-ensuite, tous deux détachés. Un compagnon absent échoue en nommant son
-chemin dans le payload. La réparation et la désinstallation ne le
-déclenchent jamais.
+ensuite, tous deux détachés. Les deux réponses sont **indépendantes** :
+`always` démarre le compagnon même quand la case de lancement est
+décochée (l'amorce n'est pas l'application), `never` reste éteint même
+case cochée, et `ask` suit cette case. Un compagnon absent échoue en
+nommant son chemin dans le payload et se classe comme exécutable
+manquant — la même famille `MissingExecutable` et le même guide des
+fichiers manquants que le lancement de l'application. La réparation et la
+désinstallation ne le déclenchent jamais.
 
 Ce que fait le programme appartient au payload : un couplage ouvre le
 navigateur du système et mène son propre échange OAuth en boucle locale ;

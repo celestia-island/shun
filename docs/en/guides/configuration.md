@@ -161,13 +161,15 @@ policy = "ask"
 ```
 
 - **`exe`** — a payload-relative executable, resolved inside the install
-  directory. The declaration is validated before anything spawns:
-  absolute paths, Windows drive prefixes (`C:…`) and UNC lead-ins
-  (`\\server\share`, `//server/share`) are refused on every host, and
-  `..` components are refused as traversal. A manifest can only name
-  something the delivery itself put there — never an interpreter or a
-  system binary — and a declaration that escapes fails loudly instead of
-  being silently skipped.
+  directory. The declaration is checked at CONFIG LOAD — the pipeline
+  every face resolves before it can install anything (`resolve_steps`),
+  so an escaping declaration fails before a single file is written, not
+  on the done page after a successful delivery — and again immediately
+  before the spawn. Absolute paths, Windows drive prefixes (`C:…`) and
+  UNC lead-ins (`\\server\share`, `//server/share`) are refused on every
+  host, and `..` components are refused as traversal. A manifest can only
+  name something the delivery itself put there — never an interpreter or
+  a system binary.
 - **`args`** — the **fixed argument vector**, one element per argument.
   It is passed to the process verbatim: no shell, no command-line
   string, no word splitting, no variable expansion and no interpolation
@@ -182,11 +184,19 @@ policy = "ask"
   did not ask.
 
 The companion runs **once per successful delivery**, from the done page's
-finish (`apply_finish_checked` → `launch_finish_targets_checked`): the
-app launches first, then the companion, each detached (no waiting, so the
-installer can exit right away). A missing companion fails with an error
-naming its payload path (`bin/pairer.exe`, never the hidden staging
-spelling), classified like any other launch failure.
+finish (`apply_finish_checked` → `finish_launch_targets` /
+`launch_finish_targets_checked`): the app launches first, then the
+companion, each detached (no waiting, so the installer can exit right
+away). The two answers are **independent**: `policy = "always"` starts
+the companion even when the user clears the launch box (the bootstrap is
+not the app), `never` stays off even when the box is ticked, and `ask`
+follows that box.
+
+A missing companion fails with an error naming its payload path
+(`bin/pairer.exe`, never the hidden staging spelling), classified as a
+missing executable — the same `MissingExecutable` family and
+missing-files guide the app launch reports for an undelivered
+`main-exe`.
 
 Repair and uninstall never fire it. A repair re-extracts over the same
 folder — a re-extraction is not a new pairing moment — and the uninstall

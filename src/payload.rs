@@ -65,6 +65,9 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
 
     let mut entries: Vec<PayloadEntry> = Vec::with_capacity(files.len());
     let mut contents: HashMap<PathBuf, Vec<u8>> = HashMap::with_capacity(files.len());
+    // Per-entry Unix mode, carried for the executable bit only: tar's
+    // `set_mode` decides what the extracted file can run as on POSIX.
+    let mut modes: HashMap<PathBuf, u32> = HashMap::with_capacity(files.len());
     for path in &files {
         let relative = path
             .strip_prefix(source_dir)
@@ -80,6 +83,7 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
             size: bytes.len() as u64,
             sha256: sha256_hex(&bytes),
         });
+        modes.insert(normalized.clone(), source_exec_mode(path));
         contents.insert(normalized, bytes);
     }
 
@@ -98,7 +102,7 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
             let bytes = &contents[&entry.path];
             let mut header = tar::Header::new_gnu();
             header.set_size(entry.size);
-            header.set_mode(0o644);
+            header.set_mode(modes.get(&entry.path).copied().unwrap_or(0o644));
             header.set_cksum();
             builder.append_data(
                 &mut header,
@@ -110,6 +114,25 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
     }
 
     encode_tar(tar_bytes)
+}
+
+/// The Unix mode a payload entry is packed with: the source file's
+/// permission bits (minus the setuid/setgid/sticky trio, which an
+/// installer must never reproduce), or `0o644` when the source cannot
+/// be read — notably a Windows build host, whose files have no Unix
+/// mode, and whose payload therefore still packs as plain data.
+#[cfg(unix)]
+fn source_exec_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|meta| meta.permissions().mode() & 0o777)
+        .unwrap_or(0o644)
+}
+
+/// Windows has no Unix permission bits: every entry packs as `0o644`.
+#[cfg(not(unix))]
+fn source_exec_mode(_path: &Path) -> u32 {
+    0o644
 }
 
 /// Compress a packed tar with zstd.
@@ -170,6 +193,9 @@ pub trait PayloadSource {
 pub struct ArchivePayload {
     entries: Vec<PayloadEntry>,
     files: HashMap<PathBuf, Vec<u8>>,
+    /// Per-entry Unix mode from the archive headers (the executable bit
+    /// the extractor restores); absent entries fall back to `0o644`.
+    modes: HashMap<PathBuf, u32>,
 }
 
 /// A read-only cursor over the archive that reports consumption as a
@@ -239,6 +265,32 @@ pub(crate) fn path_anchors_outside(path: &Path) -> bool {
     drive || unc
 }
 
+/// Applies a packed entry's executable bit to the extracted file.
+///
+/// A packed POSIX entry keeps its source permission bits in the archive
+/// (see [`source_exec_mode`]); the payload's own data files are `0o644`
+/// and stay `0o644`, but a program the product intends to RUN — a
+/// launcher, a gateway pairer — must land executable, or the delivery
+/// produces a file nobody can start (the post-install handoff's whole
+/// premise). Windows hosts have no mode bits to set and skip this.
+#[cfg(unix)]
+fn apply_packed_mode(target: &Path, mode: Option<u32>) {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(mode) = mode else { return };
+    if mode & 0o111 == 0 {
+        return;
+    }
+    if let Ok(metadata) = std::fs::metadata(target) {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode((mode & 0o777) | 0o111);
+        let _ = std::fs::set_permissions(target, permissions);
+    }
+}
+
+/// Windows: mode bits are not a thing here.
+#[cfg(not(unix))]
+fn apply_packed_mode(_target: &Path, _mode: Option<u32>) {}
+
 impl ArchivePayload {
     /// An empty archive — the placeholder a UI holds before its init
     /// worker delivers the decoded one (the splash phase).
@@ -246,6 +298,7 @@ impl ArchivePayload {
         Self {
             entries: Vec::new(),
             files: HashMap::new(),
+            modes: HashMap::new(),
         }
     }
 
@@ -275,9 +328,11 @@ impl ArchivePayload {
 
         let mut manifest: Option<Vec<PayloadEntry>> = None;
         let mut files: HashMap<PathBuf, Vec<u8>> = HashMap::new();
+        let mut modes: HashMap<PathBuf, u32> = HashMap::new();
         for entry in archive_reader.entries()? {
             let mut entry = entry?;
             let path = entry.path()?.to_path_buf();
+            let mode = entry.header().mode().ok();
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(&mut entry, &mut bytes)?;
             if path == Path::new(MANIFEST_PATH) {
@@ -286,13 +341,20 @@ impl ArchivePayload {
                         .map_err(|e| ShunError::Config(format!("manifest parse: {e}")))?,
                 );
             } else {
+                if let Some(mode) = mode {
+                    modes.insert(path.clone(), mode);
+                }
                 files.insert(path, bytes);
             }
         }
 
         let entries =
             manifest.ok_or_else(|| ShunError::MissingEntry(PathBuf::from(MANIFEST_PATH)))?;
-        Ok(Self { entries, files })
+        Ok(Self {
+            entries,
+            files,
+            modes,
+        })
     }
 
     /// The carried bytes of one archive path, pre-extraction — the
@@ -390,6 +452,7 @@ impl ArchivePayload {
                 std::fs::create_dir_all(parent)?;
             }
             replace_file(&target, bytes)?;
+            apply_packed_mode(&target, self.modes.get(&entry.path).copied());
         }
 
         *done += entry.size;
@@ -679,5 +742,62 @@ mod path_anchor_tests {
         // The traversal component stays the OTHER guard's job.
         assert!(!path_anchors_outside(Path::new("bin/../../pairer")));
         assert!(entry_path_is_unsafe(Path::new("bin/../../pairer")));
+    }
+}
+
+#[cfg(test)]
+mod executable_mode_tests {
+    use super::*;
+
+    /// A payload file the SOURCE marks executable must land executable
+    /// after pack → extract: the post-install handoff's whole premise is
+    /// a program the delivery itself put there and can start. Data files
+    /// (no execute bit) stay plain, and a setuid/setgid/sticky source
+    /// never reproduces them.
+    #[cfg(unix)]
+    #[test]
+    fn a_packed_executable_stays_executable_after_extraction() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let stage = tempfile::tempdir().unwrap();
+        let source = stage.path().join("src");
+        std::fs::create_dir_all(source.join("bin")).unwrap();
+        let program = source.join("bin").join("companion");
+        std::fs::write(&program, b"#!/bin/sh\necho pair\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let data = source.join("readme.txt");
+        std::fs::write(&data, b"plain data").unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let archive = pack_directory(&source).unwrap();
+        let payload = ArchivePayload::from_bytes(&archive).unwrap();
+        let dest = stage.path().join("out");
+        payload.extract(&dest, &mut |_| {}).unwrap();
+
+        let packed = std::fs::metadata(dest.join("bin").join("companion")).unwrap();
+        assert_eq!(
+            packed.mode() & 0o777,
+            0o755,
+            "the packed executable bit survives extraction"
+        );
+        let plain = std::fs::metadata(dest.join("readme.txt")).unwrap();
+        assert_eq!(plain.mode() & 0o111, 0, "data files stay non-executable");
+
+        // A setuid source packs its plain permission bits only — an
+        // installer must never deliver a privileged image.
+        let privileged = source.join("bin").join("helper");
+        std::fs::write(&privileged, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&privileged, std::fs::Permissions::from_mode(0o4755)).unwrap();
+        let archive = pack_directory(&source).unwrap();
+        let payload = ArchivePayload::from_bytes(&archive).unwrap();
+        let dest = stage.path().join("out2");
+        payload.extract(&dest, &mut |_| {}).unwrap();
+        let helper = std::fs::metadata(dest.join("bin").join("helper")).unwrap();
+        assert_eq!(
+            helper.mode() & 0o7000,
+            0,
+            "setuid/setgid/sticky bits are never reproduced"
+        );
+        assert_eq!(helper.mode() & 0o111, 0o111, "the execute bit still lands");
     }
 }

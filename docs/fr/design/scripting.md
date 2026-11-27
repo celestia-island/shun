@@ -67,6 +67,17 @@ antislashs sont des caractères d'échappement dans les arguments
 duckscript (passez des chemins à barres obliques), et l'affectation est
 la syntaxe de capture de sortie (`x = cmd args`).
 
+Le scripting reste la **voie de secours**, jamais le chemin par défaut
+pour « lancer l'assistant du payload lui-même ». Le cas étroit et courant
+— démarrer une fois un programme du payload avec un vecteur d'arguments
+fixe après une installation réussie — est déclaratif et ne demande aucun
+script : `install.post-install-launch` (voir configuration.md, « Lancement
+du compagnon après installation ») lance un exécutable relatif au payload
+avec un argv qui ne passe jamais par un shell. Préférez-le à un hook
+`post-install` qui appelle un shell : la déclaration est validée contre
+les évasions de chemin, visible dans le manifeste, et porte le même
+consentement de page de fin que le lancement de l'application.
+
 ## Python embarqué — mesuré (sonde exécutée en 2026-09)
 
 Tout ce qui suit a réellement tourné, deux fois : sur un CPython 3.13.5

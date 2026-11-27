@@ -2239,6 +2239,10 @@ impl FallbackApp {
         } else {
             0
         };
+        // The done-page launch box reads the manifest policy BEFORE the
+        // config moves into the struct (a `never` pin starts it
+        // unchecked; the box still carries the post-install companion).
+        let launch_after = launch_policy_default(&config);
         Self {
             dir,
             config,
@@ -2299,9 +2303,7 @@ impl FallbackApp {
             mode,
             desktop_shortcut: true,
             start_menu: true,
-            // The done-page launch box: pre-checked unless the manifest
-            // pins `launch-after-install = "never"`.
-            launch_after: launch_policy_default(&config),
+            launch_after,
             machine: false,
             license_docs,
             step: initial_step,
@@ -6134,7 +6136,14 @@ impl FallbackApp {
                                         // silent exit. The window stays
                                         // open on a failure (the toast
                                         // explains why), so the primary
-                                        // button doubles as the retry.
+                                        // button doubles as the retry. The
+                                        // launch box is NOT forwarded as
+                                        // true: clearing it must clear the
+                                        // app launch too, while a
+                                        // `policy = "always"` companion
+                                        // still starts inside
+                                        // `apply_finish_checked` — the two
+                                        // answers are independent.
                                         match shun::wizard::apply_finish_checked(
                                             &core,
                                             self.dir.trim(),
