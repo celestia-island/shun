@@ -71,7 +71,9 @@ declarative and needs no script at all:
 launch*) spawns a payload-relative executable with an argv that never
 touches a shell. Prefer it over a `post-install` hook that shells out:
 the declaration is validated against path escapes, is visible in the
-manifest, and carries the same done-page consent as the app launch.
+manifest, and runs on the same done-page launch decision as the app (its
+`policy = "with-app"` default means: app launched → companion launched,
+app not launched → neither, silent lane → not launched).
 
 ## Embedded Python — measured (probe run 2026-09)
 

@@ -50,9 +50,9 @@ root-dir-folder = "ShunDemo"               # legacy pad lane only (forbid-drive-
 # zh-Hans = "该目录是游戏客户端。"
 
 [package.metadata.shun.install.post-install-launch]  # run a payload-carried companion once after the install (see Post-install launch)
-exe = "bin/pairer.exe"                     # payload-relative executable (never absolute, never outside the payload)
-args = ["pair", "--gateway", "https://gateway.example.world"]  # fixed argv, one element per argument, no shell
-policy = "ask"                             # always | never | ask (default: the done-page answer)
+exe = "bin/provision.exe"                  # payload-relative executable (never absolute, never outside the payload)
+args = ["setup", "--endpoint", "https://api.example.test"]    # fixed argv, one element per argument, no shell
+policy = "with-app"                        # with-app (default: run with the app launch) | always | never
 
 [[package.metadata.shun.install.verbs]]    # right-click verbs (Explorer verbs / desktop actions)
 key = "open-data"                          # stable verb id
@@ -104,7 +104,7 @@ require-removable = true                   # refuse non-removable devices
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
 | `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `default-dir` (env-expanded default location override), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (refuse bare drive-root targets; default on — see Root-drive guard), `root-dir-folder` (folder padded under a bare drive-root target in the opted-out pad lane, default: the product name), `forbid-non-empty` (refuse non-empty targets for fresh installs; default on), `non-empty-allowlist` (junk names the non-empty refusal ignores), `dir-rules` (declarative install-location rules — see Install-location rules) |
-| `install.post-install-launch` | table | none | Run a payload-carried companion once after a successful install: `exe` (payload-relative, validated), `args` (fixed argv), `policy` (`always` / `never` / `ask`) — see Post-install launch |
+| `install.post-install-launch` | table | none | Run a payload-carried companion once after a successful install: `exe` (payload-relative, validated), `args` (fixed argv), `policy` (`with-app` / `always` / `never`) — see Post-install launch |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
@@ -151,21 +151,24 @@ a gateway pairer that signs this machine in through the system browser,
 an activation helper, a first-run migrator — before the app itself is
 useful. `install.post-install-launch` declares that handoff from the app
 manifest; shun knows only *where inside the payload* the program lives,
-*what fixed arguments* it receives, and *whether to ask*.
+*what fixed arguments* it receives, and *when to start it*.
 
 ```toml
 [package.metadata.shun.install.post-install-launch]
-exe = "bin/pairer.exe"
-args = ["pair", "--gateway", "https://gateway.example.world"]
-policy = "ask"
+exe = "bin/provision.exe"
+args = ["setup", "--endpoint", "https://api.example.test"]
+policy = "with-app"          # with-app (default) | always | never
 ```
 
 - **`exe`** — a payload-relative executable, resolved inside the install
-  directory. The declaration is checked at CONFIG LOAD — the pipeline
-  every face resolves before it can install anything (`resolve_steps`),
-  so an escaping declaration fails before a single file is written, not
-  on the done page after a successful delivery — and again immediately
-  before the spawn. Absolute paths, Windows drive prefixes (`C:…`) and
+  directory. The declaration is validated at **build time**: `shun build`
+  assembles the shell's stamp container through `resolve_steps`, so an
+  escaping declaration fails the build and no installer artifact can
+  ship with it. The runtime is validated again at **both launch points** —
+  the done-page finish and the silent lane re-check it before spawning
+  anything, so a configuration that reached a running shell some other
+  way is refused too (fail-closed, never a silent skip). Absolute paths,
+  Windows drive prefixes (`C:…`) and
   UNC lead-ins (`\\server\share`, `//server/share`) are refused on every
   host, and `..` components are refused as traversal. A manifest can only
   name something the delivery itself put there — never an interpreter or
@@ -177,38 +180,37 @@ policy = "ask"
   one argument, and nothing in the manifest can smuggle in a second
   command. Grep the finished artifact if you want proof: the spawn is a
   plain `std::process::Command` over a decoded argv.
-- **`policy`** — `ask` (the default) rides the done page's launch answer
-  (the same checkbox `launch-after-install` resolves), `always` pins the
-  launch and `never` opts out. The headless lane only ever launches under
-  `always`: an unattended update must not pop a browser for a user who
-  did not ask.
+- **`policy`** — `with-app` (the default) runs the companion **together
+  with the app launch**: ticked box → app + companion; cleared box →
+  neither; the silent lane never launches it (there is no done page to
+  hang the app launch on). `always` launches it after every successful
+  delivery, the silent lane and unattended updates included. `never`
+  opts out everywhere.
 
 The companion runs **once per successful delivery**, from the done page's
 finish (`apply_finish_checked` → `finish_launch_targets` /
 `launch_finish_targets_checked`): the app launches first, then the
 companion, each detached (no waiting, so the installer can exit right
-away). The two answers are **independent**: `policy = "always"` starts
-the companion even when the user clears the launch box (the bootstrap is
-not the app), `never` stays off even when the box is ticked, and `ask`
-follows that box.
+away). The done page has ONE launch decision, and the companion's policy
+folds onto it: `with-app` follows the box, while `always` / `never` pin
+the companion independently of it.
 
 A missing companion fails with an error naming its payload path
-(`bin/pairer.exe`, never the hidden staging spelling), classified as a
+(`bin/provision.exe`, never the hidden staging spelling), classified as a
 missing executable — the same `MissingExecutable` family and
 missing-files guide the app launch reports for an undelivered
 `main-exe`.
 
 Repair and uninstall never fire it. A repair re-extracts over the same
 folder — a re-extraction is not a new pairing moment — and the uninstall
-path has nothing left to launch. The switch lives only on the done page,
-so a product that needs its bootstrap re-run after a repair offers that
-from its own app (or pins `always`, at which point the silent lane's
-next delivery runs it).
+path has nothing left to launch. A product that needs its bootstrap
+re-run after a repair offers that from its own app, or pins
+`policy = "always"` — the switch the silent lane honours on every
+delivery.
 
-What the program does is entirely the payload's: a pairer opens the
-system browser and completes its own OAuth loopback flow; shun never
-sees the credentials, never runs the OAuth dance and never learns what
-"pair" means.
+What the program does is entirely the payload's; shun never sees the
+credentials it exchanges and never learns what the program does with
+them.
 
 ## Root-drive guard
 

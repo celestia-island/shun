@@ -71,9 +71,10 @@ necesita ningún script: `install.post-install-launch` (ver
 configuration.md, «Ejecución posterior a la instalación») lanza un
 ejecutable relativo al payload con un argv que nunca pasa por un shell.
 Prefiérelo a un hook `post-install` que invoque un shell: la declaración
-se valida contra escapes de ruta, es visible en el manifiesto y lleva el
-mismo consentimiento de la página de fin que el lanzamiento de la
-aplicación.
+se valida contra escapes de ruta, es visible en el manifiesto y sigue la
+misma decisión de lanzamiento de la página de fin que la aplicación
+(`policy = "with-app"`: app lanzada → compañero lanzado, app no lanzada →
+ninguno, carril silencioso → no se lanza).
 
 ## Python incrustado — medido (sonda ejecutada 2026-09)
 

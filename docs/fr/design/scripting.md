@@ -76,7 +76,9 @@ du compagnon après installation ») lance un exécutable relatif au payload
 avec un argv qui ne passe jamais par un shell. Préférez-le à un hook
 `post-install` qui appelle un shell : la déclaration est validée contre
 les évasions de chemin, visible dans le manifeste, et porte le même
-consentement de page de fin que le lancement de l'application.
+la même décision de lancement de page de fin que l'application
+(`policy = "with-app"` : app lancée → compagnon lancé, app non lancée →
+ni l'un ni l'autre, voie silencieuse → non lancé).
 
 ## Python embarqué — mesuré (sonde exécutée en 2026-09)
 

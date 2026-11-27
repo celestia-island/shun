@@ -41,7 +41,7 @@ root-dir-folder = "ShunDemo"              # 僅舊墊層通道生效（forbid-dr
 [package.metadata.shun.install.post-install-launch]  # 安裝後執行一次載荷自帶的伴隨程式（見「安裝後伴隨啟動」）
 exe = "bin/pairer.exe"                     # 載荷相對的可執行檔（不得絕對、不得越出載荷）
 args = ["pair", "--gateway", "https://gateway.example.world"]  # 固定 argv，一個元素一個參數，不經 shell
-policy = "ask"                             # always | never | ask（預設跟隨完成頁回答）
+policy = "with-app"                        # with-app（預設：隨應用啟動一併執行）| always | never
 
 [[package.metadata.shun.install.verbs]]    # 右鍵選單動詞（Explorer 動詞 / 桌面動作）
 key = "open-data"                          # 穩定的動詞 id
@@ -90,7 +90,7 @@ require-removable = true                   # 拒絕非可移除裝置
 | `payload` | path | — | 打包進發行物的目錄 |
 | `main-exe` | path | — | payload 內進入點（捷徑目標） |
 | `install` | table | 雙模式全開 | `local` / `portable` 開關、`portable-marker` 標記檔名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（環境變數展開的預設位置覆寫）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒絕裸磁碟根目錄目標；預設開啟——見「根磁碟保護」）、`root-dir-folder`（退出拒絕後墊層通道裡墊在裸磁碟根目錄下的資料夾，預設取產品名）、`forbid-non-empty`（全新安裝拒絕非空目錄；預設開啟）、`non-empty-allowlist`（非空拒絕忽略的垃圾檔名）、`dir-rules`（宣告式安裝位置規則——見「安裝位置規則」） |
-| `install.post-install-launch` | table | 無 | 安裝成功後執行一次載荷自帶的伴隨程式：`exe`（載荷相對，已校驗）、`args`（固定 argv）、`policy`（`always` / `never` / `ask`）——見「安裝後伴隨啟動」 |
+| `install.post-install-launch` | table | 無 | 安裝成功後執行一次載荷自帶的伴隨程式：`exe`（載荷相對，已校驗）、`args`（固定 argv）、`policy`（`with-app` / `always` / `never`）——見「安裝後伴隨啟動」 |
 | `attachments` | 表格陣列 | 無 | 選用附件資源（資產包）：`key` / `title` / `dest` / `online.url`；精簡版在安裝時下載 |
 | `update` | table | 無 | 更新監視：`sources`（鏡像根 URL，按順序探測）+ `files`，解析到第一個可達源之下 |
 | `webview2` | table | `skip` | Windows 執行階段策略 |
@@ -136,7 +136,7 @@ require-removable = true                   # 拒絕非可移除裝置
 [package.metadata.shun.install.post-install-launch]
 exe = "bin/pairer.exe"
 args = ["pair", "--gateway", "https://gateway.example.world"]
-policy = "ask"
+policy = "with-app"
 ```
 
 - **`exe`**——載荷相對的可執行檔，在安裝目錄內解析。宣告在**設定
@@ -149,15 +149,14 @@ policy = "ask"
 - **`args`**——**固定參數向量**，一個元素一個參數。它原樣交給行程：
   沒有 shell、沒有命令列字串、沒有分詞、沒有變數展開，shun 也不做任何
   插值。帶空格、引號或 `$(…)` 的參數仍**恰好是一個**參數。
-- **`policy`**——`ask`（預設）跟隨完成頁的啟動回答（與
-  `launch-after-install` 同一個核取方塊），`always` 固定執行，`never`
-  關閉。無頭通道只在 `always` 下執行：無人值守的更新不能給沒要求的人
-  彈出瀏覽器。
+- **`policy`**——`with-app`（預設）**隨應用啟動一併執行**：勾選完成頁
+  的啟動框 → 應用 + 伴隨程式；取消勾選 → 兩者都不啟動；無頭通道從不
+  啟動它（沒有完成頁可以掛載應用啟動）。`always` 在每次成功投遞後
+  啟動，無頭通道與無人值守更新也一樣。`never` 在任何通道都不啟動。
 
 伴隨程式**每次成功安裝只跑一次**，在完成頁確認時觸發：先啟動應用，再
-啟動伴隨程式，都以游離方式啟動。兩個回答**彼此獨立**：`always` 即使
-使用者取消勾選啟動框也照樣啟動伴隨程式（引導程式不是應用），`never`
-即使勾選也不啟動，`ask` 跟隨該核取方塊。檔案缺失時報錯並點名它在載荷
+啟動伴隨程式，都以游離方式啟動。完成頁只有**一個**啟動決定，伴隨程式的策略折疊在其上：`with-app`
+跟隨該核取方塊，而 `always` / `never` 與核取方塊無關地固定伴隨程式。檔案缺失時報錯並點名它在載荷
 中的路徑（如 `bin/pairer.exe`，絕不暴露隱藏的暫存路徑），並歸類為
 「可執行檔缺失」——與應用啟動同一個 `MissingExecutable` 家族、同一篇
 「檔案缺失」指南。修復與解除安裝**永不**觸發。

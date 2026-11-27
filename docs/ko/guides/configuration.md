@@ -42,7 +42,7 @@ root-dir-folder = "ShunDemo"              # 레거시 패딩 레인 전용(forbi
 [package.metadata.shun.install.post-install-launch]  # 설치 후 payload 동봉 컴패니언을 한 번 실행(「설치 후 컴패니언 실행」 참조)
 exe = "bin/pairer.exe"                     # payload 상대 실행 파일(절대 경로 불가, payload 밖 불가)
 args = ["pair", "--gateway", "https://gateway.example.world"]  # 고정 argv, 인자마다 1개 항목, 셸을 거치지 않음
-policy = "ask"                             # always | never | ask (기본값: 완료 페이지의 응답)
+policy = "with-app"                        # with-app (기본값: 앱 실행과 함께 실행) | always | never
 
 [[package.metadata.shun.install.verbs]]    # 우클릭 동사(탐색기 동사 / 데스크톱 액션)
 key = "open-data"                          # 안정적인 동사 id
@@ -92,7 +92,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 | `payload` | path | — | 아티팩트로 패킹되는 디렉터리 |
 | `main-exe` | path | — | payload 상대 진입점(바로 가기 대상) |
 | `install` | table | 두 모두 켜짐 | `local` / `portable` 스위치, `portable-marker` 파일명, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 정책, `default-dir`(환경 변수가 전개되는 기본 위치 재정의), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root`(드라이브 루트 대상 거부, 기본 켜짐 — 드라이브 루트 보호 참조), `root-dir-folder`(옵트아웃한 패딩 레인에서 드라이브 루트 아래 깔리는 폴더, 기본은 제품명), `forbid-non-empty`(신규 설치에서 비어 있지 않은 대상 거부, 기본 켜짐), `non-empty-allowlist`(비어 있지 않음 거부가 무시하는 찌꺼기 파일명), `dir-rules`(선언적 설치 위치 규칙 — 「설치 위치 규칙」 참조) |
-| `install.post-install-launch` | table | 없음 | 설치 성공 후 payload 동봉 컴패니언을 한 번 실행: `exe`(payload 상대, 검증됨), `args`(고정 argv), `policy`(`always` / `never` / `ask`) — 「설치 후 컴패니언 실행」 참조 |
+| `install.post-install-launch` | table | 없음 | 설치 성공 후 payload 동봉 컴패니언을 한 번 실행: `exe`(payload 상대, 검증됨), `args`(고정 argv), `policy`(`with-app` / `always` / `never`) — 「설치 후 컴패니언 실행」 참조 |
 | `attachments` | 테이블 배열 | 없음 | 선택적 추가 리소스(에셋 팩): `key` / `title` / `dest` / `online.url`. 라이트 빌드는 설치 시 내려받기 |
 | `update` | table | 없음 | 업데이트 감시: `sources`(미러 기본 URL, 순서대로 탐색) + 첫 번째로 도달한 소스 아래에서 해석되는 `files` |
 | `webview2` | table | `skip` | Windows 런타임 전략 |
@@ -145,7 +145,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 [package.metadata.shun.install.post-install-launch]
 exe = "bin/pairer.exe"
 args = ["pair", "--gateway", "https://gateway.example.world"]
-policy = "ask"
+policy = "with-app"
 ```
 
 - **`exe`** — payload 상대 실행 파일을 설치 디렉터리에서 해석합니다.
@@ -161,16 +161,17 @@ policy = "ask"
   프로세스에 전달됩니다: 셸도, 명령줄 문자열도, 단어 분할도, 변수 확장도,
   shun의 보간도 없습니다. 공백·따옴표·`$(…)`가 들어간 인자도 정확히 하나의
   인자로 도착합니다.
-- **`policy`** — `ask`(기본)는 완료 페이지의 응답(`launch-after-install`과
-  같은 체크박스)을 따르고, `always`는 고정, `never`는 해제입니다. 헤드리스
-  경로는 `always`에서만 실행합니다: 아무도 요청하지 않았는데 무인 업데이트가
-  브라우저를 열어서는 안 됩니다.
+- **`policy`** — `with-app`(기본)는 **앱 실행과 함께** 컴패니언을
+  실행합니다: 체크됨 → 앱 + 컴패니언, 체크 해제 → 둘 다 실행 안 함.
+  헤드리스 경로에서는 실행하지 않습니다(앱 실행을 걸 완료 페이지가
+  없습니다). `always`는 배포 성공 때마다, 헤드리스 경로와 무인 업데이트
+  에서도 실행합니다. `never`는 어디서도 해제합니다.
 
 컴패니언은 **배포가 성공할 때마다 한 번**, 완료 페이지를 확정할 때
 실행됩니다. 앱을 먼저, 컴패니언을 그다음, 둘 다 분리해서 띄웁니다. 두 응답은
-**독립적**입니다: `always`는 실행 체크박스를 풀어도 컴패니언을 실행하며
-(부트스트랩은 앱이 아닙니다), `never`는 체크되어 있어도 실행하지 않고,
-`ask`는 그 체크박스를 따릅니다. 찾지 못하면 payload 경로를 이름으로 대며
+완료 페이지의 실행 결정은 **하나**이며, 컴패니언 정책이 그
+결정에 접혀 들어갑니다: `with-app`은 체크박스를 따르고, `always` /
+`never`는 체크박스와 무관하게 고정합니다. 찾지 못하면 payload 경로를 이름으로 대며
 실패하고 실행 파일 누락으로 분류됩니다 — 앱 실행과 같은
 `MissingExecutable` 계열, 같은 「파일 없음」 안내입니다. 복구와
 제거에서는 절대 실행되지 않습니다.

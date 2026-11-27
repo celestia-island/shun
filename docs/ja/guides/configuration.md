@@ -42,7 +42,7 @@ root-dir-folder = "ShunDemo"              # 従来のパディングレーンの
 [package.metadata.shun.install.post-install-launch]  # インストール後に payload 同梱のコンパニオンを一度だけ起動（「インストール後のコンパニオン起動」を参照）
 exe = "bin/pairer.exe"                     # payload 相対の実行ファイル（絶対パス不可、payload の外は不可）
 args = ["pair", "--gateway", "https://gateway.example.world"]  # 固定 argv、引数ごとに 1 要素、シェルを経由しない
-policy = "ask"                             # always | never | ask（既定は完了ページの回答）
+policy = "with-app"                        # with-app（既定：アプリ起動と同時に実行）| always | never
 
 [[package.metadata.shun.install.verbs]]    # 右クリック動詞（Explorer 動詞 / デスクトップアクション）
 key = "open-data"                          # 安定した動詞 id
@@ -92,7 +92,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 | `payload` | path | — | 成果物にパックされるディレクトリ |
 | `main-exe` | path | — | payload 相対のエントリポイント（ショートカットの宛先） |
 | `install` | table | 両モードオン | `local` / `portable` スイッチ、`portable-marker` ファイル名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` ポリシー、`default-dir`（環境変数展開される既定位置の上書き）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（裸のドライブルートのターゲットを拒否。既定でオン——ドライブルートの保護を参照）、`root-dir-folder`（オプトアウト時のパディングレーンでドライブルート直下に挟むフォルダー、既定は製品名）、`forbid-non-empty`（新規インストールで空でないターゲットを拒否。既定でオン）、`non-empty-allowlist`（非空拒否が無視するゴミファイル名）、`dir-rules`（宣言的なインストール先ルール——「インストール先ルール」を参照） |
-| `install.post-install-launch` | table | なし | インストール成功後に payload 同梱のコンパニオンを一度だけ起動する：`exe`（payload 相対・検証済み）、`args`（固定 argv）、`policy`（`always` / `never` / `ask`）——「インストール後のコンパニオン起動」を参照 |
+| `install.post-install-launch` | table | なし | インストール成功後に payload 同梱のコンパニオンを一度だけ起動する：`exe`（payload 相対・検証済み）、`args`（固定 argv）、`policy`（`with-app` / `always` / `never`）——「インストール後のコンパニオン起動」を参照 |
 | `attachments` | テーブル配列 | なし | 追加リソース（アセットパック）：`key` / `title` / `dest` / `online.url`。ライト版はインストール時にダウンロード |
 | `update` | table | なし | 更新ウォッチ：`sources`（ミラー基底 URL、順にプローブ）+ 最初に到達したソース配下で解決される `files` |
 | `webview2` | table | `skip` | Windows ランタイム戦略 |
@@ -149,7 +149,7 @@ shun が知っているのは *payload 内のどこに* プログラムがある
 [package.metadata.shun.install.post-install-launch]
 exe = "bin/pairer.exe"
 args = ["pair", "--gateway", "https://gateway.example.world"]
-policy = "ask"
+policy = "with-app"
 ```
 
 - **`exe`** —— payload 相対の実行ファイルをインストール先で解決します。
@@ -166,16 +166,18 @@ policy = "ask"
   プロセスへ渡ります：シェルもコマンドライン文字列もなく、単語分割も環境
   変数展開も shun による補間もありません。空白・引用符・`$(…)` を含む
   引数は、そっくりそのまま 1 個の引数として届きます。
-- **`policy`** —— `ask`（既定）は完了ページの回答（`launch-after-install`
-  と同じチェックボックス）に従い、`always` は固定、`never` は無効化です。
-  ヘッドレス経路が起動するのは `always` のみです：誰も頼んでいないのに
-  無人更新がブラウザを開いてはいけません。
+- **`policy`** —— `with-app`（既定）は**アプリの起動と同時に**
+  コンパニオンを実行します：チェックあり → アプリ＋コンパニオン、
+  チェックなし → どちらも起動しません。ヘッドレス経路では起動しません
+  （アプリ起動を吊るす完了ページがありません）。`always` は配送が成功
+  するたびに、ヘッドレス経路と無人更新でも起動します。`never` はどこでも
+  無効化します。
 
 コンパニオンは **配送が成功するごとに一度** だけ、完了ページの確定時に
 実行されます。アプリを先に、コンパニオンを後に、どちらも切り離して起動
-します。二つの回答は**独立**です：`always` は起動チェックを外しても
-コンパニオンを起動し（ブートストラップはアプリではありません）、`never`
-はチェックされていても起動せず、`ask` はそのチェックに従います。見つから
+します。完了ページの起動判断は**一つ**で、コンパニオンのポリシーは
+それに折り込まれます：`with-app` はチェックに従い、`always` / `never` は
+チェックとは独立に固定します。見つから
 ない場合は payload 内のパスを名指しして失敗し、実行ファイル欠落として分類
 されます —— アプリ起動と同じ `MissingExecutable` ファミリーと同じ
 「ファイルが見つからない」ガイドです。修復とアンインストールでは決して

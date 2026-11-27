@@ -1043,6 +1043,14 @@ pub fn apply_finish_checked(
     menu: Option<bool>,
     launch: bool,
 ) -> Result<(), crate::failure::FinishFailure> {
+    // The done page is a RUNTIME validation point: the build refuses a
+    // companion declaration that escapes the payload (the stamp pass
+    // resolves the pipeline), but a config that reached a running shell
+    // some other way is re-checked HERE, before the shortcut pass and
+    // before any process starts — fail-closed, never a silent skip.
+    let targets = finish_launch_targets(&core.config, launch).map_err(|message| {
+        crate::failure::FinishFailure::other(crate::failure::FinishStage::Launch, message)
+    })?;
     crate::targets::shortcuts::apply_shortcut_choices(
         &shortcut_aumid_for(&core.config),
         &core.config.product.name,
@@ -1053,11 +1061,6 @@ pub fn apply_finish_checked(
     )
     .map_err(|message| {
         crate::failure::FinishFailure::other(crate::failure::FinishStage::Shortcuts, message)
-    })?;
-    // Resolve both launches first: a broken declaration must fail before
-    // any process starts, not half-way through a launch.
-    let targets = finish_launch_targets(&core.config, launch, launch).map_err(|message| {
-        crate::failure::FinishFailure::other(crate::failure::FinishStage::Launch, message)
     })?;
     launch_finish_targets_checked(core, dir, targets)?;
     Ok(())
@@ -1159,27 +1162,24 @@ fn launch_installed_error(core: &WizardCore, dir: &str) -> Result<(), crate::err
     crate::targets::install::launch(&ctx)
 }
 
-/// What the done page must start for the buttons the user pressed:
-/// `launch` is the app-launch checkbox (its own `launch-after-install`
-/// policy already resolved into it by the face or the headless lane) and
-/// `companion` the post-install answer.
+/// What the done page must start for the launch answer `launch` (the
+/// checkbox, with its `launch-after-install` policy already resolved
+/// into it by the face or the headless lane).
 ///
-/// The two are INDEPENDENT, both ways. The companion's `policy` decides
-/// alone — `always` starts it even when the app box was cleared, `never`
-/// stays off even when the box was ticked, `ask` follows
-/// `companion_answer`. The app starts only under `launch`, so a product
-/// that declares a companion but no `main-exe` still hands the user
-/// exactly the box they ticked. Pure, so the two-by-two matrix stays
-/// unit-testable.
+/// The companion's `policy` maps onto that ONE answer: `with-app` runs
+/// it exactly when the app runs — a cleared box keeps both closed, since
+/// the companion is the bootstrap FOR the app, not a separate feature —
+/// while `always` / `never` pin it either way. This function is where
+/// the manifest's companion policy is folded into the single answer;
+/// pure, so the answer × policy matrix stays unit-testable.
 pub fn finish_launch_targets(
     config: &ShunConfig,
     launch: bool,
-    companion_answer: bool,
 ) -> Result<FinishLaunchTargets, String> {
     let companion = config.post_install_launch()?;
     Ok(FinishLaunchTargets {
         app: launch,
-        companion: companion.is_some_and(|declared| declared.launches(companion_answer)),
+        companion: companion.is_some_and(|declared| declared.launches(launch)),
     })
 }
 
@@ -1193,10 +1193,9 @@ pub struct FinishLaunchTargets {
     pub companion: bool,
 }
 
-/// [`launch_installed_checked`] plus the companion, each gated by its
-/// OWN resolved answer ([`finish_launch_targets`]): the app under the
-/// done-page box, the companion under its manifest policy. A companion
-/// failure is classified exactly like the app launch (an
+/// [`launch_installed_checked`] plus the companion, as resolved by
+/// [`finish_launch_targets`]. A companion failure is classified exactly
+/// like the app launch (an
 /// application-control refusal is an OS remedy, an undelivered file is
 /// the missing-files article — not an install retry).
 pub fn launch_finish_targets_checked(
@@ -1966,9 +1965,10 @@ mod tests {
     const BASIC: &str =
         r#"{"product":{"name":"app","version":"1.0"},"targets":[{"kind":"install","local":true}]}"#;
     /// The done-page finish chain itself: with the app box CLEARED, an
-    /// `always` companion still launches (the regression), while an `ask`
-    /// one stays off and the app stays off. The companion records its
-    /// own argv, so the spawn is observed, not inferred.
+    /// `always` companion still launches (the bootstrap that makes the
+    /// app usable), while a `with-app` one stays off with the app. The
+    /// companion records its own argv, so the spawn is observed, not
+    /// inferred.
     #[cfg(unix)]
     #[test]
     fn the_finish_chain_independently_launches_the_companion() {
@@ -1995,7 +1995,7 @@ mod tests {
             if let Some(TargetConfig::Install(install)) = config.targets.first_mut() {
                 install.post_install_launch = Some(PostInstallLaunchConfig {
                     exe: std::path::PathBuf::from("bin/companion"),
-                    args: vec!["pair".into()],
+                    args: vec!["setup".into()],
                     policy,
                 });
             }
@@ -2021,14 +2021,17 @@ mod tests {
                     .into_owned(),
                 // The fixed argv rides along — the app box being clear
                 // changes WHO launches, never WHAT the companion receives.
-                "pair".to_string(),
+                "setup".to_string(),
             ],
             "an always companion survives a cleared app box"
         );
 
-        // box cleared + policy=ask → nothing launches, either way.
+        // box cleared + policy=with-app → nothing launches, either way.
         let _ = std::fs::remove_file(&record);
-        let core = WizardCore::new(config_with(PostInstallLaunchPolicy::Ask), BTreeMap::new());
+        let core = WizardCore::new(
+            config_with(PostInstallLaunchPolicy::WithApp),
+            BTreeMap::new(),
+        );
         apply_finish_checked(&core, &dir, Some(false), Some(false), false)
             .expect("the finish chain runs");
         std::thread::sleep(std::time::Duration::from_millis(400));

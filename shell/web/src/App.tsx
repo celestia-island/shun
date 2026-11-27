@@ -1141,12 +1141,12 @@ export default defineComponent({
 
     // The done-page confirmation: applies the shortcut choices and the
     // 立即启动 answer in ONE backend call (`finish_install`), then closes
-    // the window. The same answer also carries the manifest's
-    // post-install companion (`install.post-install-launch`) when the
-    // product declares one — a gateway pairer or bootstrap that rides the
-    // launch decision instead of its own checkbox. A failure stays in the
-    // wizard — the top-right toast names what went wrong and its inline
-    // action opens the details window (the OS-remedy guide for an
+    // the window. When the product declares a post-install companion
+    // (`install.post-install-launch`), its policy folds onto this same
+    // answer in the backend: `with-app` runs it exactly when the box was
+    // ticked, `always` / `never` pin it. A failure stays in the wizard —
+    // the top-right toast names what went wrong and its inline action
+    // opens the details window (the OS-remedy guide for an
     // application-control block, the dry facts for everything else) — the
     // user can then fix it and press 完成安装 again.
     async function finish() {

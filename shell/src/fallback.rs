@@ -5573,10 +5573,12 @@ impl FallbackApp {
                         // manifest pins `launch-after-install = "never"`
                         // — the backend ignores a forwarded `true`, and a
                         // pre-ticked box next to a button that launches
-                        // nothing reads as a bug. The same box carries the
-                        // manifest's post-install companion
-                        // (`install.post-install-launch`), so one answer
-                        // covers the app and its bootstrap.
+                        // nothing reads as a bug. With this box ticked the
+                        // done page launches the app AND, when the
+                        // manifest declares one, the post-install
+                        // companion (`install.post-install-launch`) whose
+                        // policy is `with-app` or `always`; clearing it
+                        // keeps both closed under `with-app`.
                         Self::circle_checkbox(
                             ui,
                             theme,
@@ -6137,13 +6139,13 @@ impl FallbackApp {
                                         // open on a failure (the toast
                                         // explains why), so the primary
                                         // button doubles as the retry. The
-                                        // launch box is NOT forwarded as
-                                        // true: clearing it must clear the
-                                        // app launch too, while a
-                                        // `policy = "always"` companion
-                                        // still starts inside
-                                        // `apply_finish_checked` — the two
-                                        // answers are independent.
+                                        // checkbox answer is forwarded as
+                                        // the ONE launch decision: the
+                                        // companion's manifest policy folds
+                                        // onto it inside
+                                        // `apply_finish_checked` (`with-app`
+                                        // follows the box, `always` /
+                                        // `never` pin it).
                                         match shun::wizard::apply_finish_checked(
                                             &core,
                                             self.dir.trim(),

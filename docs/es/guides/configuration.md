@@ -42,7 +42,7 @@ root-dir-folder = "ShunDemo"              # solo el carril de acolchado heredado
 [package.metadata.shun.install.post-install-launch]  # ejecuta un compañero del payload una vez tras instalar (ver «Ejecución posterior a la instalación»)
 exe = "bin/pairer.exe"                     # ejecutable relativo al payload (nunca absoluto, nunca fuera del payload)
 args = ["pair", "--gateway", "https://gateway.example.world"]  # argv fijo, un elemento por argumento, sin shell
-policy = "ask"                             # always | never | ask (por defecto: la respuesta de la página de fin)
+policy = "with-app"                        # with-app (por defecto: se ejecuta junto con el lanzamiento de la app) | always | never
 
 [[package.metadata.shun.install.verbs]]    # verbos del menú contextual (verbos del Explorador / acciones de escritorio)
 key = "open-data"                          # id estable del verbo
@@ -95,7 +95,7 @@ require-removable = true                   # rechazar dispositivos no extraíble
 | `payload` | path | — | Directorio empaquetado en los artefactos |
 | `main-exe` | path | — | Punto de entrada relativo al payload (destino del atajo) |
 | `install` | table | ambos modos | conmutadores `local` / `portable`, nombre del marcador `portable-marker`, políticas `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (anulación de la ubicación por defecto con expansión de variables de entorno), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (rechazar destinos en la raíz de unidad desnuda; activado por defecto — ver Protección contra la raíz de unidad), `root-dir-folder` (carpeta acolchada bajo una raíz de unidad desnuda en el carril de acolchado heredado, por defecto el nombre del producto), `forbid-non-empty` (rechazar destinos no vacíos en instalaciones nuevas; activado por defecto), `non-empty-allowlist` (nombres de basura que el veto ignora), `dir-rules` (reglas declarativas de ubicación de instalación — ver Reglas de ubicación de instalación) |
-| `install.post-install-launch` | tabla | ninguna | Ejecuta un compañero del payload una vez tras una instalación correcta: `exe` (relativo al payload, validado), `args` (argv fijo), `policy` (`always` / `never` / `ask`) — ver «Ejecución posterior a la instalación» |
+| `install.post-install-launch` | tabla | ninguna | Ejecuta un compañero del payload una vez tras una instalación correcta: `exe` (relativo al payload, validado), `args` (argv fijo), `policy` (`with-app` / `always` / `never`) — ver «Ejecución posterior a la instalación» |
 | `attachments` | array de tablas | ninguno | recursos acompañantes opcionales (packs de assets): `key` / `title` / `dest` / `online.url`; las builds lite los descargan al instalar |
 | `update` | table | ninguna | vigilancia de actualizaciones: `sources` (URLs base espejo, sondeadas en orden) + `files` resueltos bajo el primer espejo alcanzable |
 | `webview2` | table | `skip` | estrategia de runtime de Windows |
@@ -152,7 +152,7 @@ fijos* recibe y *si hay que preguntar*.
 [package.metadata.shun.install.post-install-launch]
 exe = "bin/pairer.exe"
 args = ["pair", "--gateway", "https://gateway.example.world"]
-policy = "ask"
+policy = "with-app"
 ```
 
 - **`exe`** — ejecutable relativo al payload, resuelto dentro del
@@ -171,19 +171,20 @@ policy = "ask"
   comandos, sin división de palabras, sin expansión de variables y sin
   interpolación por parte de shun. Un argumento con espacios, comillas o
   `$(…)` sigue siendo exactamente un argumento.
-- **`policy`** — `ask` (por defecto) sigue la respuesta de la página de
-  fin (la misma casilla que resuelve `launch-after-install`), `always` la
-  fija y `never` la desactiva. El carril sin interfaz solo lanza con
-  `always`: una actualización desatendida no debe abrir un navegador a
-  quien no lo pidió.
+- **`policy`** — `with-app` (por defecto) ejecuta el compañero **junto
+  con el lanzamiento de la app**: casilla marcada → app + compañero;
+  casilla desmarcada → ninguno de los dos; el carril silencioso nunca lo
+  lanza (no hay página de fin de la que colgar el lanzamiento de la app).
+  `always` lo lanza tras cada entrega correcta, también en el carril
+  silencioso y en las actualizaciones desatendidas. `never` lo desactiva
+  en todas partes.
 
 El compañero se ejecuta **una vez por entrega correcta**, al confirmar la
 página de fin: primero la aplicación y después el compañero, ambos
-desprendidos. Las dos respuestas son **independientes**: `always` inicia
-el compañero aunque el usuario desmarque la casilla de inicio (el arranque
-no es la aplicación), `never` queda apagado aunque la casilla esté
-marcada, y `ask` sigue esa casilla. Un compañero ausente falla nombrando
-su ruta en el payload y se clasifica como ejecutable ausente —la misma
+desprendidos. La página de fin tiene UNA decisión de lanzamiento, y la
+política del compañero se pliega sobre ella: `with-app` sigue la casilla,
+mientras `always` / `never` fijan el compañero con independencia de ella.
+Un compañero ausente falla nombrando su ruta en el payload y se clasifica como ejecutable ausente —la misma
 familia `MissingExecutable` y la misma guía de archivos ausentes que el
 lanzamiento de la aplicación—. La reparación y la desinstalación nunca lo
 disparan.

@@ -1278,12 +1278,13 @@ fn run_headless_with_tap(
             println!("shun: launch failed: {err}");
         }
     }
-    // The post-install companion (`install.post-install-launch`) rides
-    // the same unattended contract, resolved through the shared policy
-    // helper: a delivery pinning it `always` starts its bootstrap (a
-    // gateway pairer, say) on the silent lane too, while the `ask`
-    // default stays a done-page question — which this lane does not
-    // have, so `ask` launches nothing here.
+    // The post-install companion (`install.post-install-launch`): the
+    // silent lane is a RUNTIME validation point — the declaration is
+    // re-checked here, so a config that reached this lane some other
+    // way than the build's stamp pass still cannot spawn anything it
+    // escapes. Only `policy = "always"` launches on this lane; `with-app`
+    // needs the done page's app launch, which does not exist here, and
+    // `never` opts out.
     match headless_companion_launch(config) {
         Ok(true) => {
             if let Err(err) = shun::wizard::launch_post_install(&core, &request.dir) {
@@ -1304,13 +1305,15 @@ fn run_headless_with_tap(
 ///
 /// - `always` launches it (the product asked for a bootstrap that must
 ///   run after every delivery, updates included);
-/// - `ask` does NOT: the question lives on the done page, and this lane
-///   has no done page — inventing a consent here would pop a browser at
-///   an unattended update;
+/// - `with-app` does NOT: the companion runs with the app launch, and
+///   this lane has no done page to launch the app from — inventing a
+///   launch here would pop a browser at an unattended update;
 /// - `never` never launches;
 /// - no declaration launches nothing;
 /// - a declaration that escapes the payload is an ERROR (the caller
-///   reports it and carries on — the install already succeeded).
+///   reports it and carries on — the install already succeeded). This
+///   is the lane's fail-closed re-check: the build refuses such a
+///   declaration too, but this lane must not depend on that.
 fn headless_companion_launch(config: &ShunConfig) -> Result<bool, String> {
     Ok(match config.post_install_launch()? {
         Some(declared) => declared.policy == shun::config::PostInstallLaunchPolicy::Always,
@@ -2833,7 +2836,7 @@ mod tests {
         let payload = shun::payload::ArchivePayload::from_bytes(&archive).unwrap();
 
         let install_dir = stage.path().join("installed");
-        for policy in [Some("ask"), Some("never"), Some("always")] {
+        for policy in [Some("with-app"), Some("never"), Some("always")] {
             let _ = std::fs::remove_file(&record);
             let _ = std::fs::remove_dir_all(&install_dir);
             let config = headless_companion_config(stage.path(), policy);
@@ -2889,6 +2892,75 @@ mod tests {
             }
         }
         let _ = std::fs::remove_file(&record);
+    }
+
+    /// The silent lane is a RUNTIME validation point: a declaration that
+    /// escapes the payload — injected straight into the config, the way
+    /// a hand-edited or tampered manifest reaches a running shell, never
+    /// through the build's stamp pass — is refused by the startup helper
+    /// itself, and the lane reports it instead of spawning anything.
+    #[test]
+    fn the_silent_lane_refuses_an_escaping_declaration_at_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        for exe in [
+            "../outside/provision",
+            "/usr/bin/env",
+            "bin/../../provision",
+            // A drive/slash spelling, not backslashes: this string is
+            // embedded in a TOML basic string below, which would read
+            // `\W` as an escape.
+            "C:/Windows/System32/cmd.exe",
+        ] {
+            let path = dir.path().join("installer.toml");
+            std::fs::write(
+                &path,
+                format!(
+                    "product = \"ShunDemo-Test-Headless\"\n\n[install]\nlocal = true\nportable = true\n\n[install.post-install-launch]\nexe = \"{exe}\"\npolicy = \"always\"\n"
+                ),
+            )
+            .unwrap();
+            let config = ShunConfig::from_path(&path).unwrap();
+            let err = headless_companion_launch(&config)
+                .expect_err("the silent lane must refuse an escaping declaration");
+            assert!(
+                err.contains("post-install-launch"),
+                "{exe}: the refusal names the declaration: {err}"
+            );
+        }
+
+        // A conforming `always` declaration still resolves to "launch".
+        let clean_path = dir.path().join("clean.toml");
+        std::fs::write(
+            &clean_path,
+            "product = \"ShunDemo-Test-Headless\"\n\n[install.post-install-launch]\nexe = \"bin/provision\"\npolicy = \"always\"\n",
+        )
+        .unwrap();
+        let config = ShunConfig::from_path(&clean_path).unwrap();
+        assert!(headless_companion_launch(&config).unwrap());
+    }
+
+    /// `with-app` never launches on the silent lane — it rides the done
+    /// page's app launch, and this lane has no done page — while
+    /// `always` does.
+    #[test]
+    fn the_silent_lane_launches_only_under_always() {
+        let dir = tempfile::tempdir().unwrap();
+        for (policy, expected) in [("with-app", false), ("never", false), ("always", true)] {
+            let path = dir.path().join(format!("{policy}.toml"));
+            std::fs::write(
+                &path,
+                format!(
+                    "product = \"ShunDemo-Test-Headless\"\n\n[install.post-install-launch]\nexe = \"bin/provision\"\npolicy = \"{policy}\"\n"
+                ),
+            )
+            .unwrap();
+            let config = ShunConfig::from_path(&path).unwrap();
+            assert_eq!(
+                headless_companion_launch(&config).unwrap(),
+                expected,
+                "policy {policy} on the silent lane"
+            );
+        }
     }
 
     /// Polls the companion's record file for a bounded window.

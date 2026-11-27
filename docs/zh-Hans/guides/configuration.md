@@ -51,7 +51,7 @@ root-dir-folder = "ShunDemo"               # 仅旧垫层通道生效（forbid-d
 [package.metadata.shun.install.post-install-launch]  # 安装后运行一次载荷自带的伴随程序（见「安装后伴随启动」）
 exe = "bin/pairer.exe"                     # 载荷相对的可执行文件（不得绝对、不得越出载荷）
 args = ["pair", "--gateway", "https://gateway.example.world"]  # 固定 argv，一个元素一个参数，不经 shell
-policy = "ask"                             # always | never | ask（默认跟随完成页回答）
+policy = "with-app"                        # with-app（默认：随应用启动一并运行）| always | never
 
 [[package.metadata.shun.install.verbs]]    # 右键菜单动词（Explorer 动词 / Desktop Action）
 key = "open-data"                          # 稳定动词 id
@@ -101,7 +101,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
 | `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（环境变量展开的默认位置覆盖）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒绝裸盘符根目录目标；默认开启——见「根盘保护」）、`root-dir-folder`（退出拒绝后垫层通道里垫在裸盘符根目录下的文件夹，默认取产品名）、`forbid-non-empty`（全新安装拒绝非空目录；默认开启）、`non-empty-allowlist`（非空拒绝忽略的垃圾文件名）、`dir-rules`（声明式安装位置规则——见「安装位置规则」） |
-| `install.post-install-launch` | table | 无 | 安装成功后运行一次载荷自带的伴随程序：`exe`（载荷相对，已校验）、`args`（固定 argv）、`policy`（`always` / `never` / `ask`）——见「安装后伴随启动」 |
+| `install.post-install-launch` | table | 无 | 安装成功后运行一次载荷自带的伴随程序：`exe`（载荷相对，已校验）、`args`（固定 argv）、`policy`（`with-app` / `always` / `never`）——见「安装后伴随启动」 |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
@@ -146,7 +146,7 @@ require-removable = true                   # 拒绝非可移动设备
 [package.metadata.shun.install.post-install-launch]
 exe = "bin/pairer.exe"
 args = ["pair", "--gateway", "https://gateway.example.world"]
-policy = "ask"
+policy = "with-app"
 ```
 
 - **`exe`**——载荷相对的可执行文件，在安装目录内解析。声明在**配置
@@ -159,15 +159,14 @@ policy = "ask"
 - **`args`**——**固定参数向量**，一个元素一个参数。它原样交给进程：
   没有 shell、没有命令行字符串、没有分词、没有变量展开，shun 也不做
   任何插值。带空格、引号或 `$(…)` 的参数仍**恰好是一个**参数。
-- **`policy`**——`ask`（默认）跟随完成页的启动回答（与
-  `launch-after-install` 同一个复选框），`always` 固定执行，`never`
-  关闭。无头通道只在 `always` 下执行：无人值守的更新不能给没要求的人
-  弹出浏览器。
+- **`policy`**——`with-app`（默认）**随应用启动一并运行**：勾选完成页
+  的启动框 → 应用 + 伴随程序；取消勾选 → 两者都不启动；无头通道从不
+  启动它（没有完成页可以挂载应用启动）。`always` 在每次成功投递后
+  启动，无头通道与无人值守更新也一样。`never` 在任何通道都不启动。
 
 伴随程序**每次成功安装只跑一次**，在完成页确认时触发：先启动应用，
-再启动伴随程序，都以游离方式启动。两个回答**彼此独立**：`always` 即使
-用户取消勾选启动框也照样启动伴随程序（引导程序不是应用），`never` 即使
-勾选也不启动，`ask` 跟随该勾选框。文件缺失时报错并点名它在载荷中的
+再启动伴随程序，都以游离方式启动。完成页只有**一个**启动决定，伴随程序的策略折叠在其上：`with-app`
+跟随该勾选框，而 `always` / `never` 与勾选框无关地固定伴随程序。文件缺失时报错并点名它在载荷中的
 路径（如 `bin/pairer.exe`，绝不暴露隐藏的暂存路径），并归类为「可执行
 文件缺失」——与应用启动同一个 `MissingExecutable` 家族、同一篇「文件
 缺失」指南。修复与卸载**永不**触发。
