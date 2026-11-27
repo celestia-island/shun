@@ -143,7 +143,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 使えるようになる前に、それが一度動く必要があります。
 `install.post-install-launch` はその受け渡しをマニフェストで宣言します。
 shun が知っているのは *payload 内のどこに* プログラムがあるか、*どんな
-固定引数* を受け取るか、*確認するかどうか* だけです。
+固定引数* を受け取るか、*いつ起動するか* だけです。
 
 ```toml
 [package.metadata.shun.install.post-install-launch]

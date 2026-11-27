@@ -145,7 +145,7 @@ machine via le navigateur du système, un assistant d'activation, un
 migrateur de premier lancement — avant que l'application soit utile.
 `install.post-install-launch` déclare ce passage dans le manifeste ; shun
 ne sait que *où* le programme vit dans le payload, *quels arguments fixes*
-il reçoit et *s'il faut demander*.
+il reçoit et *quand le démarrer*.
 
 ```toml
 [package.metadata.shun.install.post-install-launch]
