@@ -338,6 +338,64 @@ fn an_escaping_companion_is_refused_before_any_spawn() {
     }
 }
 
+/// A declaration whose executable reaches outside the payload fails the
+/// BUILD: `resolve_steps` is what `shun build` runs when it stamps the shell,
+/// so the refusal happens before a single file is packed and no installer
+/// artifact can ever carry the declaration.
+///
+/// Without this test the guard inside `resolve_steps` is unobserved — a `let _
+/// =` there leaves every other test green (proved by mutation on this branch),
+/// which is exactly the "field exists, nobody reads it" shape the build-time
+/// promise must not have.
+#[test]
+fn an_escaping_companion_fails_the_config_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path().join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        r#"
+[package]
+name = "acme-node"
+version = "0.0.1"
+
+[package.metadata.shun.install.post-install-launch]
+exe = "../outside/provision"
+args = []
+policy = "with-app"
+"#,
+    )
+    .unwrap();
+    // The manifest PARSES (serde cannot judge a path — the field is just a
+    // string), so the refusal has to come from the build pipeline itself.
+    let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+    let error = config
+        .resolve_steps(dir.path(), None)
+        .expect_err("an escaping declaration must fail the build");
+    assert!(
+        error.to_string().contains("post-install-launch"),
+        "the refusal names the declaration: {error}"
+    );
+    // The compliant twin loads, so this is a refusal, not a dead pipeline.
+    let ok_manifest = dir.path().join("Ok.toml");
+    std::fs::write(
+        &ok_manifest,
+        r#"
+[package]
+name = "acme-node"
+version = "0.0.1"
+
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/provision.exe"
+args = []
+policy = "with-app"
+"#,
+    )
+    .unwrap();
+    let ok = ShunConfig::from_cargo_manifest(&ok_manifest).unwrap();
+    ok.resolve_steps(dir.path(), None)
+        .expect("a payload-relative declaration loads");
+}
+
 /// The declarations a product manifest uses: a program under `bin/` with
 /// a fixed argv — the shape any product ships.
 #[test]
