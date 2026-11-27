@@ -8,10 +8,18 @@ body {
   overflow: hidden;
 }
 
-/* The language panel must fit BELOW the fixed caption: a taller surface
-   flips top and slides under the titlebar band (z 100001), which clips
-   its first rows. 280px keeps the bottom placement on a 600pt window —
-   longer lists scroll inside the panel instead. */
+/* Desktop popout cap for the one selector this shell composes (PathField's
+   HkAffixPicker drive chip): 280px keeps the anchored panel clear of the
+   fixed caption band and the titlebar (z 100001), which would otherwise
+   clip its first rows on a 600pt window.
+
+   SCOPE (2026-11-27, hikari 0.55.499): this hook is a POPOUT measure now.
+   The phone bottom sheet ignores it and hugs its content up to 80% of the
+   viewport (hikari#1585), which is what a bottom sheet should do — it is
+   pinned to the bottom edge and cannot slide under the caption. The
+   earlier comment here described a "language panel" this shell no longer
+   renders (the locale switcher lives in the desktop chrome, not in a
+   select sheet). */
 :root {
   --hk-select-panel-max-height: 280px;
 }

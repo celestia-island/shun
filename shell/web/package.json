@@ -10,7 +10,7 @@
     "dump-strings": "npx esbuild src/i18n-dump.ts --bundle --format=cjs --platform=node --outfile=.strings-dump.cjs && node .strings-dump.cjs && node -e \"require('node:fs').rmSync('.strings-dump.cjs',{force:true})\""
   },
   "dependencies": {
-    "@celestia-island/hikari": "^0.55",
+    "@celestia-island/hikari": "^0.55.499",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "lucide-vue-next": "^1",
