@@ -59,8 +59,8 @@ shun 内置接口将以 duckscript 命令形式注册：`shun_progress`、
 是声明式的，不需要任何脚本：`install.post-install-launch`（见
 configuration.md 的「安装后伴随启动」）以**不经过 shell** 的 argv
 启动载荷相对的可执行文件。请优先用它，而不是在 `post-install` 钩子
-里调用 shell：声明会针对路径逃逸做校验、在清单里可见，并携带与
-应用启动相同的完成页启动决定
+里调用 shell：声明在 `shun build` 组装 stamp 容器时针对路径逃逸做校验、
+在清单里可见，并跟随与应用启动相同的完成页启动决定
 （`policy = "with-app"`：应用启动 → 伴随程序启动；应用不启动 → 两者都不
 启动；无头通道 → 不启动）。
 

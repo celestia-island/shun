@@ -40,8 +40,8 @@ root-dir-folder = "ShunDemo"              # solo el carril de acolchado heredado
 # zh-Hans = "该目录是游戏客户端。"
 
 [package.metadata.shun.install.post-install-launch]  # ejecuta un compañero del payload una vez tras instalar (ver «Ejecución posterior a la instalación»)
-exe = "bin/pairer.exe"                     # ejecutable relativo al payload (nunca absoluto, nunca fuera del payload)
-args = ["pair", "--gateway", "https://gateway.example.world"]  # argv fijo, un elemento por argumento, sin shell
+exe = "bin/provision.exe"                     # ejecutable relativo al payload (nunca absoluto, nunca fuera del payload)
+args = ["setup", "--endpoint", "https://api.example.test"]  # argv fijo, un elemento por argumento, sin shell
 policy = "with-app"                        # with-app (por defecto: se ejecuta junto con el lanzamiento de la app) | always | never
 
 [[package.metadata.shun.install.verbs]]    # verbos del menú contextual (verbos del Explorador / acciones de escritorio)
@@ -146,30 +146,35 @@ esta máquina a través del navegador del sistema, un ayudante de
 activación, un migrador de primer arranque— antes de que la app sea útil.
 `install.post-install-launch` declara ese traspaso en el manifiesto; shun
 solo sabe *dónde vive* el programa dentro del payload, *qué argumentos
-fijos* recibe y *si hay que preguntar*.
+fijos* recibe y *cuándo arrancarlo*.
 
 ```toml
 [package.metadata.shun.install.post-install-launch]
-exe = "bin/pairer.exe"
-args = ["pair", "--gateway", "https://gateway.example.world"]
+exe = "bin/provision.exe"
+args = ["setup", "--endpoint", "https://api.example.test"]
 policy = "with-app"
 ```
 
 - **`exe`** — ejecutable relativo al payload, resuelto dentro del
-  directorio de instalación. La declaración se comprueba al CARGAR la
-  configuración —la canalización que toda cara resuelve antes de instalar
-  nada (`resolve_steps`), así que una declaración que se sale falla antes
-  de escribir un solo archivo, no en la página de fin tras una entrega
-  correcta— y otra vez justo antes de lanzar: las rutas absolutas, los
-  prefijos de unidad de Windows (`C:…`) y los prefijos UNC
-  (`\\\\servidor\\recurso`, `//servidor/recurso`) se rechazan en cualquier
-  host, y los componentes `..` se rechazan como traversal. Un manifiesto
-  solo puede nombrar algo que la propia entrega puso ahí —nunca un
-  intérprete ni un binario del sistema.
+  directorio de instalación. La declaración se valida en **tiempo de
+  compilación**: `shun build` arma el contenedor de sello de la carcasa a
+  través de `resolve_steps`, así que una declaración que se escapa hace
+  fallar la compilación y ningún artefacto de instalación puede salir con
+  ella. En tiempo de ejecución se valida otra vez en **los dos puntos de
+  lanzamiento**: la confirmación de la página de fin y el carril
+  silencioso la recomprueban antes de lanzar nada, de modo que una
+  configuración que haya llegado a una carcasa en ejecución por otra vía
+  también se rechaza (fallo cerrado, nunca una omisión silenciosa). Las
+  rutas absolutas, los prefijos de unidad de Windows (`C:…`) y los
+  prefijos UNC (`\\\\servidor\\recurso`, `//servidor/recurso`) se
+  rechazan en cualquier host, y los componentes `..` se rechazan como
+  recorrido ascendente. Un manifiesto solo puede nombrar algo que la
+  propia entrega puso ahí: nunca un intérprete ni un binario del sistema.
 - **`args`** — el **vector de argumentos fijo**, un elemento por
   argumento. Se pasa al proceso tal cual: sin shell, sin cadena de
   comandos, sin división de palabras, sin expansión de variables y sin
-  interpolación por parte de shun. Un argumento con espacios, comillas o
+  interpolación por parte de shun. Ni siquiera existe un shell: el
+  lanzamiento es un `Command` con un `argv` ya decodificado. Un argumento con espacios, comillas o
   `$(…)` sigue siendo exactamente un argumento.
 - **`policy`** — `with-app` (por defecto) ejecuta el compañero **junto
   con el lanzamiento de la app**: casilla marcada → app + compañero;
@@ -180,18 +185,31 @@ policy = "with-app"
   en todas partes.
 
 El compañero se ejecuta **una vez por entrega correcta**, al confirmar la
-página de fin: primero la aplicación y después el compañero, ambos
-desprendidos. La página de fin tiene UNA decisión de lanzamiento, y la
-política del compañero se pliega sobre ella: `with-app` sigue la casilla,
-mientras `always` / `never` fijan el compañero con independencia de ella.
-Un compañero ausente falla nombrando su ruta en el payload y se clasifica como ejecutable ausente —la misma
-familia `MissingExecutable` y la misma guía de archivos ausentes que el
-lanzamiento de la aplicación—. La reparación y la desinstalación nunca lo
-disparan.
+página de fin (`apply_finish_checked` → `finish_launch_targets` /
+`launch_finish_targets_checked`): primero arranca la aplicación y después
+el compañero, ambos desprendidos (sin esperar, para que el instalador
+pueda salir enseguida). La página de fin tiene UNA sola decisión de
+lanzamiento, y la política del compañero se pliega sobre ella: `with-app`
+sigue la casilla, mientras que `always` / `never` fijan el compañero con
+independencia de ella.
 
-Lo que hace el programa es asunto del payload: un emparejador abre el
-navegador del sistema y completa su propio flujo OAuth por loopback; shun
-nunca ve las credenciales.
+Un compañero ausente falla con un error que nombra su ruta en el payload
+(`bin/provision.exe`, nunca la ortografía oculta de preparación) y se
+clasifica como ejecutable ausente: la misma familia `MissingExecutable` y
+la misma guía de archivos ausentes que el lanzamiento de la aplicación
+notifica para un `main-exe` no entregado.
+
+La reparación y la desinstalación nunca lo disparan. Una reparación
+vuelve a extraer sobre la misma carpeta —una re-extracción no es un nuevo
+momento de emparejamiento— y el recorrido de desinstalación ya no tiene
+nada que lanzar. Un producto que necesita volver a ejecutar su arranque
+tras una reparación lo ofrece desde su propia aplicación, o fija
+`policy = "always"`, el interruptor que el carril silencioso respeta en
+cada entrega.
+
+Lo que hace el programa pertenece por entero al payload; shun nunca ve
+las credenciales que intercambia ni llega a saber qué hace el programa
+con ellas.
 
 ## Protección contra la raíz de unidad
 

@@ -40,8 +40,8 @@ root-dir-folder = "ShunDemo"              # seulement l'ancienne voie d'insertio
 # zh-Hans = "该目录是游戏客户端。"
 
 [package.metadata.shun.install.post-install-launch]  # lance un compagnon du payload une fois après l'installation (voir « Lancement du compagnon après installation »)
-exe = "bin/pairer.exe"                     # exécutable relatif au payload (jamais absolu, jamais hors du payload)
-args = ["pair", "--gateway", "https://gateway.example.world"]  # argv fixe, un élément par argument, sans shell
+exe = "bin/provision.exe"                     # exécutable relatif au payload (jamais absolu, jamais hors du payload)
+args = ["setup", "--endpoint", "https://api.example.test"]  # argv fixe, un élément par argument, sans shell
 policy = "with-app"                        # with-app (par défaut : exécuté avec le lancement de l'app) | always | never
 
 [[package.metadata.shun.install.verbs]]    # verbes du menu contextuel (verbes de l'Explorateur / actions de bureau)
@@ -74,7 +74,7 @@ align = "center"                           # remplacement par étape : center | 
 
 [[package.metadata.shun.steps]]
 kind = "content"
-title = "Release notes"                    # les étapes content portent un titre…
+title = "Notes de version"                # les étapes content portent un titre…
 markdown = "notes.md"                      # …et un document, intégré à la compilation
 
 [[package.metadata.shun.steps]]
@@ -140,54 +140,74 @@ d'entrée déclaré mais absent remonte l'erreur `MissingEntry` habituelle.
 ## Lancement du compagnon après installation
 
 Certains produits livrent, à côté de l'application, une **amorce** qui doit
-s'exécuter une fois — un couplage de passerelle qui connecte cette machine
-via le navigateur du système, un assistant d'activation, un migrateur de
-premier lancement — avant que l'application soit utile.
+s'exécuter une fois — une amorce de connexion qui authentifie cette
+machine via le navigateur du système, un assistant d'activation, un
+migrateur de premier lancement — avant que l'application soit utile.
 `install.post-install-launch` déclare ce passage dans le manifeste ; shun
 ne sait que *où* le programme vit dans le payload, *quels arguments fixes*
 il reçoit et *s'il faut demander*.
 
 ```toml
 [package.metadata.shun.install.post-install-launch]
-exe = "bin/pairer.exe"
-args = ["pair", "--gateway", "https://gateway.example.world"]
+exe = "bin/provision.exe"
+args = ["setup", "--endpoint", "https://api.example.test"]
 policy = "with-app"
 ```
 
 - **`exe`** — un exécutable relatif au payload, résolu dans le dossier
-  d'installation. La déclaration est vérifiée au CHARGEMENT de la
-  configuration — le pipeline que toute face résout avant de pouvoir
-  installer quoi que ce soit (`resolve_steps`), donc une déclaration qui
-  s'échappe échoue avant l'écriture du premier fichier, pas sur la page
-  de fin après une livraison réussie — puis de nouveau juste avant le
-  lancement : les chemins absolus, les préfixes de lecteur Windows
-  (`C:…`) et les préfixes UNC (`\\\\serveur\\partage`, `//serveur/partage`)
-  sont refusés sur tout hôte, et les composants `..` sont refusés comme
-  traversée. Un manifeste ne peut nommer que ce que la livraison
-  elle-même a déposé — jamais un interpréteur ni un binaire système.
+  d'installation. La déclaration est validée à la **compilation** :
+  `shun build` assemble le conteneur d'estampille du shell via
+  `resolve_steps`, donc une déclaration qui s'échappe fait échouer la
+  compilation et aucun artefact d'installation ne peut la contenir. À
+  l'exécution, elle est validée de nouveau aux **deux points de
+  lancement** : la confirmation de la page de fin et la voie silencieuse
+  la revérifient avant de lancer quoi que ce soit, si bien qu'une
+  configuration parvenue à un shell en cours d'exécution par un autre
+  chemin est refusée elle aussi (échec fermé, jamais un saut silencieux).
+  Les chemins absolus, les préfixes de lecteur Windows (`C:…`) et les
+  préfixes UNC (`\\\\serveur\\partage`, `//serveur/partage`) sont
+  refusés sur tout hôte, et les composants `..` sont refusés comme
+  remontée de répertoire. Un manifeste ne peut nommer que ce que la
+  livraison elle-même a déposé : jamais un interpréteur ni un binaire
+  système.
 - **`args`** — le **vecteur d'arguments fixe**, un élément par argument.
   Il est transmis au processus tel quel : sans shell, sans ligne de
   commande, sans découpage, sans expansion de variables ni interpolation
-  par shun. Un argument contenant des espaces, des guillemets ou `$(…)`
+  par shun. Aucun shell n'existe : le lancement est un `Command` sur un
+  `argv` déjà décodé. Un argument contenant des espaces, des guillemets ou `$(…)`
   reste exactement un argument.
 - **`policy`** — `with-app` (par défaut) exécute le compagnon **avec le
   lancement de l'application** : case cochée → app + compagnon ; case
-  décochée → ni l'un ni l'autre ; la voie silencieuse ne le lance jamais
-  (aucune page de fin pour accrocher le lancement de l'application).
-  `always` le lance après chaque livraison réussie, voie silencieuse et
-  mises à jour non assistées comprises. `never` le désactive partout.
+  décochée → rien ; la voie silencieuse ne le lance jamais (aucune page
+  de fin où accrocher le lancement de l'application). `always` le lance
+  après chaque livraison réussie, voie silencieuse et mises à jour non
+  assistées comprises. `never` le désactive partout.
 
 Le compagnon s'exécute **une fois par livraison réussie**, à la
-confirmation de la page de fin : l'application d'abord, le compagnon
-ensuite, tous deux détachés. La page de fin porte UNE décision de lancement, sur laquelle se replie la politique du compagnon : `with-app` suit la case, tandis que `always` / `never` fixent le compagnon indépendamment d'elle. Un compagnon absent échoue en
-nommant son chemin dans le payload et se classe comme exécutable
-manquant — la même famille `MissingExecutable` et le même guide des
-fichiers manquants que le lancement de l'application. La réparation et la
-désinstallation ne le déclenchent jamais.
+confirmation de la page de fin (`apply_finish_checked` →
+`finish_launch_targets` / `launch_finish_targets_checked`) : l'application d'abord, le compagnon
+ensuite, tous deux détachés. La page de fin ne comporte qu'UNE décision
+de lancement, et la politique du compagnon s'y replie : `with-app` suit
+la case, tandis que `always` / `never` fixent le compagnon indépendamment
+d'elle.
 
-Ce que fait le programme appartient au payload : un couplage ouvre le
-navigateur du système et mène son propre échange OAuth en boucle locale ;
-shun ne voit jamais les identifiants.
+Un compagnon absent échoue avec une erreur qui nomme son chemin dans le
+payload (`bin/provision.exe`, jamais l'orthographe de préparation
+cachée) et se classe comme exécutable manquant — la même famille
+`MissingExecutable` et le même guide des fichiers manquants que ceux que
+le lancement de l'application signale pour un `main-exe` non livré.
+
+La réparation et la désinstallation ne le déclenchent jamais. Une
+réparation ré-extrait par-dessus le même dossier — une ré-extraction
+n'est pas un nouveau moment d'appairage — et le parcours de
+désinstallation n'a plus rien à lancer. Un produit qui doit relancer son
+amorce après une réparation l'offre depuis sa propre application, ou
+fixe `policy = "always"`, l'interrupteur que la voie silencieuse respecte
+à chaque livraison.
+
+Ce que fait le programme n'appartient qu'au payload ; shun ne voit jamais
+les identifiants qu'il échange et n'apprend jamais ce que le programme en
+fait.
 
 ## Garde anti-racine
 

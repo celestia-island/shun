@@ -70,8 +70,9 @@ declarative and needs no script at all:
 `install.post-install-launch` (see configuration.md, *Post-install
 launch*) spawns a payload-relative executable with an argv that never
 touches a shell. Prefer it over a `post-install` hook that shells out:
-the declaration is validated against path escapes, is visible in the
-manifest, and runs on the same done-page launch decision as the app (its
+the declaration is validated against path escapes when `shun build`
+assembles the stamp container, is visible in the manifest, and runs on the
+same done-page launch decision as the app (its
 `policy = "with-app"` default means: app launched → companion launched,
 app not launched → neither, silent lane → not launched).
 

@@ -2785,14 +2785,15 @@ mod tests {
     /// entry point. The payload carries the app entry point the sweep
     /// looks for plus a companion that records its own argv; the
     /// pinned-policy matrix then decides whether that record appears.
-    /// `ask` launches nothing (the silent lane has no done page to ask
-    /// on), `never` nothing, `always` something — and the lane reports
-    /// success in every case.
+    /// `with-app` launches nothing (it rides the done page's app launch,
+    /// and this lane has no done page), `never` nothing, `always`
+    /// something — and the lane reports success in every case.
     ///
     /// Only the companion is declared: the instance sweep and the
     /// shortcut pass still resolve `main-exe` (the payload's
     /// `bin/shun-demo.exe`), while the app launch keeps its own
-    /// `launch-after-install` default (`ask` = no launch on this lane)
+    /// `launch-after-install` default (`ask` = no launch on this lane —
+    /// a DIFFERENT `ask`, the app-launch policy's)
     /// and so never competes for the record.
     fn headless_companion_config(dir: &Path, policy: Option<&str>) -> ShunConfig {
         let mut manifest = String::from(
@@ -2800,7 +2801,7 @@ mod tests {
         );
         if let Some(policy) = policy {
             manifest.push_str(&format!(
-                "\n[install.post-install-launch]\nexe = \"bin/companion\"\nargs = [\"pair\", \"--gateway\", \"https://gateway.example.world\"]\npolicy = \"{policy}\"\n"
+                "\n[install.post-install-launch]\nexe = \"bin/companion\"\nargs = [\"setup\", \"--endpoint\", \"https://api.example.test\"]\npolicy = \"{policy}\"\n"
             ));
         }
         let path = dir.join("installer.toml");
@@ -2875,15 +2876,15 @@ mod tests {
                             .join("companion")
                             .to_string_lossy()
                             .into_owned(),
-                        "pair".to_string(),
-                        "--gateway".to_string(),
-                        "https://gateway.example.world".to_string(),
+                        "setup".to_string(),
+                        "--endpoint".to_string(),
+                        "https://api.example.test".to_string(),
                     ],
                     "the always-pinned companion runs with its argv"
                 );
             } else {
-                // A generous window before the negative: `ask` / `never`
-                // must stay silent.
+                // A generous window before the negative: `with-app` /
+                // `never` must stay silent.
                 std::thread::sleep(std::time::Duration::from_millis(400));
                 assert!(
                     !record.exists(),

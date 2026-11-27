@@ -242,7 +242,7 @@ pub(crate) fn entry_path_is_unsafe(path: &Path) -> bool {
 }
 
 /// Whether a path spells an anchor OUTSIDE the payload on any host: an
-/// absolute path, a drive prefix (`C:\…`, `C:pairer`, `C:/…`), or a UNC
+/// absolute path, a drive prefix (`C:\…`, `C:tool`, `C:/…`), or a UNC
 /// / device lead-in (`\\server\share`, `//server/share`).
 ///
 /// Stricter than [`entry_path_is_unsafe`] because `Path::is_absolute`
@@ -265,24 +265,27 @@ pub(crate) fn path_anchors_outside(path: &Path) -> bool {
     drive || unc
 }
 
-/// Applies a packed entry's executable bit to the extracted file.
+/// Applies a packed entry's permission bits to the extracted file.
 ///
-/// A packed POSIX entry keeps its source permission bits in the archive
+/// A packed POSIX entry carries its source permission bits in the archive
 /// (see [`source_exec_mode`]); the payload's own data files are `0o644`
 /// and stay `0o644`, but a program the product intends to RUN — a
-/// launcher, a gateway pairer — must land executable, or the delivery
-/// produces a file nobody can start (the post-install handoff's whole
-/// premise). Windows hosts have no mode bits to set and skip this.
+/// launcher, a first-run setup helper — must land executable, or the
+/// delivery produces a file nobody can start (the post-install handoff's
+/// whole premise). Windows hosts have no mode bits to set and skip this.
+///
+/// The mode is applied VERBATIM: the packer already normalized it (the
+/// setuid/setgid/sticky trio is stripped there, and a non-executable
+/// source stays non-executable), so the extract lane needs no second
+/// opinion — an `| 0o111` here would be unreachable guard code whose loss
+/// no test could observe.
 #[cfg(unix)]
 fn apply_packed_mode(target: &Path, mode: Option<u32>) {
     use std::os::unix::fs::PermissionsExt;
     let Some(mode) = mode else { return };
-    if mode & 0o111 == 0 {
-        return;
-    }
     if let Ok(metadata) = std::fs::metadata(target) {
         let mut permissions = metadata.permissions();
-        permissions.set_mode((mode & 0o777) | 0o111);
+        permissions.set_mode(mode & 0o777);
         let _ = std::fs::set_permissions(target, permissions);
     }
 }
@@ -724,24 +727,30 @@ mod path_anchor_tests {
             "/usr/bin/env",
             r"C:\Windows\System32\cmd.exe",
             "C:/Windows/System32/cmd.exe",
-            "C:pairer.exe",
-            r"\\server\share\pairer.exe",
-            "//server/share/pairer.exe",
+            "C:provision.exe",
+            r"\\server\share\provision.exe",
+            "//server/share/provision.exe",
         ] {
             assert!(
                 path_anchors_outside(Path::new(refused)),
                 "{refused:?} anchors outside the payload"
             );
         }
-        for relative in ["bin/evernight.exe", "pair", "./bin/pairer", "a/b/c", "..."] {
+        for relative in [
+            "bin/provision.exe",
+            "tool",
+            "./bin/provision",
+            "a/b/c",
+            "...",
+        ] {
             assert!(
                 !path_anchors_outside(Path::new(relative)),
                 "{relative:?} stays inside the payload"
             );
         }
         // The traversal component stays the OTHER guard's job.
-        assert!(!path_anchors_outside(Path::new("bin/../../pairer")));
-        assert!(entry_path_is_unsafe(Path::new("bin/../../pairer")));
+        assert!(!path_anchors_outside(Path::new("bin/../../provision")));
+        assert!(entry_path_is_unsafe(Path::new("bin/../../provision")));
     }
 }
 
@@ -782,6 +791,11 @@ mod executable_mode_tests {
         );
         let plain = std::fs::metadata(dest.join("readme.txt")).unwrap();
         assert_eq!(plain.mode() & 0o111, 0, "data files stay non-executable");
+        assert_eq!(
+            plain.mode() & 0o777,
+            0o644,
+            "the packed mode is applied verbatim — no extractor-side promotion"
+        );
 
         // A setuid source packs its plain permission bits only — an
         // installer must never deliver a privileged image.

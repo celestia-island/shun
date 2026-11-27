@@ -75,8 +75,9 @@ script : `install.post-install-launch` (voir configuration.md, « Lancement
 du compagnon après installation ») lance un exécutable relatif au payload
 avec un argv qui ne passe jamais par un shell. Préférez-le à un hook
 `post-install` qui appelle un shell : la déclaration est validée contre
-les évasions de chemin, visible dans le manifeste, et porte le même
-la même décision de lancement de page de fin que l'application
+les évasions de chemin lorsque `shun build` assemble le conteneur
+d'estampille, elle est visible dans le manifeste, et elle suit la même
+décision de lancement de page de fin que l'application
 (`policy = "with-app"` : app lancée → compagnon lancé, app non lancée →
 ni l'un ni l'autre, voie silencieuse → non lancé).
 
