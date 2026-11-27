@@ -39,6 +39,11 @@ root-dir-folder = "ShunDemo"              # 従来のパディングレーンの
 # [package.metadata.shun.install.dir-rules.message-locales]  # ウィザードロケール別の上書き（一致が message に優先）
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # インストール後に payload 同梱のコンパニオンを一度だけ起動（「インストール後のコンパニオン起動」を参照）
+exe = "bin/provision.exe"                     # payload 相対の実行ファイル（絶対パス不可、payload の外は不可）
+args = ["setup", "--endpoint", "https://api.example.test"]  # 固定 argv、引数ごとに 1 要素、シェルを経由しない
+policy = "with-app"                        # with-app（既定：アプリ起動と同時に実行）| always | never
+
 [[package.metadata.shun.install.verbs]]    # 右クリック動詞（Explorer 動詞 / デスクトップアクション）
 key = "open-data"                          # 安定した動詞 id
 display = "Open data folder"               # メニュー表示
@@ -87,6 +92,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 | `payload` | path | — | 成果物にパックされるディレクトリ |
 | `main-exe` | path | — | payload 相対のエントリポイント（ショートカットの宛先） |
 | `install` | table | 両モードオン | `local` / `portable` スイッチ、`portable-marker` ファイル名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` ポリシー、`default-dir`（環境変数展開される既定位置の上書き）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（裸のドライブルートのターゲットを拒否。既定でオン——ドライブルートの保護を参照）、`root-dir-folder`（オプトアウト時のパディングレーンでドライブルート直下に挟むフォルダー、既定は製品名）、`forbid-non-empty`（新規インストールで空でないターゲットを拒否。既定でオン）、`non-empty-allowlist`（非空拒否が無視するゴミファイル名）、`dir-rules`（宣言的なインストール先ルール——「インストール先ルール」を参照） |
+| `install.post-install-launch` | table | なし | インストール成功後に payload 同梱のコンパニオンを一度だけ起動する：`exe`（payload 相対・検証済み）、`args`（固定 argv）、`policy`（`with-app` / `always` / `never`）——「インストール後のコンパニオン起動」を参照 |
 | `attachments` | テーブル配列 | なし | 追加リソース（アセットパック）：`key` / `title` / `dest` / `online.url`。ライト版はインストール時にダウンロード |
 | `update` | table | なし | 更新ウォッチ：`sources`（ミラー基底 URL、順にプローブ）+ 最初に到達したソース配下で解決される `files` |
 | `webview2` | table | `skip` | Windows ランタイム戦略 |
@@ -128,6 +134,72 @@ require-removable = true                   # リムーバブル以外のデバ�
 またはエントリポイントが未宣言の場合は何もしません。宣言済みの
 エントリポイントが見つからない場合は通常どおり `MissingEntry`
 エラーになります。
+
+## インストール後のコンパニオン起動
+
+アプリの隣に **一度だけ動かすブートストラップ** を同梱する製品があります
+——システムのブラウザを開いてこのマシンをサインインさせるゲートウェイの
+ペアラー、アクティベーションの補助、初回起動の移行ツールなど——。アプリが
+使えるようになる前に、それが一度動く必要があります。
+`install.post-install-launch` はその受け渡しをマニフェストで宣言します。
+shun が知っているのは *payload 内のどこに* プログラムがあるか、*どんな
+固定引数* を受け取るか、*いつ起動するか* だけです。
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/provision.exe"
+args = ["setup", "--endpoint", "https://api.example.test"]
+policy = "with-app"
+```
+
+- **`exe`** —— payload 相対の実行ファイルをインストール先で解決します。
+  宣言は**ビルド時**に検証されます：`shun build` は `resolve_steps` を
+  通してシェルのスタンプコンテナを組み立てるため、外を指す宣言は
+  ビルドを失敗させ、それを載せたインストーラー成果物は出荷できません。
+  実行時は**二つの起動点**で再び検証されます —— 完了ページの確定と
+  ヘッドレス経路が、何かを起動する前に再確認するので、別の経路で
+  動いているシェルに届いた設定も拒否されます（フェイルクローズ、
+  黙って飛ばすことはありません）。絶対パス、Windows のドライブ接頭辞
+  （`C:…`）、UNC の先頭（`\\\\server\\share`、`//server/share`）は
+  どのホストでも拒否され、`..` は親ディレクトリへの遡りとして拒否
+  されます。マニフェストが名指しできるのは配送そのものが置いたもの
+  だけで、インタプリタやシステムのバイナリは決して対象になりません。
+- **`args`** —— **固定の引数ベクター**で、引数ごとに 1 要素です。そのまま
+  プロセスへ渡ります：シェルもコマンドライン文字列もなく、単語分割も環境
+  変数展開も shun による補間もありません。シェルは存在せず、起動はデコード済みの `argv`
+  を渡す `Command` そのものです。空白・引用符・`$(…)` を含む
+  引数は、そっくりそのまま 1 個の引数として届きます。
+- **`policy`** —— `with-app`（既定）は**アプリの起動と同時に**
+  コンパニオンを実行します：チェックあり → アプリ＋コンパニオン、
+  チェックなし → どちらも起動しません。ヘッドレス経路では起動しません
+  （アプリ起動を吊るす完了ページがありません）。`always` は配送が成功
+  するたびに、ヘッドレス経路と無人更新でも起動します。`never` はどこでも
+  無効化します。
+
+コンパニオンは **配送が成功するごとに一度** だけ、完了ページの確定時
+（`apply_finish_checked` → `finish_launch_targets` /
+`launch_finish_targets_checked`）に実行されます。アプリを先に起動し、
+続いてコンパニオンを起動し、どちらも切り離して起動します（待たないので、
+インストーラーはすぐ終了できます）。完了ページの起動判断は **一つだけ**
+で、コンパニオンのポリシーはそれに折り込まれます：`with-app` は
+チェックに従い、`always` / `never` はチェックとは独立に固定します。
+
+見つからないコンパニオンは、ペイロード内のパス（`bin/provision.exe`、
+決して隠されたステージング表記ではなく）を名指しするエラーで失敗し、
+実行ファイル欠落として分類されます —— アプリ起動が未配送の `main-exe`
+に対して報告するのと同じ `MissingExecutable` ファミリー、同じ
+「ファイルが見つからない」ガイドです。
+
+修復とアンインストールでは決して起動しません。修復は同じフォルダーの
+上に再度展開するだけで —— 再展開は新しいペアリングの時ではありません
+—— アンインストールの経路にはもう起動するものが残っていません。修復の
+後にブートストラップを再実行する必要がある製品は、自前のアプリから
+それを提供するか、`policy = "always"` を固定します —— ヘッドレス経路が
+配送のたびに尊重するスイッチです。
+
+プログラムが何をするかは完全にペイロードの領分です。shun は交換される
+認証情報を見ることも、プログラムがそれをどう扱うかを知ることもあり
+ません。
 
 ## ドライブルートの保護
 

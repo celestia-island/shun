@@ -39,6 +39,11 @@ root-dir-folder = "ShunDemo"              # 레거시 패딩 레인 전용(forbi
 # [package.metadata.shun.install.dir-rules.message-locales]  # 마법사 로케일별 재정의(일치가 message보다 우선)
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # 설치 후 payload 동봉 컴패니언을 한 번 실행(「설치 후 컴패니언 실행」 참조)
+exe = "bin/provision.exe"                     # payload 상대 실행 파일(절대 경로 불가, payload 밖 불가)
+args = ["setup", "--endpoint", "https://api.example.test"]  # 고정 argv, 인자마다 1개 항목, 셸을 거치지 않음
+policy = "with-app"                        # with-app (기본값: 앱 실행과 함께 실행) | always | never
+
 [[package.metadata.shun.install.verbs]]    # 우클릭 동사(탐색기 동사 / 데스크톱 액션)
 key = "open-data"                          # 안정적인 동사 id
 display = "Open data folder"               # 메뉴 텍스트
@@ -87,6 +92,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 | `payload` | path | — | 아티팩트로 패킹되는 디렉터리 |
 | `main-exe` | path | — | payload 상대 진입점(바로 가기 대상) |
 | `install` | table | 두 모두 켜짐 | `local` / `portable` 스위치, `portable-marker` 파일명, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 정책, `default-dir`(환경 변수가 전개되는 기본 위치 재정의), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root`(드라이브 루트 대상 거부, 기본 켜짐 — 드라이브 루트 보호 참조), `root-dir-folder`(옵트아웃한 패딩 레인에서 드라이브 루트 아래 깔리는 폴더, 기본은 제품명), `forbid-non-empty`(신규 설치에서 비어 있지 않은 대상 거부, 기본 켜짐), `non-empty-allowlist`(비어 있지 않음 거부가 무시하는 찌꺼기 파일명), `dir-rules`(선언적 설치 위치 규칙 — 「설치 위치 규칙」 참조) |
+| `install.post-install-launch` | table | 없음 | 설치 성공 후 payload 동봉 컴패니언을 한 번 실행: `exe`(payload 상대, 검증됨), `args`(고정 argv), `policy`(`with-app` / `always` / `never`) — 「설치 후 컴패니언 실행」 참조 |
 | `attachments` | 테이블 배열 | 없음 | 선택적 추가 리소스(에셋 팩): `key` / `title` / `dest` / `online.url`. 라이트 빌드는 설치 시 내려받기 |
 | `update` | table | 없음 | 업데이트 감시: `sources`(미러 기본 URL, 순서대로 탐색) + 첫 번째로 도달한 소스 아래에서 해석되는 `files` |
 | `webview2` | table | `skip` | Windows 런타임 전략 |
@@ -125,6 +131,67 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 `InstallContext::launch_after_install`이 false이거나 진입점이
 선언되지 않았으면 아무 일도 하지 않습니다. 선언된 진입점이 없으면
 평소처럼 `MissingEntry` 오류가 납니다.
+
+## 설치 후 컴패니언 실행
+
+앱 옆에 **한 번만 돌리는 부트스트랩** 을 동봉하는 제품이 있습니다 — 시스템
+브라우저를 열어 이 머신을 로그인시키는 게이트웨이 페어러, 활성화 도우미,
+첫 실행 이전 도구 등 — 앱이 쓸모 있으려면 그것이 한 번 실행되어야
+합니다. `install.post-install-launch`는 그 인계를 매니페스트에서
+선언합니다. shun이 아는 것은 *payload 안 어디에* 프로그램이 있는지, *어떤
+고정 인자*를 받는지, *언제 시작할지*뿐입니다.
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/provision.exe"
+args = ["setup", "--endpoint", "https://api.example.test"]
+policy = "with-app"
+```
+
+- **`exe`** — payload 상대 실행 파일을 설치 디렉터리에서 해석합니다.
+  선언은 **빌드 시점**에 검증됩니다: `shun build`가 `resolve_steps`를
+  통해 셸의 스탬프 컨테이너를 조립하므로, 밖을 가리키는 선언은 빌드를
+  실패시키고 그런 설치 관리자 산출물은 출하될 수 없습니다. 실행 시점에는
+  **두 실행 지점**에서 다시 검증됩니다 — 완료 페이지 확정과 헤드리스
+  경로가 무언가를 실행하기 전에 재확인하므로, 다른 경로로 실행 중인
+  셸에 도달한 설정도 거부됩니다(닫힌 실패, 조용히 건너뛰지 않음). 절대
+  경로, Windows 드라이브 접두사(`C:…`), UNC 접두사(`\\\\server\\share`,
+  `//server/share`)는 모든 호스트에서 거부되고, `..` 성분은 상위 디렉터리
+  이탈로 거부됩니다. 매니페스트는 배포 자체가 넣은 것만 지정할 수 있고,
+  인터프리터나 시스템 바이너리는 결코 대상이 아닙니다.
+- **`args`** — **고정 인자 벡터**로, 인자마다 1개 항목입니다. 그대로
+  프로세스에 전달됩니다: 셸도, 명령줄 문자열도, 단어 분할도, 변수 확장도,
+  shun의 보간도 없습니다. 셸 자체가 없으며, 실행은 이미 디코딩된 `argv`를
+  넘기는 `Command`일 뿐입니다. 공백·따옴표·`$(…)`가 들어간 인자도 정확히 하나의
+  인자로 도착합니다.
+- **`policy`** — `with-app`(기본)는 **앱 실행과 함께** 컴패니언을
+  실행합니다: 체크됨 → 앱 + 컴패니언, 체크 해제 → 둘 다 실행 안 함.
+  헤드리스 경로에서는 실행하지 않습니다(앱 실행을 걸 완료 페이지가
+  없습니다). `always`는 배포 성공 때마다, 헤드리스 경로와 무인 업데이트
+  에서도 실행합니다. `never`는 어디서도 해제합니다.
+
+컴패니언은 **배포가 성공할 때마다 한 번**, 완료 페이지를 확정할 때
+(`apply_finish_checked` → `finish_launch_targets` /
+`launch_finish_targets_checked`) 실행됩니다. 앱을 먼저, 그다음
+컴패니언을 둘 다 분리해서 띄웁니다(기다리지 않으므로 설치 관리자는 곧바로
+종료할 수 있습니다). 완료 페이지의 실행 결정은 **하나**이며, 컴패니언
+정책이 그 결정에 접혀 들어갑니다: `with-app`은 체크박스를 따르고,
+`always` / `never`는 체크박스와 무관하게 고정합니다.
+
+찾지 못한 컴패니언은 payload 경로(`bin/provision.exe`, 절대 숨은 스테이징
+표기가 아니라)를 이름으로 대는 오류로 실패하고 실행 파일 누락으로
+분류됩니다 — 앱 실행이 배포되지 않은 `main-exe`에 대해 보고하는 것과
+같은 `MissingExecutable` 계열, 같은 「파일을 찾을 수 없음」 안내입니다.
+
+복구와 제거에서는 절대 실행되지 않습니다. 복구는 같은 폴더 위에 다시
+풀어 놓을 뿐이며 — 다시 푸는 것은 새로운 페어링의 순간이 아닙니다 — 제거
+경로에는 실행할 것이 남아 있지 않습니다. 복구 후 부트스트랩을 다시
+실행해야 하는 제품은 자체 앱에서 그것을 제공하거나 `policy = "always"`를
+고정합니다 — 헤드리스 경로가 배포마다 존중하는 스위치입니다.
+
+프로그램이 무엇을 하는지는 전적으로 payload의 몫입니다. shun은 주고받은
+자격 증명을 보지 못하며 프로그램이 그것으로 무엇을 하는지도 알지
+못합니다.
 
 ## 드라이브 루트 보호
 

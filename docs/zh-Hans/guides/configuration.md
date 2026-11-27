@@ -48,6 +48,11 @@ root-dir-folder = "ShunDemo"               # 仅旧垫层通道生效（forbid-d
 # [package.metadata.shun.install.dir-rules.message-locales]  # 按向导语言覆盖（命中优先于 message）
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # 安装后运行一次载荷自带的伴随程序（见「安装后伴随启动」）
+exe = "bin/provision.exe"                     # 载荷相对的可执行文件（不得绝对、不得越出载荷）
+args = ["setup", "--endpoint", "https://api.example.test"]  # 固定 argv，一个元素一个参数，不经 shell
+policy = "with-app"                        # with-app（默认：随应用启动一并运行）| always | never
+
 [[package.metadata.shun.install.verbs]]    # 右键菜单动词（Explorer 动词 / Desktop Action）
 key = "open-data"                          # 稳定动词 id
 display = "打开数据目录"                    # 菜单文案
@@ -96,6 +101,7 @@ require-removable = true                   # 拒绝非可移动设备
 | `payload` | path | — | 打包进发行物的目录 |
 | `main-exe` | path | — | payload 内入口点（快捷方式目标） |
 | `install` | table | 双模式全开 | `local` / `portable` 开关、`portable-marker` 标记文件名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（环境变量展开的默认位置覆盖）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒绝裸盘符根目录目标；默认开启——见「根盘保护」）、`root-dir-folder`（退出拒绝后垫层通道里垫在裸盘符根目录下的文件夹，默认取产品名）、`forbid-non-empty`（全新安装拒绝非空目录；默认开启）、`non-empty-allowlist`（非空拒绝忽略的垃圾文件名）、`dir-rules`（声明式安装位置规则——见「安装位置规则」） |
+| `install.post-install-launch` | table | 无 | 安装成功后运行一次载荷自带的伴随程序：`exe`（载荷相对，已校验）、`args`（固定 argv）、`policy`（`with-app` / `always` / `never`）——见「安装后伴随启动」 |
 | `attachments` | 表格数组 | 无 | 可选附件资源（资产包）：`key` / `title` / `dest` / `online.url`；精简版在安装时下载 |
 | `update` | table | 无 | 更新监视：`sources`（镜像根 URL，按顺序探测）+ `files`，解析到第一个可达源之下 |
 | `webview2` | table | `skip` | Windows 运行时策略 |
@@ -128,6 +134,56 @@ require-removable = true                   # 拒绝非可移动设备
 `main-exe`（不等待，安装器进程随即可以退出）；当
 `InstallContext::launch_after_install` 解析为 false、或未声明入口点时，
 调用是空操作。入口点已声明但文件缺失时，照常返回 `MissingEntry` 错误。
+
+## 安装后伴随启动
+
+有些产品会在应用旁边附带一个**只需跑一次的引导程序**——通过系统浏览器
+让本机登录的网关配对器、激活助手、首启迁移工具——应用可用之前必须让
+它先跑一次。`install.post-install-launch` 在清单里声明这次交接；shun
+只知道程序**在载荷的哪里**、**收到哪些固定参数**、以及**什么时候启动**。
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/provision.exe"
+args = ["setup", "--endpoint", "https://api.example.test"]
+policy = "with-app"
+```
+
+- **`exe`**——载荷相对的可执行文件，在安装目录内解析。声明在**构建时**
+  校验：`shun build` 通过 `resolve_steps` 组装壳的 stamp 容器，因此越界
+  声明会让构建失败，任何安装包都无法携带它出厂。运行期在**两个启动点**
+  再校验一次：完成页的确认与无头通道都会在启动任何进程之前复查，所以
+  通过其他途径进入运行中壳的配置同样被拒绝（失败即拒绝，绝不静默跳过）。
+  绝对路径、Windows 盘符前缀（`C:…`）、UNC 前缀（`\\\\server\\share`、
+  `//server/share`）在任何宿主上都拒绝，含 `..` 的成分按上溯目录拒绝。
+  清单只能点名投放自身放进来的东西——绝不会是解释器或系统二进制。
+- **`args`**——**固定参数向量**，一个元素一个参数。它原样交给进程：
+  没有 shell、没有命令行字符串、没有分词、没有变量展开，shun 也不做
+  任何插值。根本不存在 shell：启动就是一次持有已解码 `argv` 的 `Command`。带空格、引号或 `$(…)` 的参数仍**恰好是一个**参数。
+- **`policy`**——`with-app`（默认）**随应用启动一并运行**：勾选完成页
+  的启动框 → 应用 + 伴随程序；取消勾选 → 两者都不启动；无头通道从不
+  启动它（没有完成页可以挂载应用启动）。`always` 在每次成功投递后
+  启动，无头通道与无人值守更新也一样。`never` 在任何通道都不启动。
+
+伴随程序**每次成功安装只跑一次**，在完成页确认时触发
+（`apply_finish_checked` → `finish_launch_targets` /
+`launch_finish_targets_checked`）：先启动应用，再启动伴随程序，都以游离
+方式启动（不等待，安装器随即可以退出）。完成页只有**一个**启动决定，
+伴随程序的策略折叠在其上：`with-app` 跟随勾选框，而 `always` /
+`never` 与勾选框无关地固定伴随程序。
+
+伙伴程序缺失时报错并点名它在载荷中的路径（`bin/provision.exe`，绝不
+暴露隐藏的暂存写法），并归类为「可执行文件缺失」——与应用启动对未投放
+的 `main-exe` 所报告的是同一个 `MissingExecutable` 家族、同一篇「文件
+缺失」指南。
+
+修复与卸载**永不**触发。修复只是在同一目录上重新解包——重新解包不是新
+的配对时刻——卸载路径上已经没有任何东西可启动。需要在修复后重新运行引
+导程序的产品，可从自己的应用里提供该入口，或固定 `policy = "always"`
+——无头通道每次投递都会尊重这个开关。
+
+程序本身做什么完全属于载荷；shun 从不接触它交换的凭据，也不会知道
+程序拿这些凭据做了什么。
 
 ## 根盘保护
 

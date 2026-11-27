@@ -39,6 +39,11 @@ root-dir-folder = "ShunDemo"              # solo el carril de acolchado heredado
 # [package.metadata.shun.install.dir-rules.message-locales]  # anulaciones por idioma del asistente (una coincidencia gana a message)
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # ejecuta un compañero del payload una vez tras instalar (ver «Ejecución posterior a la instalación»)
+exe = "bin/provision.exe"                     # ejecutable relativo al payload (nunca absoluto, nunca fuera del payload)
+args = ["setup", "--endpoint", "https://api.example.test"]  # argv fijo, un elemento por argumento, sin shell
+policy = "with-app"                        # with-app (por defecto: se ejecuta junto con el lanzamiento de la app) | always | never
+
 [[package.metadata.shun.install.verbs]]    # verbos del menú contextual (verbos del Explorador / acciones de escritorio)
 key = "open-data"                          # id estable del verbo
 display = "Open data folder"               # texto del menú
@@ -90,6 +95,7 @@ require-removable = true                   # rechazar dispositivos no extraíble
 | `payload` | path | — | Directorio empaquetado en los artefactos |
 | `main-exe` | path | — | Punto de entrada relativo al payload (destino del atajo) |
 | `install` | table | ambos modos | conmutadores `local` / `portable`, nombre del marcador `portable-marker`, políticas `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (anulación de la ubicación por defecto con expansión de variables de entorno), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (rechazar destinos en la raíz de unidad desnuda; activado por defecto — ver Protección contra la raíz de unidad), `root-dir-folder` (carpeta acolchada bajo una raíz de unidad desnuda en el carril de acolchado heredado, por defecto el nombre del producto), `forbid-non-empty` (rechazar destinos no vacíos en instalaciones nuevas; activado por defecto), `non-empty-allowlist` (nombres de basura que el veto ignora), `dir-rules` (reglas declarativas de ubicación de instalación — ver Reglas de ubicación de instalación) |
+| `install.post-install-launch` | tabla | ninguna | Ejecuta un compañero del payload una vez tras una instalación correcta: `exe` (relativo al payload, validado), `args` (argv fijo), `policy` (`with-app` / `always` / `never`) — ver «Ejecución posterior a la instalación» |
 | `attachments` | array de tablas | ninguno | recursos acompañantes opcionales (packs de assets): `key` / `title` / `dest` / `online.url`; las builds lite los descargan al instalar |
 | `update` | table | ninguna | vigilancia de actualizaciones: `sources` (URLs base espejo, sondeadas en orden) + `files` resueltos bajo el primer espejo alcanzable |
 | `webview2` | table | `skip` | estrategia de runtime de Windows |
@@ -131,6 +137,79 @@ justo después — y no hace nada cuando el
 `InstallContext::launch_after_install` resuelto es falso o no hay
 punto de entrada declarado. Un punto de entrada declarado pero
 ausente da el error `MissingEntry` habitual.
+
+## Ejecución posterior a la instalación
+
+Algunos productos traen junto a la aplicación un **arranque auxiliar** que
+debe ejecutarse una vez —un emparejador del gateway que inicia sesión en
+esta máquina a través del navegador del sistema, un ayudante de
+activación, un migrador de primer arranque— antes de que la app sea útil.
+`install.post-install-launch` declara ese traspaso en el manifiesto; shun
+solo sabe *dónde vive* el programa dentro del payload, *qué argumentos
+fijos* recibe y *cuándo arrancarlo*.
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/provision.exe"
+args = ["setup", "--endpoint", "https://api.example.test"]
+policy = "with-app"
+```
+
+- **`exe`** — ejecutable relativo al payload, resuelto dentro del
+  directorio de instalación. La declaración se valida en **tiempo de
+  compilación**: `shun build` arma el contenedor de sello de la carcasa a
+  través de `resolve_steps`, así que una declaración que se escapa hace
+  fallar la compilación y ningún artefacto de instalación puede salir con
+  ella. En tiempo de ejecución se valida otra vez en **los dos puntos de
+  lanzamiento**: la confirmación de la página de fin y el carril
+  silencioso la recomprueban antes de lanzar nada, de modo que una
+  configuración que haya llegado a una carcasa en ejecución por otra vía
+  también se rechaza (fallo cerrado, nunca una omisión silenciosa). Las
+  rutas absolutas, los prefijos de unidad de Windows (`C:…`) y los
+  prefijos UNC (`\\\\servidor\\recurso`, `//servidor/recurso`) se
+  rechazan en cualquier host, y los componentes `..` se rechazan como
+  recorrido ascendente. Un manifiesto solo puede nombrar algo que la
+  propia entrega puso ahí: nunca un intérprete ni un binario del sistema.
+- **`args`** — el **vector de argumentos fijo**, un elemento por
+  argumento. Se pasa al proceso tal cual: sin shell, sin cadena de
+  comandos, sin división de palabras, sin expansión de variables y sin
+  interpolación por parte de shun. Ni siquiera existe un shell: el
+  lanzamiento es un `Command` con un `argv` ya decodificado. Un argumento con espacios, comillas o
+  `$(…)` sigue siendo exactamente un argumento.
+- **`policy`** — `with-app` (por defecto) ejecuta el compañero **junto
+  con el lanzamiento de la app**: casilla marcada → app + compañero;
+  casilla desmarcada → ninguno de los dos; el carril silencioso nunca lo
+  lanza (no hay página de fin de la que colgar el lanzamiento de la app).
+  `always` lo lanza tras cada entrega correcta, también en el carril
+  silencioso y en las actualizaciones desatendidas. `never` lo desactiva
+  en todas partes.
+
+El compañero se ejecuta **una vez por entrega correcta**, al confirmar la
+página de fin (`apply_finish_checked` → `finish_launch_targets` /
+`launch_finish_targets_checked`): primero arranca la aplicación y después
+el compañero, ambos desprendidos (sin esperar, para que el instalador
+pueda salir enseguida). La página de fin tiene UNA sola decisión de
+lanzamiento, y la política del compañero se pliega sobre ella: `with-app`
+sigue la casilla, mientras que `always` / `never` fijan el compañero con
+independencia de ella.
+
+Un compañero ausente falla con un error que nombra su ruta en el payload
+(`bin/provision.exe`, nunca la ortografía oculta de preparación) y se
+clasifica como ejecutable ausente: la misma familia `MissingExecutable` y
+la misma guía de archivos ausentes que el lanzamiento de la aplicación
+notifica para un `main-exe` no entregado.
+
+La reparación y la desinstalación nunca lo disparan. Una reparación
+vuelve a extraer sobre la misma carpeta —una re-extracción no es un nuevo
+momento de emparejamiento— y el recorrido de desinstalación ya no tiene
+nada que lanzar. Un producto que necesita volver a ejecutar su arranque
+tras una reparación lo ofrece desde su propia aplicación, o fija
+`policy = "always"`, el interruptor que el carril silencioso respeta en
+cada entrega.
+
+Lo que hace el programa pertenece por entero al payload; shun nunca ve
+las credenciales que intercambia ni llega a saber qué hace el programa
+con ellas.
 
 ## Protección contra la raíz de unidad
 

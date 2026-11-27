@@ -63,6 +63,19 @@ Gotchas to normalize in the shun wrappers: Windows backslash paths are
 escape characters in duckscript arguments (pass forward-slash paths),
 and assignment is output-capture syntax (`x = cmd args`).
 
+Scripting stays the **escape hatch**, never the default path to "run the
+payload's own helper". The narrow, common case — start one payload-carried
+program once with a fixed argument vector after a successful install — is
+declarative and needs no script at all:
+`install.post-install-launch` (see configuration.md, *Post-install
+launch*) spawns a payload-relative executable with an argv that never
+touches a shell. Prefer it over a `post-install` hook that shells out:
+the declaration is validated against path escapes when `shun build`
+assembles the stamp container, is visible in the manifest, and runs on the
+same done-page launch decision as the app (its
+`policy = "with-app"` default means: app launched → companion launched,
+app not launched → neither, silent lane → not launched).
+
 ## Embedded Python — measured (probe run 2026-09)
 
 Everything below ran for real, twice: on a host CPython 3.13.5 and on a

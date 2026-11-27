@@ -1232,6 +1232,105 @@ pub fn launch(ctx: &InstallContext) -> Result<(), ShunError> {
     Ok(())
 }
 
+/// The user-facing name the launch surfaces report a companion under:
+/// its payload-relative path, `/`-separated (the manifest spelling).
+pub fn post_install_launch_name(declared: &crate::config::PostInstallLaunchConfig) -> String {
+    declared
+        .exe
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string()
+}
+
+/// Launches the declared post-install companion
+/// (`install.post-install-launch`): the payload-relative executable with
+/// its FIXED argument vector, detached, once the delivery succeeded.
+///
+/// The spawn path is a plain `Command` over an already-decoded argv —
+/// no shell, no command-line string, no interpolation — so an argument
+/// carrying quotes or shell metacharacters stays exactly one argument.
+/// The executable is joined under the install directory only (the
+/// declaration is validated by
+/// [`crate::config::PostInstallLaunchConfig::relative_exe`]; a poisoned
+/// one is refused here again rather than trusted). A declaration whose
+/// executable is not on disk is reported by name
+/// ([`post_install_launch_name`]) instead of the raw joined path, so a
+/// user-visible failure never prints the hidden `.shun-partial` staging
+/// spelling.
+pub fn launch_post_install(
+    ctx: &InstallContext,
+    declared: &crate::config::PostInstallLaunchConfig,
+) -> Result<(), ShunError> {
+    let relative = declared.relative_exe().map_err(ShunError::Config)?;
+    let exe = ctx.install_dir.join(relative);
+    if !exe.is_file() {
+        return Err(ShunError::Config(format!(
+            "post-install-launch executable `{}` is missing from the install directory",
+            post_install_launch_name(declared)
+        )));
+    }
+    spawn_detached_retrying(|| {
+        std::process::Command::new(&exe)
+            .args(&declared.args)
+            .spawn()
+    })
+}
+
+/// How long [`spawn_detached_retrying`] keeps retrying a busy image.
+const BUSY_SPAWN_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+/// Poll cadence inside [`BUSY_SPAWN_WINDOW`].
+const BUSY_SPAWN_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Spawns `launch`, retrying briefly while the image cannot be loaded
+/// yet.
+///
+/// The companion lives in the directory the flow JUST extracted, and the
+/// extractor may still hold it open for a moment: `exec` on such a file
+/// fails with `ETXTBSY` on POSIX, and Windows reports `ERROR_SHARING_VIOLATION`
+/// (the writer not yet flushed to the image) — a detached spawn that
+/// simply gave up there would silently skip the product's whole
+/// bootstrap. The retry is bounded so a genuinely broken file still
+/// fails; any other error (a policy block, a missing loader) returns
+/// immediately and keeps its classification.
+fn spawn_detached_retrying(
+    launch: impl Fn() -> std::io::Result<std::process::Child>,
+) -> Result<(), ShunError> {
+    let deadline = std::time::Instant::now() + BUSY_SPAWN_WINDOW;
+    loop {
+        match launch() {
+            Ok(_child) => return Ok(()),
+            Err(error) if is_image_busy(&error) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(ShunError::Io(error));
+                }
+                std::thread::sleep(BUSY_SPAWN_POLL);
+            }
+            Err(error) => return Err(ShunError::Io(error)),
+        }
+    }
+}
+
+/// Whether `error` says "the image is still held open", the transient
+/// state a just-written executable sits in.
+fn is_image_busy(error: &std::io::Error) -> bool {
+    // ETXTBSY is 26 on Linux and 26 on Darwin.
+    #[cfg(unix)]
+    {
+        if error.raw_os_error() == Some(26) {
+            return true;
+        }
+    }
+    // ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33).
+    #[cfg(windows)]
+    {
+        if matches!(error.raw_os_error(), Some(32) | Some(33)) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Removes directories under `root` deepest-first (payload subdirectories
 /// whose files the manifest pass just deleted), then `root` itself.
 /// Failures are ignored — a non-empty directory simply stays.

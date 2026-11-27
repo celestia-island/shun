@@ -68,6 +68,10 @@ tauri-plugin-opener = { version = "^2" }
 ureq = "^2"
 memmap2 = "0.9"
 
+[dev-dependencies]
+# The entry-point tests stage a real payload tree and pack it.
+tempfile = "^3"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

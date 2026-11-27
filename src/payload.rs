@@ -65,6 +65,9 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
 
     let mut entries: Vec<PayloadEntry> = Vec::with_capacity(files.len());
     let mut contents: HashMap<PathBuf, Vec<u8>> = HashMap::with_capacity(files.len());
+    // Per-entry Unix mode, carried for the executable bit only: tar's
+    // `set_mode` decides what the extracted file can run as on POSIX.
+    let mut modes: HashMap<PathBuf, u32> = HashMap::with_capacity(files.len());
     for path in &files {
         let relative = path
             .strip_prefix(source_dir)
@@ -80,6 +83,7 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
             size: bytes.len() as u64,
             sha256: sha256_hex(&bytes),
         });
+        modes.insert(normalized.clone(), source_exec_mode(path));
         contents.insert(normalized, bytes);
     }
 
@@ -98,7 +102,7 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
             let bytes = &contents[&entry.path];
             let mut header = tar::Header::new_gnu();
             header.set_size(entry.size);
-            header.set_mode(0o644);
+            header.set_mode(modes.get(&entry.path).copied().unwrap_or(0o644));
             header.set_cksum();
             builder.append_data(
                 &mut header,
@@ -110,6 +114,25 @@ pub fn pack_directory(source_dir: &Path) -> Result<Vec<u8>, ShunError> {
     }
 
     encode_tar(tar_bytes)
+}
+
+/// The Unix mode a payload entry is packed with: the source file's
+/// permission bits (minus the setuid/setgid/sticky trio, which an
+/// installer must never reproduce), or `0o644` when the source cannot
+/// be read — notably a Windows build host, whose files have no Unix
+/// mode, and whose payload therefore still packs as plain data.
+#[cfg(unix)]
+fn source_exec_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|meta| meta.permissions().mode() & 0o777)
+        .unwrap_or(0o644)
+}
+
+/// Windows has no Unix permission bits: every entry packs as `0o644`.
+#[cfg(not(unix))]
+fn source_exec_mode(_path: &Path) -> u32 {
+    0o644
 }
 
 /// Compress a packed tar with zstd.
@@ -170,6 +193,9 @@ pub trait PayloadSource {
 pub struct ArchivePayload {
     entries: Vec<PayloadEntry>,
     files: HashMap<PathBuf, Vec<u8>>,
+    /// Per-entry Unix mode from the archive headers (the executable bit
+    /// the extractor restores); absent entries fall back to `0o644`.
+    modes: HashMap<PathBuf, u32>,
 }
 
 /// A read-only cursor over the archive that reports consumption as a
@@ -199,6 +225,11 @@ impl std::io::Read for CountingReader<'_> {
 /// payload (or a poisoned manifest) write or delete outside the install
 /// directory. Shared by the extract paths, the online variant, and the
 /// uninstall sweep (wizard's stale-file cleanup uses it too).
+///
+/// The post-install companion launch
+/// (`install.post-install-launch`) deliberately does NOT share this
+/// predicate: its declaration is authored config, not archive content,
+/// so it uses the stricter [`path_anchors_outside`] instead.
 pub(crate) fn entry_path_is_unsafe(path: &Path) -> bool {
     path.components().any(|c| {
         matches!(
@@ -210,6 +241,59 @@ pub(crate) fn entry_path_is_unsafe(path: &Path) -> bool {
     })
 }
 
+/// Whether a path spells an anchor OUTSIDE the payload on any host: an
+/// absolute path, a drive prefix (`C:\…`, `C:tool`, `C:/…`), or a UNC
+/// / device lead-in (`\\server\share`, `//server/share`).
+///
+/// Stricter than [`entry_path_is_unsafe`] because `Path::is_absolute`
+/// and friends answer for the CURRENT host only: a `C:\…` string is an
+/// ordinary relative FILE NAME on POSIX and would sail through a
+/// payload-relative check there, while the same manifest ships to every
+/// platform. The declarations that consume it
+/// (`install.post-install-launch`) are authored configuration, so the
+/// permissive reading is the wrong one — refuse the spelling everywhere.
+pub(crate) fn path_anchors_outside(path: &Path) -> bool {
+    if path.is_absolute() || path.has_root() {
+        return true;
+    }
+    let raw = path.to_string_lossy();
+    let bytes = raw.as_bytes();
+    // A drive prefix: one letter then `:`.
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    // A UNC / device lead-in: the separator pair Windows accepts.
+    let unc = raw.starts_with("\\\\") || raw.starts_with("//");
+    drive || unc
+}
+
+/// Applies a packed entry's permission bits to the extracted file.
+///
+/// A packed POSIX entry carries its source permission bits in the archive
+/// (see [`source_exec_mode`]); the payload's own data files are `0o644`
+/// and stay `0o644`, but a program the product intends to RUN — a
+/// launcher, a first-run setup helper — must land executable, or the
+/// delivery produces a file nobody can start (the post-install handoff's
+/// whole premise). Windows hosts have no mode bits to set and skip this.
+///
+/// The mode is applied VERBATIM: the packer already normalized it (the
+/// setuid/setgid/sticky trio is stripped there, and a non-executable
+/// source stays non-executable), so the extract lane needs no second
+/// opinion — an `| 0o111` here would be unreachable guard code whose loss
+/// no test could observe.
+#[cfg(unix)]
+fn apply_packed_mode(target: &Path, mode: Option<u32>) {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(mode) = mode else { return };
+    if let Ok(metadata) = std::fs::metadata(target) {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(mode & 0o777);
+        let _ = std::fs::set_permissions(target, permissions);
+    }
+}
+
+/// Windows: mode bits are not a thing here.
+#[cfg(not(unix))]
+fn apply_packed_mode(_target: &Path, _mode: Option<u32>) {}
+
 impl ArchivePayload {
     /// An empty archive — the placeholder a UI holds before its init
     /// worker delivers the decoded one (the splash phase).
@@ -217,6 +301,7 @@ impl ArchivePayload {
         Self {
             entries: Vec::new(),
             files: HashMap::new(),
+            modes: HashMap::new(),
         }
     }
 
@@ -246,9 +331,11 @@ impl ArchivePayload {
 
         let mut manifest: Option<Vec<PayloadEntry>> = None;
         let mut files: HashMap<PathBuf, Vec<u8>> = HashMap::new();
+        let mut modes: HashMap<PathBuf, u32> = HashMap::new();
         for entry in archive_reader.entries()? {
             let mut entry = entry?;
             let path = entry.path()?.to_path_buf();
+            let mode = entry.header().mode().ok();
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(&mut entry, &mut bytes)?;
             if path == Path::new(MANIFEST_PATH) {
@@ -257,13 +344,20 @@ impl ArchivePayload {
                         .map_err(|e| ShunError::Config(format!("manifest parse: {e}")))?,
                 );
             } else {
+                if let Some(mode) = mode {
+                    modes.insert(path.clone(), mode);
+                }
                 files.insert(path, bytes);
             }
         }
 
         let entries =
             manifest.ok_or_else(|| ShunError::MissingEntry(PathBuf::from(MANIFEST_PATH)))?;
-        Ok(Self { entries, files })
+        Ok(Self {
+            entries,
+            files,
+            modes,
+        })
     }
 
     /// The carried bytes of one archive path, pre-extraction — the
@@ -361,6 +455,7 @@ impl ArchivePayload {
                 std::fs::create_dir_all(parent)?;
             }
             replace_file(&target, bytes)?;
+            apply_packed_mode(&target, self.modes.get(&entry.path).copied());
         }
 
         *done += entry.size;
@@ -613,5 +708,110 @@ mod replace_file_tests {
         let target = dir.join("fresh.exe");
         replace_file(&target, b"first image").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"first image");
+    }
+}
+
+#[cfg(test)]
+mod path_anchor_tests {
+    use super::*;
+
+    /// The strict anchor reads the SPELLING, not the host: a Windows drive
+    /// prefix or a UNC lead-in is refused on POSIX too (where `Path`
+    /// would read both as ordinary relative names) — the declaration
+    /// ships to every platform, so the permissive reading is the wrong
+    /// one.
+    #[test]
+    fn foreign_anchors_are_refused_on_every_host() {
+        for refused in [
+            "/bin/sh",
+            "/usr/bin/env",
+            r"C:\Windows\System32\cmd.exe",
+            "C:/Windows/System32/cmd.exe",
+            "C:provision.exe",
+            r"\\server\share\provision.exe",
+            "//server/share/provision.exe",
+        ] {
+            assert!(
+                path_anchors_outside(Path::new(refused)),
+                "{refused:?} anchors outside the payload"
+            );
+        }
+        for relative in [
+            "bin/provision.exe",
+            "tool",
+            "./bin/provision",
+            "a/b/c",
+            "...",
+        ] {
+            assert!(
+                !path_anchors_outside(Path::new(relative)),
+                "{relative:?} stays inside the payload"
+            );
+        }
+        // The traversal component stays the OTHER guard's job.
+        assert!(!path_anchors_outside(Path::new("bin/../../provision")));
+        assert!(entry_path_is_unsafe(Path::new("bin/../../provision")));
+    }
+}
+
+#[cfg(test)]
+mod executable_mode_tests {
+    use super::*;
+
+    /// A payload file the SOURCE marks executable must land executable
+    /// after pack → extract: the post-install handoff's whole premise is
+    /// a program the delivery itself put there and can start. Data files
+    /// (no execute bit) stay plain, and a setuid/setgid/sticky source
+    /// never reproduces them.
+    #[cfg(unix)]
+    #[test]
+    fn a_packed_executable_stays_executable_after_extraction() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let stage = tempfile::tempdir().unwrap();
+        let source = stage.path().join("src");
+        std::fs::create_dir_all(source.join("bin")).unwrap();
+        let program = source.join("bin").join("companion");
+        std::fs::write(&program, b"#!/bin/sh\necho pair\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let data = source.join("readme.txt");
+        std::fs::write(&data, b"plain data").unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let archive = pack_directory(&source).unwrap();
+        let payload = ArchivePayload::from_bytes(&archive).unwrap();
+        let dest = stage.path().join("out");
+        payload.extract(&dest, &mut |_| {}).unwrap();
+
+        let packed = std::fs::metadata(dest.join("bin").join("companion")).unwrap();
+        assert_eq!(
+            packed.mode() & 0o777,
+            0o755,
+            "the packed executable bit survives extraction"
+        );
+        let plain = std::fs::metadata(dest.join("readme.txt")).unwrap();
+        assert_eq!(plain.mode() & 0o111, 0, "data files stay non-executable");
+        assert_eq!(
+            plain.mode() & 0o777,
+            0o644,
+            "the packed mode is applied verbatim — no extractor-side promotion"
+        );
+
+        // A setuid source packs its plain permission bits only — an
+        // installer must never deliver a privileged image.
+        let privileged = source.join("bin").join("helper");
+        std::fs::write(&privileged, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&privileged, std::fs::Permissions::from_mode(0o4755)).unwrap();
+        let archive = pack_directory(&source).unwrap();
+        let payload = ArchivePayload::from_bytes(&archive).unwrap();
+        let dest = stage.path().join("out2");
+        payload.extract(&dest, &mut |_| {}).unwrap();
+        let helper = std::fs::metadata(dest.join("bin").join("helper")).unwrap();
+        assert_eq!(
+            helper.mode() & 0o7000,
+            0,
+            "setuid/setgid/sticky bits are never reproduced"
+        );
+        assert_eq!(helper.mode() & 0o111, 0o111, "the execute bit still lands");
     }
 }
