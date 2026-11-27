@@ -5,6 +5,9 @@ allowBuilds:
 # this exclude list unless minimumReleaseAge itself is set (frontend-pnpm).
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
+  # Same-day pickup (2026-11-27): pinned picker search heads + rows layout
+  # + unified list motion, hikari#1585 → 0.55.499. Prune once >24h old.
+  - '@celestia-island/hikari@0.55.499'
   # 0.55.241 same-day pickup: the shared lucide number stepper column and
   # everything since 0.55.194 (family contract sweeps) — shun's PathField
   # composes HkInput, so the whole input surface rides this bump.
