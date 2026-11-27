@@ -67,6 +67,7 @@ fn setup_args() -> Vec<&'static str> {
 /// folded through the manifest policy: `with-app` runs the companion
 /// exactly when the app runs (a cleared box keeps both closed), `always`
 /// pins it on, `never` keeps it off.
+/// MUT:shun-P3 — folding `with-app` onto `always` turns this test red.
 #[test]
 fn the_companion_policy_folds_onto_the_single_launch_answer() {
     // No declaration: the app launch keeps its answer, the companion
@@ -101,6 +102,7 @@ fn the_companion_policy_folds_onto_the_single_launch_answer() {
 /// keeps the companion closed (it is the bootstrap FOR the app, not a
 /// separate feature), while `always` still starts it — the bootstrap is
 /// what makes the app useful on its first start.
+/// MUT:shun-P3 MUT:shun-P5 — each wrong policy answer turns this test red.
 #[test]
 fn a_with_app_companion_rides_the_app_box() {
     let always = config_with(Some(declared(
@@ -139,6 +141,7 @@ fn a_with_app_companion_rides_the_app_box() {
 /// exact function the web and egui faces call, and must be rejected with
 /// a classified failure BEFORE any launch: the executable never starts
 /// and the companion record never appears.
+/// MUT:shun-P4 — swallowing the done-page re-check turns this test red.
 #[test]
 fn the_done_page_refuses_an_escaping_declaration_at_startup() {
     use shun::failure::{FinishFailure, FinishStage};
@@ -270,8 +273,8 @@ fn wait_for_lines(path: &Path, expected: usize) -> Vec<String> {
     panic!("the companion never wrote {expected} lines (got {text:?})");
 }
 
-/// A declaration whose executable is missing fails, and the message
-/// names the payload-relative form — never the hidden `.shun-partial`
+/// A declaration whose executable is missing fails, and the message names
+/// the payload-relative form rather than the hidden `.shun-partial`
 /// staging path the install directory spells.
 #[test]
 fn a_missing_companion_fails_by_its_payload_name() {
@@ -305,6 +308,8 @@ fn a_missing_companion_fails_by_its_payload_name() {
 /// The executable is joined strictly under the install directory — a
 /// traversal or absolute declaration is refused before the spawn, so a
 /// poisoned config can never run a system binary through the handoff.
+/// MUT:shun-L1 — bypassing the launch-point `relative_exe()` guard turns
+/// this test red (`/bin/sh must be refused`).
 #[test]
 fn an_escaping_companion_is_refused_before_any_spawn() {
     let dir = tempfile::tempdir().unwrap();
@@ -391,7 +396,7 @@ fn a_missing_companion_classifies_as_missing_executable() {
     let install_dir = dir.path().join("app");
     std::fs::create_dir_all(&install_dir).unwrap();
     // The app entry point EXISTS (the app launch succeeds and stays out
-    // of the way); the companion was never delivered.
+    // of the way); the companion was not delivered.
     std::fs::create_dir_all(install_dir.join("bin")).unwrap();
     std::fs::write(install_dir.join("bin").join("shun-demo.exe"), b"MZ").unwrap();
 
