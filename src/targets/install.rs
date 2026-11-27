@@ -1232,6 +1232,51 @@ pub fn launch(ctx: &InstallContext) -> Result<(), ShunError> {
     Ok(())
 }
 
+/// The user-facing name the launch surfaces report a companion under:
+/// its payload-relative path, `/`-separated (the manifest spelling).
+pub fn post_install_launch_name(declared: &crate::config::PostInstallLaunchConfig) -> String {
+    declared
+        .exe
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string()
+}
+
+/// Launches the declared post-install companion
+/// (`install.post-install-launch`): the payload-relative executable with
+/// its FIXED argument vector, detached, once the delivery succeeded.
+///
+/// The spawn path is a plain `Command` over an already-decoded argv —
+/// no shell, no command-line string, no interpolation — so an argument
+/// carrying quotes or shell metacharacters stays exactly one argument.
+/// The executable is joined under the install directory only (the
+/// declaration is validated by
+/// [`crate::config::PostInstallLaunchConfig::relative_exe`]; a poisoned
+/// one is refused here again rather than trusted). A declaration whose
+/// executable is not on disk is reported by name
+/// ([`post_install_launch_name`]) instead of the raw joined path, so a
+/// user-visible failure never prints the hidden `.shun-partial` staging
+/// spelling.
+pub fn launch_post_install(
+    ctx: &InstallContext,
+    declared: &crate::config::PostInstallLaunchConfig,
+) -> Result<(), ShunError> {
+    let relative = declared.relative_exe().map_err(ShunError::Config)?;
+    let exe = ctx.install_dir.join(relative);
+    if !exe.is_file() {
+        return Err(ShunError::Config(format!(
+            "post-install-launch executable `{}` is missing from the install directory",
+            post_install_launch_name(declared)
+        )));
+    }
+    std::process::Command::new(&exe)
+        .args(&declared.args)
+        .spawn()
+        .map_err(ShunError::Io)?;
+    Ok(())
+}
+
 /// Removes directories under `root` deepest-first (payload subdirectories
 /// whose files the manifest pass just deleted), then `root` itself.
 /// Failures are ignored — a non-empty directory simply stays.

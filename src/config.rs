@@ -561,6 +561,26 @@ pub enum Webview2Strategy {
 }
 
 impl ShunConfig {
+    /// The declared post-install companion launch
+    /// (`install.post-install-launch`), validated: `None` when the
+    /// manifest declares none, an error when the declaration could
+    /// escape the payload or carries nothing to launch. The delivery
+    /// lanes validate before the install runs, so a broken declaration
+    /// fails loud instead of silently skipping the bootstrap.
+    pub fn post_install_launch(&self) -> Result<Option<&PostInstallLaunchConfig>, String> {
+        let declared = self.targets.iter().find_map(|target| match target {
+            TargetConfig::Install(install) => install.post_install_launch.as_ref(),
+            TargetConfig::Flash(_) => None,
+        });
+        match declared {
+            Some(launch) => {
+                launch.relative_exe()?;
+                Ok(Some(launch))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Whether the shell may silently run a carried Evergreen installer
     /// on a runtime-less machine — `evergreen-installer` with
     /// `silent-install` not disabled (default on); every other strategy
@@ -687,6 +707,16 @@ pub struct InstallConfig {
     #[serde(default)]
     pub launch_after_install: ShortcutPolicy,
 
+    /// The launch-after-install policy for a payload-carried companion
+    /// program instead of `main-exe` (see [`PostInstallLaunchConfig`]):
+    /// the installed product's own bootstrap — a gateway pairer, an
+    /// activation helper — that has to run once after the delivery so
+    /// the app works on its first start. `ask` (the default) consults
+    /// the done-page answer like `launch-after-install`; the headless
+    /// lane never launches it unless the policy is pinned `always`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_install_launch: Option<PostInstallLaunchConfig>,
+
     /// Overrides the wizard's default install location (the first
     /// location candidate and the headless fallback, replacing the
     /// `%LOCALAPPDATA%\<product>` convention). Environment variables
@@ -791,6 +821,7 @@ impl Default for InstallConfig {
             desktop_shortcut: DesktopShortcutPolicy::Ask,
             start_menu_shortcut: DesktopShortcutPolicy::Always,
             launch_after_install: ShortcutPolicy::default(),
+            post_install_launch: None,
             default_dir: None,
             scope: ScopePolicy::User,
             verbs: Vec::new(),
@@ -804,6 +835,99 @@ impl Default for InstallConfig {
             dir_rules: Vec::new(),
         }
     }
+}
+
+/// The post-install launch of a payload-carried companion program
+/// (`install.post-install-launch`): a fixed relative executable plus a
+/// FIXED argv — no command line, no shell, no interpolation — that the
+/// delivery flow runs once after a successful install. The program is
+/// whatever the payload ships (a gateway pairer that opens the system
+/// browser for its own sign-in flow, an activation helper, a first-run
+/// migrator); shun only knows where it lives inside the payload, what
+/// to pass it, and whether to ask first.
+///
+/// The executable resolves strictly inside the install directory (see
+/// [`PostInstallLaunchConfig::relative_exe`]): no absolute paths, no
+/// drive or UNC prefixes, no `..` components. A manifest may only name
+/// something the delivery itself put there, never an interpreter or a
+/// system binary. The arguments are passed to the process verbatim —
+/// `argv` is never assembled into a command line and never reaches a
+/// shell — so a value quoting metacharacters is one argument, not code.
+///
+/// The launch fires once per successful delivery and only from the
+/// done-page finish (interactive wizard or a pinned `always` headless
+/// run). Repair and uninstall never fire it: a re-extracted install is
+/// not a pairing moment, and the removal path has nothing to launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct PostInstallLaunchConfig {
+    /// Payload-relative executable the delivery launches (resolved
+    /// inside the install directory, e.g. `bin/evernight.exe`).
+    pub exe: PathBuf,
+
+    /// The fixed argument vector, one element per argument (no
+    /// quoting, no splitting, no variable expansion by shun:
+    /// `["pair", "--gateway", "https://gateway.example.world"]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+
+    /// Whether to launch: `ask` (the default) follows the done-page
+    /// answer, `always` pins it, `never` opts out. The headless lane
+    /// only ever launches under `always` — an unattended update must
+    /// not pop a browser nobody asked for.
+    #[serde(default)]
+    pub policy: PostInstallLaunchPolicy,
+}
+
+impl PostInstallLaunchConfig {
+    /// The executable path relative to the install directory, or an
+    /// error naming the offending shape when the declaration could
+    /// escape the payload: an absolute path, a drive prefix, or a `..`
+    /// component. Empty declarations (`exe = ""`) are refused too —
+    /// there is nothing to launch.
+    pub fn relative_exe(&self) -> Result<&Path, String> {
+        let path = self.exe.as_path();
+        if path.as_os_str().is_empty() {
+            return Err("post-install-launch `exe` is empty".into());
+        }
+        if crate::payload::path_anchors_outside(path) {
+            return Err(format!(
+                "post-install-launch `exe` must be relative to the payload: {}",
+                path.display()
+            ));
+        }
+        if crate::payload::entry_path_is_unsafe(path) {
+            return Err(format!(
+                "post-install-launch `exe` escapes the install directory: {}",
+                path.display()
+            ));
+        }
+        Ok(path)
+    }
+
+    /// Whether this declaration launches for a delivery whose done-page
+    /// answer is `answer` (the wizard checkbox / the pinned policy).
+    pub fn launches(&self, answer: bool) -> bool {
+        match self.policy {
+            PostInstallLaunchPolicy::Always => true,
+            PostInstallLaunchPolicy::Never => false,
+            PostInstallLaunchPolicy::Ask => answer,
+        }
+    }
+}
+
+/// Who decides whether the post-install companion launches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PostInstallLaunchPolicy {
+    /// The done-page answer (the default — same box as
+    /// `launch-after-install`).
+    #[default]
+    Ask,
+    /// Always launch it after a successful delivery.
+    Always,
+    /// Never launch it.
+    Never,
 }
 
 /// One declarative install-location rule ([`InstallConfig::dir_rules`]):
@@ -3125,5 +3249,162 @@ url = "https://example.test/ShunDemo.shun"
                 "the kebab wire name is the contract"
             );
         }
+    }
+
+    /// `install.post-install-launch` — the chest/evernight shape: a
+    /// payload-relative pairer executed with a fixed argv, riding the
+    /// done page's answer. The wire names are kebab-case (the manifest
+    /// spelling every product writes) and the argv order is preserved
+    /// verbatim.
+    #[test]
+    fn post_install_launch_parses_the_payload_relative_executable_and_argv() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "shun-chest"
+version = "1.0.0"
+
+[package.metadata.shun.install]
+post-install-launch = { exe = "bin/evernight.exe", args = ["pair", "--gateway", "https://gateway.example.world"], policy = "ask" }
+"#,
+        )
+        .unwrap();
+
+        let config = ShunConfig::from_cargo_manifest(&manifest).unwrap();
+        let declared = config
+            .post_install_launch()
+            .expect("a well-formed declaration validates")
+            .expect("the declaration is present");
+        assert_eq!(declared.exe, PathBuf::from("bin/evernight.exe"));
+        assert_eq!(
+            declared.args,
+            vec![
+                "pair".to_string(),
+                "--gateway".to_string(),
+                "https://gateway.example.world".to_string()
+            ],
+            "argv order and spelling stay verbatim"
+        );
+        assert_eq!(declared.policy, PostInstallLaunchPolicy::Ask);
+        // `ask` follows the done-page answer; the other policies pin.
+        assert!(!declared.launches(false));
+        assert!(declared.launches(true));
+
+        // A JSON round-trip keeps the kebab wire names (the shell embeds
+        // the serialized config) and refuses an unknown field.
+        let json = serde_json::to_value(&config).unwrap();
+        let table = &json["targets"][0]["post-install-launch"];
+        assert_eq!(table["exe"], "bin/evernight.exe");
+        assert_eq!(table["args"][1], "--gateway");
+        assert_eq!(table["policy"], "ask");
+        let mut poisoned = table.clone();
+        poisoned["shell"] = serde_json::json!("cmd /c calc");
+        let mut tampered = json.clone();
+        tampered["targets"][0]["post-install-launch"] = poisoned;
+        assert!(
+            serde_json::from_value::<ShunConfig>(tampered).is_err(),
+            "the table carries no shell/command field at all"
+        );
+    }
+
+    /// The policy matrix of `install.post-install-launch`, plus the
+    /// omissions: no declaration launches nothing, and a declaration
+    /// without `args`/`policy` defaults to an empty argv answered by the
+    /// done page.
+    #[test]
+    fn post_install_launch_policies_resolve_and_defaults_stay_opt_in() {
+        let declared = PostInstallLaunchConfig {
+            exe: PathBuf::from("bin/pairer.exe"),
+            args: vec!["pair".into()],
+            policy: PostInstallLaunchPolicy::Always,
+        };
+        assert!(declared.launches(false), "always wins over the answer");
+        let never = PostInstallLaunchConfig {
+            policy: PostInstallLaunchPolicy::Never,
+            ..declared.clone()
+        };
+        assert!(!never.launches(true), "never wins over the answer");
+
+        let dir = tempfile::tempdir().unwrap();
+        let minimal = dir.path().join("shun.toml");
+        std::fs::write(
+            &minimal,
+            "product = \"Minimal\"\n\n[install]\npost-install-launch = { exe = \"bin/pairer.exe\" }\n",
+        )
+        .unwrap();
+        let config = ShunConfig::from_path(&minimal).unwrap();
+        let bare = config
+            .post_install_launch()
+            .unwrap()
+            .expect("the declaration parses");
+        assert!(bare.args.is_empty(), "no args declared: an empty argv");
+        assert_eq!(
+            bare.policy,
+            PostInstallLaunchPolicy::Ask,
+            "the default policy is the done-page question"
+        );
+
+        // No declaration at all: nothing to launch, no error.
+        let plain = dir.path().join("plain.toml");
+        std::fs::write(&plain, "product = \"Plain\"\n").unwrap();
+        let config = ShunConfig::from_path(&plain).unwrap();
+        assert!(config.post_install_launch().unwrap().is_none());
+    }
+
+    /// A declaration that could reach OUTSIDE the payload fails loudly
+    /// before the install runs: absolute paths (POSIX and Windows drive /
+    /// UNC spellings), `..` traversal, drive-relative prefixes, and an
+    /// empty executable are all refused; plain payload-relative names
+    /// pass.
+    #[test]
+    fn post_install_launch_refuses_paths_outside_the_payload() {
+        // Build the declaration first: the resolved path borrows it.
+        let checks = |exe: &str| {
+            let declaration = PostInstallLaunchConfig {
+                exe: PathBuf::from(exe),
+                args: Vec::new(),
+                policy: PostInstallLaunchPolicy::Ask,
+            };
+            let verdict = declaration.relative_exe().map(|path| path.to_path_buf());
+            (declaration, verdict)
+        };
+        let check = |exe: &str| checks(exe).1;
+        for refused in [
+            "/bin/sh",
+            "/usr/bin/env",
+            r"C:\Windows\System32\cmd.exe",
+            r"\\server\share\pairer.exe",
+            "../outside/pairer.exe",
+            "bin/../../pairer.exe",
+            "",
+        ] {
+            assert!(
+                check(refused).is_err(),
+                "{refused:?} must not resolve inside the install directory"
+            );
+        }
+        assert_eq!(
+            check("bin/evernight.exe").unwrap(),
+            Path::new("bin/evernight.exe")
+        );
+        assert_eq!(check("pair").unwrap(), Path::new("pair"));
+
+        // The manifest-level accessor surfaces the same refusal, so a
+        // delivery lane validates before spawning anything.
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("shun.toml");
+        std::fs::write(
+            &manifest,
+            "product = \"Escaping\"\n\n[install]\npost-install-launch = { exe = \"../../pairer\" }\n",
+        )
+        .unwrap();
+        let config = ShunConfig::from_path(&manifest).unwrap();
+        let err = config
+            .post_install_launch()
+            .expect_err("a traversing executable is a configuration error");
+        assert!(err.contains("escapes"), "{err}");
     }
 }

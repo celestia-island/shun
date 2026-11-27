@@ -39,6 +39,11 @@ root-dir-folder = "ShunDemo"              # solo el carril de acolchado heredado
 # [package.metadata.shun.install.dir-rules.message-locales]  # anulaciones por idioma del asistente (una coincidencia gana a message)
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # ejecuta un compañero del payload una vez tras instalar (ver «Ejecución posterior a la instalación»)
+exe = "bin/pairer.exe"                     # ejecutable relativo al payload (nunca absoluto, nunca fuera del payload)
+args = ["pair", "--gateway", "https://gateway.example.world"]  # argv fijo, un elemento por argumento, sin shell
+policy = "ask"                             # always | never | ask (por defecto: la respuesta de la página de fin)
+
 [[package.metadata.shun.install.verbs]]    # verbos del menú contextual (verbos del Explorador / acciones de escritorio)
 key = "open-data"                          # id estable del verbo
 display = "Open data folder"               # texto del menú
@@ -90,6 +95,7 @@ require-removable = true                   # rechazar dispositivos no extraíble
 | `payload` | path | — | Directorio empaquetado en los artefactos |
 | `main-exe` | path | — | Punto de entrada relativo al payload (destino del atajo) |
 | `install` | table | ambos modos | conmutadores `local` / `portable`, nombre del marcador `portable-marker`, políticas `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install`, `default-dir` (anulación de la ubicación por defecto con expansión de variables de entorno), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (rechazar destinos en la raíz de unidad desnuda; activado por defecto — ver Protección contra la raíz de unidad), `root-dir-folder` (carpeta acolchada bajo una raíz de unidad desnuda en el carril de acolchado heredado, por defecto el nombre del producto), `forbid-non-empty` (rechazar destinos no vacíos en instalaciones nuevas; activado por defecto), `non-empty-allowlist` (nombres de basura que el veto ignora), `dir-rules` (reglas declarativas de ubicación de instalación — ver Reglas de ubicación de instalación) |
+| `install.post-install-launch` | tabla | ninguna | Ejecuta un compañero del payload una vez tras una instalación correcta: `exe` (relativo al payload, validado), `args` (argv fijo), `policy` (`always` / `never` / `ask`) — ver «Ejecución posterior a la instalación» |
 | `attachments` | array de tablas | ninguno | recursos acompañantes opcionales (packs de assets): `key` / `title` / `dest` / `online.url`; las builds lite los descargan al instalar |
 | `update` | table | ninguna | vigilancia de actualizaciones: `sources` (URLs base espejo, sondeadas en orden) + `files` resueltos bajo el primer espejo alcanzable |
 | `webview2` | table | `skip` | estrategia de runtime de Windows |
@@ -131,6 +137,52 @@ justo después — y no hace nada cuando el
 `InstallContext::launch_after_install` resuelto es falso o no hay
 punto de entrada declarado. Un punto de entrada declarado pero
 ausente da el error `MissingEntry` habitual.
+
+## Ejecución posterior a la instalación
+
+Algunos productos traen junto a la aplicación un **arranque auxiliar** que
+debe ejecutarse una vez —un emparejador del gateway que inicia sesión en
+esta máquina a través del navegador del sistema, un ayudante de
+activación, un migrador de primer arranque— antes de que la app sea útil.
+`install.post-install-launch` declara ese traspaso en el manifiesto; shun
+solo sabe *dónde vive* el programa dentro del payload, *qué argumentos
+fijos* recibe y *si hay que preguntar*.
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/pairer.exe"
+args = ["pair", "--gateway", "https://gateway.example.world"]
+policy = "ask"
+```
+
+- **`exe`** — ejecutable relativo al payload, resuelto dentro del
+  directorio de instalación. La declaración se valida antes de lanzar
+  nada: las rutas absolutas, los prefijos de unidad de Windows (`C:…`) y
+  los prefijos UNC (`\\\\servidor\\recurso`, `//servidor/recurso`) se
+  rechazan en cualquier host, y los componentes `..` se rechazan como
+  traversal. Un manifiesto solo puede nombrar algo que la propia entrega
+  puso ahí —nunca un intérprete ni un binario del sistema— y una
+  declaración que se sale falla en voz alta en lugar de omitirse en
+  silencio.
+- **`args`** — el **vector de argumentos fijo**, un elemento por
+  argumento. Se pasa al proceso tal cual: sin shell, sin cadena de
+  comandos, sin división de palabras, sin expansión de variables y sin
+  interpolación por parte de shun. Un argumento con espacios, comillas o
+  `$(…)` sigue siendo exactamente un argumento.
+- **`policy`** — `ask` (por defecto) sigue la respuesta de la página de
+  fin (la misma casilla que resuelve `launch-after-install`), `always` la
+  fija y `never` la desactiva. El carril sin interfaz solo lanza con
+  `always`: una actualización desatendida no debe abrir un navegador a
+  quien no lo pidió.
+
+El compañero se ejecuta **una vez por entrega correcta**, al confirmar la
+página de fin: primero la aplicación y después el compañero, ambos
+desprendidos. Un compañero ausente falla nombrando su ruta en el payload.
+La reparación y la desinstalación nunca lo disparan.
+
+Lo que hace el programa es asunto del payload: un emparejador abre el
+navegador del sistema y completa su propio flujo OAuth por loopback; shun
+nunca ve las credenciales.
 
 ## Protección contra la raíz de unidad
 

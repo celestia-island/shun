@@ -49,6 +49,11 @@ root-dir-folder = "ShunDemo"               # legacy pad lane only (forbid-drive-
 # [package.metadata.shun.install.dir-rules.message-locales]  # per-wizard-locale overrides (a match wins over message)
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # run a payload-carried companion once after the install (see Post-install launch)
+exe = "bin/pairer.exe"                     # payload-relative executable (never absolute, never outside the payload)
+args = ["pair", "--gateway", "https://gateway.example.world"]  # fixed argv, one element per argument, no shell
+policy = "ask"                             # always | never | ask (default: the done-page answer)
+
 [[package.metadata.shun.install.verbs]]    # right-click verbs (Explorer verbs / desktop actions)
 key = "open-data"                          # stable verb id
 display = "Open data folder"               # menu text
@@ -99,6 +104,7 @@ require-removable = true                   # refuse non-removable devices
 | `payload` | path | — | Directory packed into the artifacts |
 | `main-exe` | path | — | Payload-relative entry point (shortcut target) |
 | `install` | table | both modes on | `local` / `portable` switches, `portable-marker` file name, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` policies, `default-dir` (env-expanded default location override), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root` (refuse bare drive-root targets; default on — see Root-drive guard), `root-dir-folder` (folder padded under a bare drive-root target in the opted-out pad lane, default: the product name), `forbid-non-empty` (refuse non-empty targets for fresh installs; default on), `non-empty-allowlist` (junk names the non-empty refusal ignores), `dir-rules` (declarative install-location rules — see Install-location rules) |
+| `install.post-install-launch` | table | none | Run a payload-carried companion once after a successful install: `exe` (payload-relative, validated), `args` (fixed argv), `policy` (`always` / `never` / `ask`) — see Post-install launch |
 | `attachments` | array of tables | none | optional companion resources (asset packs): `key` / `title` / `dest` / `online.url`; lite builds download them at install time |
 | `update` | table | none | update watch: `sources` (mirror base URLs, probed in order) + `files` resolved under the first reachable source |
 | `webview2` | table | `skip` | Windows runtime strategy |
@@ -137,6 +143,62 @@ so the installer process can exit right after — and is a no-op when the
 resolved `InstallContext::launch_after_install` is false or no entry
 point is declared. A declared but missing entry point surfaces as the
 usual `MissingEntry` error.
+
+## Post-install launch
+
+Some products ship a **bootstrap beside the app** that has to run once —
+a gateway pairer that signs this machine in through the system browser,
+an activation helper, a first-run migrator — before the app itself is
+useful. `install.post-install-launch` declares that handoff from the app
+manifest; shun knows only *where inside the payload* the program lives,
+*what fixed arguments* it receives, and *whether to ask*.
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/pairer.exe"
+args = ["pair", "--gateway", "https://gateway.example.world"]
+policy = "ask"
+```
+
+- **`exe`** — a payload-relative executable, resolved inside the install
+  directory. The declaration is validated before anything spawns:
+  absolute paths, Windows drive prefixes (`C:…`) and UNC lead-ins
+  (`\\server\share`, `//server/share`) are refused on every host, and
+  `..` components are refused as traversal. A manifest can only name
+  something the delivery itself put there — never an interpreter or a
+  system binary — and a declaration that escapes fails loudly instead of
+  being silently skipped.
+- **`args`** — the **fixed argument vector**, one element per argument.
+  It is passed to the process verbatim: no shell, no command-line
+  string, no word splitting, no variable expansion and no interpolation
+  by shun. An argument containing spaces, quotes or `$(…)` stays exactly
+  one argument, and nothing in the manifest can smuggle in a second
+  command. Grep the finished artifact if you want proof: the spawn is a
+  plain `std::process::Command` over a decoded argv.
+- **`policy`** — `ask` (the default) rides the done page's launch answer
+  (the same checkbox `launch-after-install` resolves), `always` pins the
+  launch and `never` opts out. The headless lane only ever launches under
+  `always`: an unattended update must not pop a browser for a user who
+  did not ask.
+
+The companion runs **once per successful delivery**, from the done page's
+finish (`apply_finish_checked` → `launch_finish_targets_checked`): the
+app launches first, then the companion, each detached (no waiting, so the
+installer can exit right away). A missing companion fails with an error
+naming its payload path (`bin/pairer.exe`, never the hidden staging
+spelling), classified like any other launch failure.
+
+Repair and uninstall never fire it. A repair re-extracts over the same
+folder — a re-extraction is not a new pairing moment — and the uninstall
+path has nothing left to launch. The switch lives only on the done page,
+so a product that needs its bootstrap re-run after a repair offers that
+from its own app (or pins `always`, at which point the silent lane's
+next delivery runs it).
+
+What the program does is entirely the payload's: a pairer opens the
+system browser and completes its own OAuth loopback flow; shun never
+sees the credentials, never runs the OAuth dance and never learns what
+"pair" means.
 
 ## Root-drive guard
 

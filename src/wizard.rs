@@ -1055,7 +1055,12 @@ pub fn apply_finish_checked(
         crate::failure::FinishFailure::other(crate::failure::FinishStage::Shortcuts, message)
     })?;
     if launch {
-        launch_installed_checked(core, dir)?;
+        // Resolve the companion policy first: a broken declaration must
+        // fail before any process starts, not half-way through a launch.
+        let targets = finish_launch_targets(&core.config, true).map_err(|message| {
+            crate::failure::FinishFailure::other(crate::failure::FinishStage::Launch, message)
+        })?;
+        launch_finish_targets_checked(core, dir, targets)?;
     }
     Ok(())
 }
@@ -1110,6 +1115,12 @@ pub fn launch_installed(core: &WizardCore, dir: &str) -> Result<(), String> {
     launch_installed_error(core, dir).map_err(|error| error.to_string())
 }
 
+/// Launches the declared post-install companion (the string twin of
+/// [`launch_post_install_checked`]) — the headless lane's report path.
+pub fn launch_post_install(core: &WizardCore, dir: &str) -> Result<(), String> {
+    launch_post_install_error(core, dir).map_err(|error| error.to_string())
+}
+
 /// [`launch_installed`] with the failure classified for the UI faces —
 /// the done page's launch answer, including the application-control case
 /// (`os error 4551`) whose remedy is an OS setting, not an install retry.
@@ -1148,6 +1159,92 @@ fn launch_installed_error(core: &WizardCore, dir: &str) -> Result<(), crate::err
     ctx.main_exe = Some(std::path::PathBuf::from(core.main_exe()));
     ctx.launch_after_install = true;
     crate::targets::install::launch(&ctx)
+}
+
+/// What the done page must start for the launch answer `answer`:
+/// whether the installed app launches (unchanged policy) and whether the
+/// manifest's post-install companion
+/// (`install.post-install-launch`) launches with it. Pure, so the
+/// answer × policy matrix stays unit-testable.
+pub fn finish_launch_targets(
+    config: &ShunConfig,
+    answer: bool,
+) -> Result<FinishLaunchTargets, String> {
+    let companion = config.post_install_launch()?;
+    Ok(FinishLaunchTargets {
+        app: answer,
+        companion: companion.is_some_and(|declared| declared.launches(answer)),
+    })
+}
+
+/// The resolved launches behind one done-page answer (see
+/// [`finish_launch_targets`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FinishLaunchTargets {
+    /// Launch the installed application (`main_exe`).
+    pub app: bool,
+    /// Launch the declared post-install companion.
+    pub companion: bool,
+}
+
+/// [`launch_installed_checked`] plus the companion: the done page's
+/// single launch answer covers both, so a product shipping a gateway
+/// pairer gets the app AND its bootstrap without a second checkbox. A
+/// companion failure is classified exactly like the app launch (an
+/// application-control refusal is an OS remedy, not an install retry).
+pub fn launch_finish_targets_checked(
+    core: &WizardCore,
+    dir: &str,
+    targets: FinishLaunchTargets,
+) -> Result<(), crate::failure::FinishFailure> {
+    if targets.app {
+        launch_installed_checked(core, dir)?;
+    }
+    if targets.companion {
+        launch_post_install_checked(core, dir)?;
+    }
+    Ok(())
+}
+
+/// Launches the declared post-install companion, classified like the
+/// app launch.
+pub fn launch_post_install_checked(
+    core: &WizardCore,
+    dir: &str,
+) -> Result<(), crate::failure::FinishFailure> {
+    launch_post_install_error(core, dir).map_err(|error| {
+        crate::failure::FinishFailure::from_error(crate::failure::FinishStage::Launch, &error)
+    })
+}
+
+/// The companion's raw launch: resolve the declared executable + argv
+/// (validated — `None` when the manifest declares nothing, an error when
+/// the declaration could escape the install directory), resolve the
+/// install directory exactly like [`launch_installed_error`] does, and
+/// spawn it detached.
+fn launch_post_install_error(core: &WizardCore, dir: &str) -> Result<(), crate::error::ShunError> {
+    let declared = core
+        .config
+        .post_install_launch()
+        .map_err(crate::error::ShunError::Config)?;
+    let Some(declared) = declared else {
+        return Ok(());
+    };
+    let install = core
+        .install_target()
+        .map_err(crate::error::ShunError::Config)?;
+    let dir = nest_root_dir(
+        Path::new(dir.trim().trim_end_matches('\\')),
+        &core.config.product.name,
+        install.root_dir_folder.as_deref(),
+    );
+    let ctx = InstallContext::new(
+        core.config.product.name.clone(),
+        core.config.product.version.clone(),
+        dir,
+        false,
+    );
+    crate::targets::install::launch_post_install(&ctx, declared)
 }
 
 /// The shortcut grouping identity: the manifest's `aumid` when declared,

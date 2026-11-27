@@ -39,6 +39,11 @@ root-dir-folder = "ShunDemo"              # 레거시 패딩 레인 전용(forbi
 # [package.metadata.shun.install.dir-rules.message-locales]  # 마법사 로케일별 재정의(일치가 message보다 우선)
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # 설치 후 payload 동봉 컴패니언을 한 번 실행(「설치 후 컴패니언 실행」 참조)
+exe = "bin/pairer.exe"                     # payload 상대 실행 파일(절대 경로 불가, payload 밖 불가)
+args = ["pair", "--gateway", "https://gateway.example.world"]  # 고정 argv, 인자마다 1개 항목, 셸을 거치지 않음
+policy = "ask"                             # always | never | ask (기본값: 완료 페이지의 응답)
+
 [[package.metadata.shun.install.verbs]]    # 우클릭 동사(탐색기 동사 / 데스크톱 액션)
 key = "open-data"                          # 안정적인 동사 id
 display = "Open data folder"               # 메뉴 텍스트
@@ -87,6 +92,7 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 | `payload` | path | — | 아티팩트로 패킹되는 디렉터리 |
 | `main-exe` | path | — | payload 상대 진입점(바로 가기 대상) |
 | `install` | table | 두 모두 켜짐 | `local` / `portable` 스위치, `portable-marker` 파일명, `desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 정책, `default-dir`(환경 변수가 전개되는 기본 위치 재정의), `verbs`, `deep-links`, `aumid`, `icon`, `forbid-drive-root`(드라이브 루트 대상 거부, 기본 켜짐 — 드라이브 루트 보호 참조), `root-dir-folder`(옵트아웃한 패딩 레인에서 드라이브 루트 아래 깔리는 폴더, 기본은 제품명), `forbid-non-empty`(신규 설치에서 비어 있지 않은 대상 거부, 기본 켜짐), `non-empty-allowlist`(비어 있지 않음 거부가 무시하는 찌꺼기 파일명), `dir-rules`(선언적 설치 위치 규칙 — 「설치 위치 규칙」 참조) |
+| `install.post-install-launch` | table | 없음 | 설치 성공 후 payload 동봉 컴패니언을 한 번 실행: `exe`(payload 상대, 검증됨), `args`(고정 argv), `policy`(`always` / `never` / `ask`) — 「설치 후 컴패니언 실행」 참조 |
 | `attachments` | 테이블 배열 | 없음 | 선택적 추가 리소스(에셋 팩): `key` / `title` / `dest` / `online.url`. 라이트 빌드는 설치 시 내려받기 |
 | `update` | table | 없음 | 업데이트 감시: `sources`(미러 기본 URL, 순서대로 탐색) + 첫 번째로 도달한 소스 아래에서 해석되는 `files` |
 | `webview2` | table | `skip` | Windows 런타임 전략 |
@@ -125,6 +131,47 @@ require-removable = true                   # 이동식이 아닌 장치 거부
 `InstallContext::launch_after_install`이 false이거나 진입점이
 선언되지 않았으면 아무 일도 하지 않습니다. 선언된 진입점이 없으면
 평소처럼 `MissingEntry` 오류가 납니다.
+
+## 설치 후 컴패니언 실행
+
+앱 옆에 **한 번만 돌리는 부트스트랩** 을 동봉하는 제품이 있습니다 — 시스템
+브라우저를 열어 이 머신을 로그인시키는 게이트웨이 페어러, 활성화 도우미,
+첫 실행 이전 도구 등 — 앱이 쓸모 있으려면 그것이 한 번 실행되어야
+합니다. `install.post-install-launch`는 그 인계를 매니페스트에서
+선언합니다. shun이 아는 것은 *payload 안 어디에* 프로그램이 있는지, *어떤
+고정 인자*를 받는지, *묻게 할지*뿐입니다.
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/pairer.exe"
+args = ["pair", "--gateway", "https://gateway.example.world"]
+policy = "ask"
+```
+
+- **`exe`** — payload 상대 실행 파일을 설치 디렉터리에서 해석합니다.
+  선언은 무엇이든 실행되기 전에 검증됩니다: 절대 경로, Windows 드라이브
+  접두사(`C:…`), UNC 접두사(`\\\\server\\share`,
+  `//server/share`)는 모든 호스트에서 거부되고 `..` 성분은 traversal로
+  거부됩니다. 매니페스트는 배포 자체가 넣은 것만 지정할 수 있으며 —
+  인터프리터나 시스템 바이너리는 절대 대상이 아닙니다 — 밖을 가리키는
+  선언은 조용히 건너뛰지 않고 크게 실패합니다.
+- **`args`** — **고정 인자 벡터**로, 인자마다 1개 항목입니다. 그대로
+  프로세스에 전달됩니다: 셸도, 명령줄 문자열도, 단어 분할도, 변수 확장도,
+  shun의 보간도 없습니다. 공백·따옴표·`$(…)`가 들어간 인자도 정확히 하나의
+  인자로 도착합니다.
+- **`policy`** — `ask`(기본)는 완료 페이지의 응답(`launch-after-install`과
+  같은 체크박스)을 따르고, `always`는 고정, `never`는 해제입니다. 헤드리스
+  경로는 `always`에서만 실행합니다: 아무도 요청하지 않았는데 무인 업데이트가
+  브라우저를 열어서는 안 됩니다.
+
+컴패니언은 **배포가 성공할 때마다 한 번**, 완료 페이지를 확정할 때
+실행됩니다. 앱을 먼저, 컴패니언을 그다음, 둘 다 분리해서 띄웁니다. 찾지
+못하면 payload 경로를 이름으로 대며 실패합니다. 복구와 제거에서는 절대
+실행되지 않습니다.
+
+프로그램이 무엇을 하는지는 전적으로 payload의 몫입니다: 페어러가 시스템
+브라우저를 열고 자기 OAuth 루프백 흐름을 완료하며, shun은 자격 증명을
+보지 않습니다.
 
 ## 드라이브 루트 보호
 

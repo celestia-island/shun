@@ -38,6 +38,11 @@ root-dir-folder = "ShunDemo"              # 僅舊墊層通道生效（forbid-dr
 # [package.metadata.shun.install.dir-rules.message-locales]  # 按精靈語言覆寫（命中優先於 message）
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # 安裝後執行一次載荷自帶的伴隨程式（見「安裝後伴隨啟動」）
+exe = "bin/pairer.exe"                     # 載荷相對的可執行檔（不得絕對、不得越出載荷）
+args = ["pair", "--gateway", "https://gateway.example.world"]  # 固定 argv，一個元素一個參數，不經 shell
+policy = "ask"                             # always | never | ask（預設跟隨完成頁回答）
+
 [[package.metadata.shun.install.verbs]]    # 右鍵選單動詞（Explorer 動詞 / 桌面動作）
 key = "open-data"                          # 穩定的動詞 id
 display = "Open data folder"               # 選單文字
@@ -85,6 +90,7 @@ require-removable = true                   # 拒絕非可移除裝置
 | `payload` | path | — | 打包進發行物的目錄 |
 | `main-exe` | path | — | payload 內進入點（捷徑目標） |
 | `install` | table | 雙模式全開 | `local` / `portable` 開關、`portable-marker` 標記檔名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` 策略、`default-dir`（環境變數展開的預設位置覆寫）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（拒絕裸磁碟根目錄目標；預設開啟——見「根磁碟保護」）、`root-dir-folder`（退出拒絕後墊層通道裡墊在裸磁碟根目錄下的資料夾，預設取產品名）、`forbid-non-empty`（全新安裝拒絕非空目錄；預設開啟）、`non-empty-allowlist`（非空拒絕忽略的垃圾檔名）、`dir-rules`（宣告式安裝位置規則——見「安裝位置規則」） |
+| `install.post-install-launch` | table | 無 | 安裝成功後執行一次載荷自帶的伴隨程式：`exe`（載荷相對，已校驗）、`args`（固定 argv）、`policy`（`always` / `never` / `ask`）——見「安裝後伴隨啟動」 |
 | `attachments` | 表格陣列 | 無 | 選用附件資源（資產包）：`key` / `title` / `dest` / `online.url`；精簡版在安裝時下載 |
 | `update` | table | 無 | 更新監視：`sources`（鏡像根 URL，按順序探測）+ `files`，解析到第一個可達源之下 |
 | `webview2` | table | `skip` | Windows 執行階段策略 |
@@ -118,6 +124,41 @@ require-removable = true                   # 拒絕非可移除裝置
 `InstallContext::launch_after_install` 解析為 false、或未宣告進入
 點時，呼叫是空操作。進入點已宣告但檔案缺失時，照常回傳
 `MissingEntry` 錯誤。
+
+## 安裝後伴隨啟動
+
+有些產品會在應用旁邊附帶一個**只需跑一次的引導程式**——透過系統瀏覽器
+讓本機登入的閘道配對器、啟用助手、首啟遷移工具——應用可用之前必須讓它
+先跑一次。`install.post-install-launch` 在清單裡宣告這次交接；shun 只
+知道程式**在載荷的哪裡**、**收到哪些固定參數**、以及**要不要先問**。
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/pairer.exe"
+args = ["pair", "--gateway", "https://gateway.example.world"]
+policy = "ask"
+```
+
+- **`exe`**——載荷相對的可執行檔，在安裝目錄內解析。宣告在**任何**
+  行程啟動前先校驗：絕對路徑、Windows 磁碟機前綴（`C:…`）、UNC 前綴
+  （`\\\\server\\share`、`//server/share`）在任何宿主上都拒絕，含
+  `..` 的成分按目錄穿越拒絕。清單只能點名投放自身放進來的東西——絕不會
+  是解譯器或系統二進位——越界宣告會大聲失敗，而不是被悄悄跳過。
+- **`args`**——**固定參數向量**，一個元素一個參數。它原樣交給行程：
+  沒有 shell、沒有命令列字串、沒有分詞、沒有變數展開，shun 也不做任何
+  插值。帶空格、引號或 `$(…)` 的參數仍**恰好是一個**參數。
+- **`policy`**——`ask`（預設）跟隨完成頁的啟動回答（與
+  `launch-after-install` 同一個核取方塊），`always` 固定執行，`never`
+  關閉。無頭通道只在 `always` 下執行：無人值守的更新不能給沒要求的人
+  彈出瀏覽器。
+
+伴隨程式**每次成功安裝只跑一次**，在完成頁確認時觸發：先啟動應用，再
+啟動伴隨程式，都以游離方式啟動。檔案缺失時報錯並點名它在載荷中的路徑
+（如 `bin/pairer.exe`，絕不暴露隱藏的暫存路徑）。修復與解除安裝**永不**
+觸發。
+
+程式本身做什麼完全屬於載荷：配對器自己開啟系統瀏覽器並完成自己的
+OAuth 迴環流程，shun 從不接觸憑證、也不懂「配對」是什麼。
 
 ## 根磁碟保護
 

@@ -39,6 +39,11 @@ root-dir-folder = "ShunDemo"              # 従来のパディングレーンの
 # [package.metadata.shun.install.dir-rules.message-locales]  # ウィザードロケール別の上書き（一致が message に優先）
 # zh-Hans = "该目录是游戏客户端。"
 
+[package.metadata.shun.install.post-install-launch]  # インストール後に payload 同梱のコンパニオンを一度だけ起動（「インストール後のコンパニオン起動」を参照）
+exe = "bin/pairer.exe"                     # payload 相対の実行ファイル（絶対パス不可、payload の外は不可）
+args = ["pair", "--gateway", "https://gateway.example.world"]  # 固定 argv、引数ごとに 1 要素、シェルを経由しない
+policy = "ask"                             # always | never | ask（既定は完了ページの回答）
+
 [[package.metadata.shun.install.verbs]]    # 右クリック動詞（Explorer 動詞 / デスクトップアクション）
 key = "open-data"                          # 安定した動詞 id
 display = "Open data folder"               # メニュー表示
@@ -87,6 +92,7 @@ require-removable = true                   # リムーバブル以外のデバ�
 | `payload` | path | — | 成果物にパックされるディレクトリ |
 | `main-exe` | path | — | payload 相対のエントリポイント（ショートカットの宛先） |
 | `install` | table | 両モードオン | `local` / `portable` スイッチ、`portable-marker` ファイル名、`desktop-shortcut` / `start-menu-shortcut` / `launch-after-install` ポリシー、`default-dir`（環境変数展開される既定位置の上書き）、`verbs`、`deep-links`、`aumid`、`icon`、`forbid-drive-root`（裸のドライブルートのターゲットを拒否。既定でオン——ドライブルートの保護を参照）、`root-dir-folder`（オプトアウト時のパディングレーンでドライブルート直下に挟むフォルダー、既定は製品名）、`forbid-non-empty`（新規インストールで空でないターゲットを拒否。既定でオン）、`non-empty-allowlist`（非空拒否が無視するゴミファイル名）、`dir-rules`（宣言的なインストール先ルール——「インストール先ルール」を参照） |
+| `install.post-install-launch` | table | なし | インストール成功後に payload 同梱のコンパニオンを一度だけ起動する：`exe`（payload 相対・検証済み）、`args`（固定 argv）、`policy`（`always` / `never` / `ask`）——「インストール後のコンパニオン起動」を参照 |
 | `attachments` | テーブル配列 | なし | 追加リソース（アセットパック）：`key` / `title` / `dest` / `online.url`。ライト版はインストール時にダウンロード |
 | `update` | table | なし | 更新ウォッチ：`sources`（ミラー基底 URL、順にプローブ）+ 最初に到達したソース配下で解決される `files` |
 | `webview2` | table | `skip` | Windows ランタイム戦略 |
@@ -128,6 +134,48 @@ require-removable = true                   # リムーバブル以外のデバ�
 またはエントリポイントが未宣言の場合は何もしません。宣言済みの
 エントリポイントが見つからない場合は通常どおり `MissingEntry`
 エラーになります。
+
+## インストール後のコンパニオン起動
+
+アプリの隣に **一度だけ動かすブートストラップ** を同梱する製品があります
+——システムのブラウザを開いてこのマシンをサインインさせるゲートウェイの
+ペアラー、アクティベーションの補助、初回起動の移行ツールなど——。アプリが
+使えるようになる前に、それが一度動く必要があります。
+`install.post-install-launch` はその受け渡しをマニフェストで宣言します。
+shun が知っているのは *payload 内のどこに* プログラムがあるか、*どんな
+固定引数* を受け取るか、*確認するかどうか* だけです。
+
+```toml
+[package.metadata.shun.install.post-install-launch]
+exe = "bin/pairer.exe"
+args = ["pair", "--gateway", "https://gateway.example.world"]
+policy = "ask"
+```
+
+- **`exe`** —— payload 相対の実行ファイルをインストール先で解決します。
+  宣言は起動前に検証されます：絶対パス、Windows のドライブ接頭辞
+  （`C:…`）、UNC の先頭（`\\\\server\\share`、`//server/share`）は
+  どのホストでも拒否され、`..` はトラバーサルとして拒否されます。
+  マニフェストが名指しできるのは配送そのものが置いたものだけであり、
+  インタプリタやシステムのバイナリは決して対象になりません。payload の
+  外を指す宣言は黙って飛ばされず、大きく失敗します。
+- **`args`** —— **固定の引数ベクター**で、引数ごとに 1 要素です。そのまま
+  プロセスへ渡ります：シェルもコマンドライン文字列もなく、単語分割も環境
+  変数展開も shun による補間もありません。空白・引用符・`$(…)` を含む
+  引数は、そっくりそのまま 1 個の引数として届きます。
+- **`policy`** —— `ask`（既定）は完了ページの回答（`launch-after-install`
+  と同じチェックボックス）に従い、`always` は固定、`never` は無効化です。
+  ヘッドレス経路が起動するのは `always` のみです：誰も頼んでいないのに
+  無人更新がブラウザを開いてはいけません。
+
+コンパニオンは **配送が成功するごとに一度** だけ、完了ページの確定時に
+実行されます。アプリを先に、コンパニオンを後に、どちらも切り離して起動
+します。見つからない場合は payload 内のパスを名指しして失敗します。修復と
+アンインストールでは決して起動しません。
+
+プログラムが何をするかは payload 次第です：ペアラーはシステムのブラウザを
+開き、自分自身の OAuth ループバック処理を完了します。shun は認証情報を
+一切見ません。
 
 ## ドライブルートの保護
 

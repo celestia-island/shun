@@ -199,6 +199,11 @@ impl std::io::Read for CountingReader<'_> {
 /// payload (or a poisoned manifest) write or delete outside the install
 /// directory. Shared by the extract paths, the online variant, and the
 /// uninstall sweep (wizard's stale-file cleanup uses it too).
+///
+/// The post-install companion launch
+/// (`install.post-install-launch`) deliberately does NOT share this
+/// predicate: its declaration is authored config, not archive content,
+/// so it uses the stricter [`path_anchors_outside`] instead.
 pub(crate) fn entry_path_is_unsafe(path: &Path) -> bool {
     path.components().any(|c| {
         matches!(
@@ -208,6 +213,30 @@ pub(crate) fn entry_path_is_unsafe(path: &Path) -> bool {
                 | std::path::Component::ParentDir
         )
     })
+}
+
+/// Whether a path spells an anchor OUTSIDE the payload on any host: an
+/// absolute path, a drive prefix (`C:\…`, `C:pairer`, `C:/…`), or a UNC
+/// / device lead-in (`\\server\share`, `//server/share`).
+///
+/// Stricter than [`entry_path_is_unsafe`] because `Path::is_absolute`
+/// and friends answer for the CURRENT host only: a `C:\…` string is an
+/// ordinary relative FILE NAME on POSIX and would sail through a
+/// payload-relative check there, while the same manifest ships to every
+/// platform. The declarations that consume it
+/// (`install.post-install-launch`) are authored configuration, so the
+/// permissive reading is the wrong one — refuse the spelling everywhere.
+pub(crate) fn path_anchors_outside(path: &Path) -> bool {
+    if path.is_absolute() || path.has_root() {
+        return true;
+    }
+    let raw = path.to_string_lossy();
+    let bytes = raw.as_bytes();
+    // A drive prefix: one letter then `:`.
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    // A UNC / device lead-in: the separator pair Windows accepts.
+    let unc = raw.starts_with("\\\\") || raw.starts_with("//");
+    drive || unc
 }
 
 impl ArchivePayload {
@@ -613,5 +642,42 @@ mod replace_file_tests {
         let target = dir.join("fresh.exe");
         replace_file(&target, b"first image").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"first image");
+    }
+}
+
+#[cfg(test)]
+mod path_anchor_tests {
+    use super::*;
+
+    /// The strict anchor reads the SPELLING, not the host: a Windows drive
+    /// prefix or a UNC lead-in is refused on POSIX too (where `Path`
+    /// would read both as ordinary relative names) — the declaration
+    /// ships to every platform, so the permissive reading is the wrong
+    /// one.
+    #[test]
+    fn foreign_anchors_are_refused_on_every_host() {
+        for refused in [
+            "/bin/sh",
+            "/usr/bin/env",
+            r"C:\Windows\System32\cmd.exe",
+            "C:/Windows/System32/cmd.exe",
+            "C:pairer.exe",
+            r"\\server\share\pairer.exe",
+            "//server/share/pairer.exe",
+        ] {
+            assert!(
+                path_anchors_outside(Path::new(refused)),
+                "{refused:?} anchors outside the payload"
+            );
+        }
+        for relative in ["bin/evernight.exe", "pair", "./bin/pairer", "a/b/c", "..."] {
+            assert!(
+                !path_anchors_outside(Path::new(relative)),
+                "{relative:?} stays inside the payload"
+            );
+        }
+        // The traversal component stays the OTHER guard's job.
+        assert!(!path_anchors_outside(Path::new("bin/../../pairer")));
+        assert!(entry_path_is_unsafe(Path::new("bin/../../pairer")));
     }
 }

@@ -1264,20 +1264,33 @@ fn run_headless_with_tap(
     // back on its feet right after the delivery (the flow just stopped
     // the running copy on an overwrite install). The `ask` default
     // keeps the historical headless behavior — no launch.
-    if !portable
-        && config.targets.iter().any(|t| {
-            matches!(
-                t,
-                TargetConfig::Install(shun::config::InstallConfig {
-                    launch_after_install: shun::config::ShortcutPolicy::Always,
-                    ..
-                })
-            )
-        })
-    {
+    let pinned_launch = config.targets.iter().any(|t| {
+        matches!(
+            t,
+            TargetConfig::Install(shun::config::InstallConfig {
+                launch_after_install: shun::config::ShortcutPolicy::Always,
+                ..
+            })
+        )
+    });
+    if !portable && pinned_launch {
         if let Err(err) = shun::wizard::launch_installed(&core, &request.dir) {
             println!("shun: launch failed: {err}");
         }
+    }
+    // The post-install companion (`install.post-install-launch`) rides
+    // the same unattended contract: a delivery pinning it `always`
+    // starts its bootstrap (a gateway pairer, say) on the silent lane
+    // too — the `ask` default stays a done-page question, which this
+    // lane does not have.
+    match config.post_install_launch() {
+        Ok(Some(declared)) if declared.policy == shun::config::PostInstallLaunchPolicy::Always => {
+            if let Err(err) = shun::wizard::launch_post_install(&core, &request.dir) {
+                println!("shun: post-install launch failed: {err}");
+            }
+        }
+        Ok(_) => {}
+        Err(err) => println!("shun: post-install launch refused: {err}"),
     }
     println!("shun: install complete");
     Ok(())

@@ -1831,6 +1831,14 @@ fn menu_policy_asks(config: &ShunConfig) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the done-page launch box starts checked: true unless the
+/// manifest pins `launch-after-install = "never"` (the backend then
+/// ignores the forwarded answer, so a pre-ticked box would lie).
+fn launch_policy_default(config: &ShunConfig) -> bool {
+    install_of(config)
+        .is_none_or(|install| install.launch_after_install != shun::config::ShortcutPolicy::Never)
+}
+
 fn install_of(config: &ShunConfig) -> Option<&shun::config::InstallConfig> {
     config.targets.iter().find_map(|t| match t {
         TargetConfig::Install(install) => Some(install),
@@ -2291,7 +2299,9 @@ impl FallbackApp {
             mode,
             desktop_shortcut: true,
             start_menu: true,
-            launch_after: true,
+            // The done-page launch box: pre-checked unless the manifest
+            // pins `launch-after-install = "never"`.
+            launch_after: launch_policy_default(&config),
             machine: false,
             license_docs,
             step: initial_step,
@@ -5557,6 +5567,14 @@ impl FallbackApp {
                             );
                             ui.add_space(8.0);
                         }
+                        // The launch answer starts UNCHECKED when the
+                        // manifest pins `launch-after-install = "never"`
+                        // — the backend ignores a forwarded `true`, and a
+                        // pre-ticked box next to a button that launches
+                        // nothing reads as a bug. The same box carries the
+                        // manifest's post-install companion
+                        // (`install.post-install-launch`), so one answer
+                        // covers the app and its bootstrap.
                         Self::circle_checkbox(
                             ui,
                             theme,
@@ -6100,7 +6118,11 @@ impl FallbackApp {
                                     // uses, then close. A portable run
                                     // carries no shortcut answers —
                                     // nothing to register — but its
-                                    // launch answer still applies.
+                                    // launch answer still applies, and
+                                    // so does the manifest's
+                                    // post-install companion
+                                    // (`install.post-install-launch`,
+                                    // resolved through `finish_launch_targets`).
                                     if matches!(self.outcome, Some(Outcome::InstallOk)) {
                                         let portable = self.mode == "portable";
                                         let core =
@@ -6567,6 +6589,38 @@ fn fit_path(painter: &egui::Painter, path: &str, max_w: f32) -> String {
             .unwrap_or_default();
     }
     format!("…{sep}{tail}")
+}
+
+#[cfg(test)]
+mod launch_box_tests {
+    use super::*;
+
+    fn config_with(policy: shun::config::ShortcutPolicy) -> ShunConfig {
+        serde_json::from_value(serde_json::json!({
+            "product": { "name": "ShunDemo", "version": "1.0" },
+            "targets": [{
+                "kind": "install",
+                "local": true,
+                "launch-after-install": match policy {
+                    shun::config::ShortcutPolicy::Ask => "ask",
+                    shun::config::ShortcutPolicy::Always => "always",
+                    shun::config::ShortcutPolicy::Never => "never",
+                }
+            }]
+        }))
+        .unwrap()
+    }
+
+    /// The done-page launch box starts checked under `ask` / `always` and
+    /// UNCHECKED under `never` (the backend ignores a forwarded `true`,
+    /// so a pre-ticked box would promise a launch that never happens).
+    #[test]
+    fn the_launch_box_starts_unchecked_only_when_pinned_never() {
+        use shun::config::ShortcutPolicy;
+        assert!(launch_policy_default(&config_with(ShortcutPolicy::Ask)));
+        assert!(launch_policy_default(&config_with(ShortcutPolicy::Always)));
+        assert!(!launch_policy_default(&config_with(ShortcutPolicy::Never)));
+    }
 }
 
 #[cfg(test)]
